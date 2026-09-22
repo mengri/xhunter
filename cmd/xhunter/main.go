@@ -118,7 +118,9 @@ func huntCmd(args []string) int {
 		defer f.Close()
 		logs = f
 	}
-	sink := &eventSink{events: os.Stderr, logs: logs, start: time.Now()}
+	// 通道分工是外部契约：事件流独占 stdout（机器消费），人类日志走 stderr。
+	// 写错方向不会让任何单测失败，却会让所有按文档实现的驱动者读不到事件。
+	sink := &eventSink{events: os.Stdout, logs: logs, start: time.Now()}
 
 	// 业务执行体：向循环提供三组 handler，同时是原语看到的 Facts。上下文、会话材料与
 	// 事件出口都由它自己持有——循环不认识这些东西。
