@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"xhunter/llm"
 )
@@ -120,6 +121,8 @@ func (e *Engine) WithConfig(cfg Config) *Engine {
 // return 处小心处理。
 func (e *Engine) Run(ctx context.Context, in Input) (out Outcome, err error) {
 	run := &Run{Meta: in.Meta}
+	started := time.Now()
+	turns := 0
 
 	// 收尾放在 defer 里：它要在**每条退出路径**上都跑，包括 panic。业务把交付提交、
 	// 材料落盘、终态上报都挂在收尾上，少跑一次就等于"有结论没发出"。
@@ -128,6 +131,10 @@ func (e *Engine) Run(ctx context.Context, in Input) (out Outcome, err error) {
 			// panic 收敛为环境问题：任务本身不该因未捕获的 panic 崩掉进程。
 			run.terminate(StatusFailed, fmt.Sprintf("panic: %v", r), ExitEnv)
 		}
+		// 轮数与耗时由循环自己统计：协议实现只知道 token 两项，而结果文件与预算
+		// 都要这两个数——放在 defer 里才覆盖得到每条退出路径。
+		run.Usage.Turns = turns
+		run.Usage.Elapsed = time.Since(started)
 		e.finalize(ctx, run)
 		// 终态在收尾之后再取：收尾可能用 SetTerminal 覆盖它（如"全程无产出 → 失败"）。
 		// 循环本身永不把终态放进 error——终态一律走 Outcome，error 只留给编程错误。
@@ -144,6 +151,7 @@ func (e *Engine) Run(ctx context.Context, in Input) (out Outcome, err error) {
 
 	failStreak := 0
 	for n := 1; run.Terminal == nil && n <= e.cfg.MaxTurns; n++ {
+		turns = n
 		if ctx.Err() != nil {
 			run.terminate(StatusCancelled, "cancelled", ExitCancelled)
 			break

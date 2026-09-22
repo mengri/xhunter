@@ -188,23 +188,19 @@ func (s *Session) checkpoint(ctx context.Context, turn *harness.Turn) {
 	intent = sanitizeIntent(intent)
 
 	if len(s.ops) == 0 {
-		if requested && s.cfg.Sink != nil {
-			s.cfg.Sink.Log("info", "模型请求了检查点，但本轮无未提交改动，跳过", "turn", turn.No)
+		if requested {
+			s.logf("info", "模型请求了检查点，但本轮无未提交改动，跳过", "turn", turn.No)
 		}
 		return
 	}
 
 	cm, err := s.cfg.Git.Commit(ctx, s.cfg.Bounty.Repo, checkpointMessage(s.cfg.Bounty, TurnNo(turn.No), requested, intent))
 	if err != nil {
-		if s.cfg.Sink != nil {
-			s.cfg.Sink.Log("warn", "阶段性提交失败，将在下一轮重试", "turn", turn.No, "err", err.Error())
-		}
+		s.logf("warn", "阶段性提交失败，将在下一轮重试", "turn", turn.No, "err", err.Error())
 		return
 	}
 	s.commit = &cm
-	if s.cfg.Sink != nil {
-		s.cfg.Sink.Log("info", "已创建检查点", "turn", turn.No, "model_requested", requested)
-	}
+	s.logf("info", "已创建检查点", "turn", turn.No, "model_requested", requested)
 }
 
 // snapshot 让会话材料落盘，供崩溃后按「tip + 会话材料」恢复。
@@ -214,9 +210,18 @@ func (s *Session) snapshot() {
 	if s.cfg.Session == nil {
 		return
 	}
-	if err := s.cfg.Session.Snapshot(); err != nil && s.cfg.Sink != nil {
-		s.cfg.Sink.Log("warn", "会话材料落盘失败，崩溃后将无法恢复", "err", err.Error())
+	if err := s.cfg.Session.Snapshot(); err != nil {
+		s.logf("warn", "会话材料落盘失败，崩溃后将无法恢复", "err", err.Error())
 	}
+}
+
+// logf 在装了事件出口时记一条人类可读日志。日志是诊断，不是装配的必需件：
+// 没有出口时它是空操作，而不是让每个调用点各写一遍 nil 判断。
+func (s *Session) logf(level, msg string, kv ...any) {
+	if s.cfg.Sink == nil {
+		return
+	}
+	s.cfg.Sink.Log(level, msg, kv...)
 }
 
 // charge 把本轮新增用量转交策略。run.Usage 是累计值，策略要的是增量，所以自己记水位：
@@ -248,27 +253,33 @@ func (s *Session) Finalize(ctx context.Context, run *harness.Run) error {
 	if len(s.ops) > 0 {
 		cm, err := s.cfg.Git.Commit(ctx, s.cfg.Bounty.Repo, deliveryMessage(s.cfg.Bounty))
 		if err != nil {
-			if s.cfg.Sink != nil {
-				s.cfg.Sink.Log("warn", "交付提交失败，将只产出补丁", "err", err.Error())
-			}
+			s.logf("warn", "交付提交失败，将只产出补丁", "err", err.Error())
 		} else {
 			s.commit = &cm
 		}
 	}
 
-	if s.cfg.Sink != nil {
-		if files, err := s.cfg.Git.Diff(ctx, s.cfg.Bounty.Repo.BaseCommit); err == nil {
+	// 附带交付物在这里定型：Clean 之后就再也取不到了，而结果文件（FR-1.5、§6）
+	// 要用它们。因此**不依赖事件出口**——没有 sink 时同样要能交出补丁与清单。
+	if files, err := s.cfg.Git.Diff(ctx, s.cfg.Bounty.Repo.BaseCommit); err != nil {
+		s.logf("warn", "改动清单不可用，结果文件将缺 files_changed", "err", err.Error())
+	} else {
+		s.files = files
+		if s.cfg.Sink != nil {
 			_ = s.cfg.Sink.Emit(ExternalEvent{Type: "deliverable", Payload: map[string]any{"files": files}})
 		}
+	}
+	if patch, err := s.cfg.Git.Patch(ctx, s.cfg.Bounty.Repo.BaseCommit); err != nil {
+		s.logf("warn", "补丁不可用，将只交付分支 tip", "err", err.Error())
+	} else {
+		s.patch = patch
 	}
 
 	// 收尾前再落一次材料：交付提交的哈希只在提交之后才知道，早落的那份会缺它。
 	s.snapshot()
 
 	if err := s.cfg.Git.Clean(ctx); err != nil {
-		if s.cfg.Sink != nil {
-			s.cfg.Sink.Log("warn", "工作区清理失败", "err", err.Error())
-		}
+		s.logf("warn", "工作区清理失败", "err", err.Error())
 	}
 
 	// 终态上报：保证「一定有结论发出」，否则调用方会一直等下去。

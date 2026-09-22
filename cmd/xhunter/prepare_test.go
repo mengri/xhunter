@@ -25,6 +25,7 @@ func (g *stubGit) Commit(context.Context, git.RepoRef, string) (git.Commit, erro
 }
 
 func (g *stubGit) Diff(context.Context, string) ([]string, error) { return nil, nil }
+func (g *stubGit) Patch(context.Context, string) (string, error)  { return "", nil }
 func (g *stubGit) Clean(context.Context) error                    { return nil }
 
 // 首轮提示词必须让模型看到"要做什么"：任务正文只存在于 Bounty 里，若装配层不把它

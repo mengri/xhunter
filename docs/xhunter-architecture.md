@@ -1193,7 +1193,7 @@ Bounty(session) ──► H6.Session
 | IA-11.3 | 基线不可达 / 远端不可达 / 缺部署事实 → 环境错误（退出码 2），且失败路径不留临时工作树 | `TestPrepareBaseline_FailsAtStartupOnUnusableFacts`（cli） |
 | IA-11.4 | `Commit`：提交累积自上一个检查点的全部改动并推送；**无改动不产生空提交**（FR-1.3c） | `TestCommit_PushesFastForwardAndSkipsEmptyCommit`、`TestEndToEnd_LocalRunProducesDeliveryCommit`（cmd） |
 | IA-11.5 | 远端 tip 不是本地父提交 → 拒绝推送并返回环境错误，**绝不 force push**（FR-8.3、AC-20） | `TestCommit_RejectsNonFastForward`（断言远端 tip 未被改写） |
-| IA-11.6 | `Diff` 相对基线产出改动文件清单（FR-6.1、AC-1）；失败不阻断收尾（`Finalize` 只记 warn）。**排除会话材料目录 `.xhunter/<session_id>/**` 待接入**（会话材料尚未落盘） | `TestDiff_ListsFilesChangedSinceBaseline`、`TestEndToEnd_LocalRunProducesDeliveryCommit`（deliverable 事件） |
+| IA-11.6 | `Diff` 产出改动文件清单、`Patch` 产出**可应用到基线的统一 diff**（FR-6.1、AC-1）；失败不阻断收尾（`Finalize` 只记 warn）。**排除会话材料目录 `.xhunter/<session_id>/**` 待接入**（会话材料尚未落盘） | `TestDiff_ListsFilesChangedSinceBaseline`、`TestPatch_AppliesCleanlyToBaseline`（`git apply` 验证）、`TestEndToEnd_LocalRunProducesDeliveryCommit`（deliverable 事件 ＋ 补丁应用到基线） |
 | IA-11.7 | `Clean` 回收临时工作树，可重复调用；回收后提交显式失败；失败只记录 | `TestClean_RemovesWorktreeAndIsIdempotent`（cli） |
 | IA-11.8 | **调用时机与不可见性（INV-11）**：`PrepareBaseline` 是 `Prepare` 的第一个动作，先于任何工具执行；`Commit` 只在轮边界与收尾被调用；两者**都不作为原语暴露**给模型 | **待补**（断言调用顺序 ＋ 工具面不含 git 原语） |
 | IA-11.9 | **检查点自愈与止损（AC-22）**：单次提交失败不中止（下一轮累积重提）；连续失败达上限 → 环境错误 | 自愈部分：代码检查（`checkpoint` 失败只记 warn）；**连败上限待接入** |
@@ -1213,6 +1213,7 @@ Bounty(session) ──► H6.Session
 | IA-12.5 | 部署事实缺失 → 启动期退出码 2，并指出缺哪一项 | `TestBountyFromEnv_RequiresRepoFacts`、`TestSelectionFromEnv_Validate`、`TestProviderFor_UnknownSDKTellsWhereToAddAFactory` |
 | IA-12.6 | **端到端**：本地驱动跑通一次（基线 → 至少一轮 → 工具落盘 → 轮边界检查点 → 交付 = 分支 tip → `hunt_end`），退出码与事件序列符合契约；事件只走 stdout、收尾清理工作树 | `TestEndToEnd_LocalRunProducesDeliveryCommit`（真 git 夹具 + 本地假上游） |
 | IA-12.7 | 装配结果无运行期注册面：改装配只改装配代码，框架侧无注册 API | 代码检查（`harness` 只有 `New(provider, ...)`；`hunt.Config` 是构造参数） |
+| IA-12.9 | **结果文件**（FR-1.5）：`--result` 指定的文件在**无论成败**时都写出，含终态/退出码/仓库事实/交付提交/改动清单/用量；失败带 `error{kind,message,retryable}`；写失败即环境错误（退出 2） | `TestEndToEnd_LocalRunProducesDeliveryCommit`、`TestEndToEnd_ResultFileWrittenOnFailure`（cmd） |
 | IA-12.8 | **信号接线**：SIGINT / SIGTERM 取消运行段的 `ctx`（循环停止发起新的推理与工具调用、`Finalize` 照常收敛、退出码 3）；启动期仍走默认处置 | `TestSignalContext_CancelsOnSignal`、`TestSignalContext_StopCancelsContext`；进程级 AC-6 断言**待补** |
 
 ---
@@ -1249,7 +1250,7 @@ Bounty(session) ──► H6.Session
 | git 剩余语义（IA-11.8~11.13） | 四个动作已落地；检查点密度分档、连败上限、门禁驱动检查点与调用顺序断言待补 |
 | 流看门狗与权限询问（§6.3 L4、§10.3） | `llm.Event` 尚无权限询问形态；不活动超时未接入 |
 | 检查点密度与结构检查（IA-11.11、§6.3 L6） | 只有"有改动即提交"一档；`every_write` / `interval` / `final_only` 与结构判定待接入 |
-| 生效配置快照（§4、IA-12.x） | 装配清单未进结果文件 |
+| 生效配置快照（§4、FR-11.6） | 结果文件已落地（IA-12.9），但 `effective_config` 装配快照与 `gates` 未进文件 |
 | 事件信封四字段（IA-5.7） | 当前只保证 `type` ＋ 载荷（`bounty_id` / `trace_id` / `ts` 待补） |
 
 ### 14.2 判定方式缺用例

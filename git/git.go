@@ -28,6 +28,9 @@ type Commit struct {
 type GitWorktree interface {
 	PrepareBaseline(ctx context.Context, repo RepoRef) (workRoot string, err error)
 	Commit(ctx context.Context, repo RepoRef, msg string) (Commit, error)
+	// Diff 给出相对基线的改动文件清单；Patch 给出同一范围的统一 diff
+	// （git apply 兼容）。两者都是附带交付物，失败不阻断主交付（分支 tip）。
 	Diff(ctx context.Context, baseCommit string) ([]string, error)
+	Patch(ctx context.Context, baseCommit string) (string, error)
 	Clean(ctx context.Context) error
 }

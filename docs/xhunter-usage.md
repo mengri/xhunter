@@ -53,6 +53,8 @@
 ```
 xhunter --bounty <path>           # 任务正文文件（自然语言描述；部署事实走环境变量，见 §3）
         [--log-file <path>]       # 人类可读日志（默认 stderr）
+        [--result <path>]         # 结果文件（JSON；无论成败都写，见 §6）
+        [--patch <path>]          # 补丁文件（相对基线的统一 diff，git apply 兼容）
 
 xhunter run --repo <path> --task <text>   # 本地驱动：探测仓库并生成 Bounty（尚未接线，见 §1.2）
 xhunter models update [--source <url>] [--dir <path>] [--output-reserve <n>]
@@ -206,7 +208,7 @@ xhunter version
 >
 > `call_id` 是调用与结果配对的唯一标识：一轮内可能出现同一原语的多次调用，外部消费者据此配对（IA-1.5）；`policy_denied` 与 `check_result` 同属 L5 后的时点，故这两类事件也应携带相应 `call_id` 以便回溯到具体调用。
 >
-> `config_snapshot` 与 `gate_config_changed` 的字段仅为当前实现已发出的形状；`effective_config` 的完整语义以结果文件（§6）与 FR-11.6 为准。
+> **当前实现已发出的事件**（其余为规格先行，见 `xhunter-architecture.md` §14）：`hunt_end`、`tool_result`、`policy_denied`、`deliverable`、`degraded`、`heartbeat`（调用点待接入）。本节其余事件类型与字段是**契约目标**，实现状态以架构文档 §14 为准；`effective_config` 的完整语义以结果文件（§6）与 FR-11.6 为准。
 
 **事件顺序**：`tool_result` / `policy_denied` / `check_result` 三类事件**在模型流结束后（运行段 L5 响应处理）发出**，不随流内 `tool_use` 即时产生——接收段零副作用（流内挂起无半写状态）。事件**类型与字段不变**，仅时序后移。`assistant_text` / `usage` / `permission_request` 应答仍为流内实时。
 
@@ -218,24 +220,41 @@ xhunter version
 
 ## 6. 结果文件
 
+由 `--result <path>` 指定；**无论成败都写**（FR-1.5）——平台靠它记账、决定是否重派。
+写不出来属环境问题（退出码 2），不会静默继续。
+
+**当前形状**（字段只含实现真能给出的事实）：
+
 ```json
 {
   "bounty_id": "...",
-  "status": "succeeded",
+  "session_id": "...",
+  "status": "succeeded|failed|cancelled",
+  "reason": "no_tool_call",
+  "exit_code": 0,
   "base_commit": "...",
   "branch": "xhunter/<session_id>",
   "commit_sha": "...",
   "patch_path": "...",
   "files_changed": ["..."],
-  "assumptions": ["..."],
-  "usage": {"input_tokens": 0, "output_tokens": 0, "cost": 0, "turns": 0},
-  "error": {"kind": "...", "message": "...", "retryable": false},
-  "unverified": ["..."],
-  "gates": [{"name": "test", "required": true, "passed": true, "cached": false, "source": "repo"}],
-  "effective_config": {"gates_source": "base_commit", "checkpoint": {"mode": "on_structure"}, "budget": {"...": 0}, "ext_fingerprint": {"...": "..."}, "target_platform": "linux/amd64"},
-  "session_delta": {"ops": 0, "turns": 0, "path": "..."}
+  "usage": {"input_tokens": 0, "output_tokens": 0, "turns": 0, "elapsed_ms": 0},
+  "error": {"kind": "prepare_failed", "message": "...", "retryable": true}
 }
 ```
+
+> `error` 仅失败时出现；`retryable` 与退出码同源（环境问题才为 `true`）。
+> `patch_path` 仅在给了 `--patch` 且补丁产出成功时出现；补丁**排除会话材料目录**的
+> 语义尚未接入（会话材料尚未落盘）。
+
+**尚未落地、因而不写空壳的字段**（空数组会被读成"没有门禁、没有假设"，那是另一句话）：
+
+| 字段 | 状态 |
+|---|---|
+| `assumptions` / `unverified` | **待接入**（§FR-6.3/6.4 的假设外化） |
+| `gates`（含未运行门禁的 `passed: null`） | **待接入**（门禁清单与 `check` 未实现） |
+| `effective_config`（FR-11.6 的只读快照） | **待接入**（装配快照未落盘） |
+| `session_delta` | **待接入**（会话材料未落盘） |
+| `cost` | **待接入**（费用维度未计量；目录里已有单价） |
 
 > `gates` 必须**列出未运行的门禁**（`passed: null`），`effective_config` 是**只读快照**（FR-11.6）——两者都是 MR 评审的直接证据：前者回答"验收跑没跑、过没过"，后者回答"用的是哪套规则"。
 
@@ -266,6 +285,7 @@ xhunter version
 | **门禁执行失败**（命令不存在 / 无法创建进程 / 超时） | **2** | 不是质量结论，是环境问题（FR-5.2d）——与上一行的"判定不通过"必须分开 |
 | **检查点连续提交失败达上限（默认 3 次）** | **2** | 远端不可用，本轮结束即收敛，不跑完剩余轮次（FR-1.3b、FR-1.11②） |
 | **stdout 写失败（通道断裂）** | **2** | 消费者已不在通道上，写丢弃比继续跑更危险（FR-10.4、AC-19） |
+| **结果文件 / 补丁写失败** | **2** | 交不出交付记录与补丁（路径不可写、磁盘满）——环境问题，修好可重派 |
 | SIGTERM / SIGINT | 3 | 平台主动取消 |
 
 判据一句话：**"换个环境或修好配置就能成功"的算 2，其余失败算 1。**

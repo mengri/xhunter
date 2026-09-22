@@ -180,6 +180,24 @@ func (g *Git) Diff(ctx context.Context, baseCommit string) ([]string, error) {
 	return strings.Split(out, "\n"), nil
 }
 
+// Patch 产出相对基线的统一 diff（`git apply` 兼容）。
+//
+// 与 Diff 同一范围、同一时点：都是附带交付物，主交付始终是分支 tip。
+// 必须在 Clean 之前调用——工作树回收之后就没有可 diff 的对象了。
+func (g *Git) Patch(ctx context.Context, baseCommit string) (string, error) {
+	if g.root == "" {
+		return "", envFault("no_worktree", "尚未获取基线：无法产出补丁")
+	}
+	if strings.TrimSpace(baseCommit) == "" {
+		return "", envFault("baseline_unreachable", "缺少基线 commit：无法产出补丁")
+	}
+	out, err := g.runRaw(ctx, g.root, "diff", "--no-color", baseCommit)
+	if err != nil {
+		return "", envFault("diff_failed", "产出补丁失败："+err.Error())
+	}
+	return out, nil
+}
+
 // Clean 回收临时工作树。可重复调用：没有工作树时是空操作。
 func (g *Git) Clean(_ context.Context) error {
 	if g.root == "" {
@@ -286,6 +304,15 @@ func (g *Git) fetchBase(ctx context.Context, root, base string) bool {
 // run 执行一条 git 命令，返回裁剪后的标准输出；非零退出即失败。
 // 失败时把 stderr 带进错误里——git 的诊断信息是定位环境问题的第一手依据。
 func (g *Git) run(ctx context.Context, dir string, args ...string) (string, error) {
+	out, err := g.runRaw(ctx, dir, args...)
+	return strings.TrimSpace(out), err
+}
+
+// runRaw 同 run，但**原样**交出标准输出。
+//
+// 补丁必须走这条：diff 的最后一个换行是内容的一部分，裁剪过的补丁会变成
+// "corrupt patch"（`git apply` 明确拒绝）。
+func (g *Git) runRaw(ctx context.Context, dir string, args ...string) (string, error) {
 	out, errText, code, err := g.exec(ctx, dir, args...)
 	if err != nil {
 		return "", err
@@ -303,7 +330,7 @@ func (g *Git) runCode(ctx context.Context, dir string, args ...string) (string, 
 	if err != nil {
 		return "", -1, err
 	}
-	return out, code, nil
+	return strings.TrimSpace(out), code, nil
 }
 
 func (g *Git) exec(ctx context.Context, dir string, args ...string) (string, string, int, error) {
@@ -314,7 +341,7 @@ func (g *Git) exec(ctx context.Context, dir string, args ...string) (string, str
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
-	out := strings.TrimSpace(stdout.String())
+	out := stdout.String()
 	errText := strings.TrimSpace(stderr.String())
 	if err == nil {
 		return out, errText, 0, nil

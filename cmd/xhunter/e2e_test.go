@@ -59,8 +59,11 @@ func TestEndToEnd_LocalRunProducesDeliveryCommit(t *testing.T) {
 	taskPath, cfgPath := writeRunInputs(t, tmp, task, srv.URL+"/v1")
 	setRunEnv(t, taskPath, cfgPath, fx)
 
+	resultPath := filepath.Join(tmp, "out", "result.json") // 父目录不存在：装配层要建
+	patchPath := filepath.Join(tmp, "out", "delivery.patch")
+
 	stdout, stderr := swapStdStreams(t)
-	code := run([]string{"--bounty", taskPath})
+	code := run([]string{"--bounty", taskPath, "--result", resultPath, "--patch", patchPath})
 	stdoutText, stderrText := drainStdStreams(t, stdout, stderr)
 
 	if code != exitOK {
@@ -119,6 +122,54 @@ func TestEndToEnd_LocalRunProducesDeliveryCommit(t *testing.T) {
 	files, _ := types["deliverable"]["files"].([]any)
 	if len(files) != 1 || files[0] != "hello.txt" {
 		t.Errorf("deliverable.files = %v，期望 [hello.txt]", types["deliverable"]["files"])
+	}
+
+	// 结果文件（FR-1.5、使用手册 §6）：交付记录必须能独立读出来。
+	var res resultFile
+	raw, err := os.ReadFile(resultPath)
+	if err != nil {
+		t.Fatalf("结果文件未写出：%v", err)
+	}
+	if err := json.Unmarshal(raw, &res); err != nil {
+		t.Fatalf("结果文件不是合法 JSON：%v\n%s", err, raw)
+	}
+	if res.Status != "succeeded" || res.ExitCode != exitOK || res.BountyID == "" {
+		t.Errorf("结果文件终态不对：%+v", res)
+	}
+	if res.Branch != fx.branch || res.BaseCommit != fx.base {
+		t.Errorf("结果文件缺少任务事实：%+v", res)
+	}
+	if res.CommitSHA == "" || res.CommitSHA != tip {
+		t.Errorf("commit_sha = %q，期望交付提交 %q", res.CommitSHA, tip)
+	}
+	if len(res.FilesChanged) != 1 || res.FilesChanged[0] != "hello.txt" {
+		t.Errorf("files_changed = %v", res.FilesChanged)
+	}
+	if res.Usage.Turns != 2 || res.Usage.InputTokens != 32 || res.Usage.OutputTokens != 10 {
+		t.Errorf("usage 不对（两轮共 32/10）：%+v", res.Usage)
+	}
+	if res.PatchPath != patchPath {
+		t.Errorf("patch_path = %q，期望 %q", res.PatchPath, patchPath)
+	}
+	if res.Error != nil {
+		t.Errorf("成功路径不该有 error：%+v", res.Error)
+	}
+
+	// 补丁必须能应用到干净基线上——"能应用"是 patch 交付的定义（FR-6.1、AC-1）。
+	patch, err := os.ReadFile(patchPath)
+	if err != nil {
+		t.Fatalf("补丁文件未写出：%v", err)
+	}
+	if !strings.Contains(string(patch), "hello.txt") {
+		t.Errorf("补丁里应含改动文件：%s", patch)
+	}
+	applyDir := filepath.Join(tmp, "apply")
+	gitIn(t, "", "clone", "-q", fx.remote, applyDir)
+	gitIn(t, applyDir, "checkout", "-q", fx.base)
+	apply := exec.Command("git", "apply", "--check", patchPath)
+	apply.Dir = applyDir
+	if out, err := apply.CombinedOutput(); err != nil {
+		t.Fatalf("补丁不能应用到基线：%v\n%s\n--- patch ---\n%s", err, out, patch)
 	}
 
 	// 收尾清理：临时工作树不留残骸。
@@ -189,6 +240,55 @@ func TestEndToEnd_SigtermConvergesToCancelled(t *testing.T) {
 		t.Errorf("取消也必须上报终态（INV-3）：\n%s", stdoutText)
 	}
 	assertDirEmpty(t, workParent)
+}
+
+// 结果文件在**失败路径**上同样要写出（FR-1.5："结束时写出结果文件"）：平台靠它
+// 记账与决定是否重派，所以失败时 error.kind 与 retryable 必须齐。
+func TestEndToEnd_ResultFileWrittenOnFailure(t *testing.T) {
+	requireGitForE2E(t)
+	tmp := t.TempDir()
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+	t.Setenv("TMPDIR", filepath.Join(tmp, "work"))
+
+	taskPath, cfgPath := writeRunInputs(t, tmp, "做点什么", "http://127.0.0.1:1/v1")
+	t.Setenv("XHUNTER_REPO_URL", filepath.Join(tmp, "no-such-repo.git"))
+	t.Setenv("XHUNTER_REPO_BASE_COMMIT", "0123456789abcdef0123456789abcdef01234567")
+	t.Setenv("XHUNTER_REPO_BRANCH", "xhunter/fail")
+	t.Setenv("XHUNTER_PROVIDER", "localgw")
+	t.Setenv("XHUNTER_MODEL", "test-model")
+	t.Setenv("XHUNTER_PROVIDER_CONFIG", cfgPath)
+
+	resultPath := filepath.Join(tmp, "result.json")
+	stdout, stderr := swapStdStreams(t)
+	code := run([]string{"--bounty", taskPath, "--result", resultPath})
+	_, stderrText := drainStdStreams(t, stdout, stderr)
+
+	if code != exitEnv {
+		t.Fatalf("远端不可达应退出 2，实际 %d\n%s", code, stderrText)
+	}
+	raw, err := os.ReadFile(resultPath)
+	if err != nil {
+		t.Fatalf("失败路径也必须写出结果文件：%v", err)
+	}
+	var res resultFile
+	if err := json.Unmarshal(raw, &res); err != nil {
+		t.Fatalf("结果文件不是合法 JSON：%v", err)
+	}
+	if res.Status != "failed" || res.ExitCode != exitEnv {
+		t.Errorf("终态不对：%+v", res)
+	}
+	if res.Error == nil {
+		t.Fatalf("失败必须带 error 对象：%+v", res)
+	}
+	if res.Error.Kind == "" || !res.Error.Retryable {
+		t.Errorf("环境问题应标可重试且给出 kind：%+v", res.Error)
+	}
+	if !strings.Contains(res.Error.Message, res.Error.Kind) {
+		t.Errorf("message 应含完整原因：%+v", res.Error)
+	}
+	if res.Branch != "xhunter/fail" || res.BaseCommit == "" {
+		t.Errorf("结果文件缺少任务事实：%+v", res)
+	}
 }
 
 // ============================================================ 夹具

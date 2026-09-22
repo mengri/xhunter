@@ -53,11 +53,30 @@ type Session struct {
 	commit  *git.Commit
 	ops     []WriteOp
 
+	// files / patch 是收尾时定型的附带交付物：工作树一旦回收就再也取不到，
+	// 因此必须在此之前取出来（见 Finalize）。
+	files []string
+	patch string
+
 	checkpointRequested bool
 	checkpointSummary   string
 
 	// charged 是已转交策略的累计用量水位：run 上的用量是累计值，策略要的是增量。
 	charged llm.Usage
+}
+
+// Delivery 是收尾后可读的交付事实：主交付是分支 tip（Commit），附带交付是改动
+// 文件清单与补丁（FR-6.1）。仓库实现的四个动作只到 Clean 为止，交付物因此在
+// Finalize 里定型，并由装配层拿去写结果文件。
+type Delivery struct {
+	Commit *git.Commit
+	Files  []string
+	Patch  string
+}
+
+// Delivery 返回本次执行的交付事实（Finalize 之后调用才有内容）。
+func (s *Session) Delivery() Delivery {
+	return Delivery{Commit: s.commit, Files: s.files, Patch: s.patch}
 }
 
 // NewSession 构造 Session。

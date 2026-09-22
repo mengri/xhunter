@@ -2,7 +2,8 @@
 //
 // 用法：
 //
-//	xhunter --bounty <path> [--log-file <path>]   执行一次 Hunt
+//	xhunter --bounty <path> [--log-file <path>] [--result <path>] [--patch <path>]
+//	                                              执行一次 Hunt
 //	xhunter models update [--source URL] [--dir PATH] [--timeout DURATION]
 //	xhunter models status [--dir PATH]
 //	xhunter version
@@ -64,7 +65,10 @@ func run(args []string) int {
 func usage() {
 	fmt.Fprint(os.Stderr, `xhunter
 
-  xhunter --bounty <path> [--log-file <path>]   执行一次 Hunt（<path> 是任务正文文件）
+  xhunter --bounty <path> [--log-file <path>] [--result <path>] [--patch <path>]
+        执行一次 Hunt（<path> 是任务正文文件）
+        --result  结束时写结果文件（JSON；无论成败）
+        --patch   写相对基线的统一 diff（git apply 兼容）
   xhunter models update [--source URL] [--dir PATH] [--timeout DURATION]
   xhunter models status [--dir PATH]
   xhunter version
@@ -80,6 +84,8 @@ func huntCmd(args []string) int {
 	fs := flag.NewFlagSet("xhunter", flag.ContinueOnError)
 	bountyPath := fs.String("bounty", "", "任务正文文件路径")
 	logFile := fs.String("log-file", "", "人类可读日志路径（默认 stderr）")
+	resultPath := fs.String("result", "", "结果文件路径（JSON；FR-1.5）")
+	patchPath := fs.String("patch", "", "补丁文件路径（相对基线的统一 diff）")
 	if err := fs.Parse(args); err != nil {
 		return exitEnv
 	}
@@ -168,6 +174,12 @@ func huntCmd(args []string) int {
 	}})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "执行失败：%v\n", err)
+		return exitEnv
+	}
+
+	// 交付记录在终态之后写：无论成败都要留档（FR-1.5），写不出来属环境问题。
+	if err := writeRunOutputs(*resultPath, *patchPath, bounty, outcome, session.Delivery()); err != nil {
+		fmt.Fprintf(os.Stderr, "%v（终态已定：%s/%s）\n", err, outcome.Status, outcome.Reason)
 		return exitEnv
 	}
 	return int(outcome.ExitCode)

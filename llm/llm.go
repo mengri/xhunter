@@ -67,7 +67,8 @@ type Message struct {
 	Results []ToolResult
 }
 
-// Usage 是 token 用量。Turns 与 Elapsed 由使用方统计，协议实现只填 token 两项。
+// Usage 是 token 用量与轮级统计。协议实现只填 token 两项；轮数与耗时由循环
+// （harness.Engine）在收尾时补齐——它才知道一共跑了几轮、花了多久。
 type Usage struct {
 	InputTokens  int
 	OutputTokens int

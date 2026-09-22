@@ -289,6 +289,54 @@ func TestDiff_ListsFilesChangedSinceBaseline(t *testing.T) {
 	}
 }
 
+// 补丁：相对基线的统一 diff，必须能原样应用到干净基线——否则"附带交付"是空话。
+// 末尾换行属于内容：裁剪过的补丁会被 git apply 判为 corrupt。
+func TestPatch_AppliesCleanlyToBaseline(t *testing.T) {
+	requireGit(t)
+	f := newFixture(t)
+	repo := f.repo("xhunter/s8")
+	g := New(Config{WorkDir: f.work})
+	root, err := g.PrepareBaseline(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("获取基线失败：%v", err)
+	}
+
+	// 无改动时补丁为空（不是错误）。
+	empty, err := g.Patch(context.Background(), f.base)
+	if err != nil {
+		t.Fatalf("无改动时产出补丁不该失败：%v", err)
+	}
+	if strings.TrimSpace(empty) != "" {
+		t.Errorf("无改动应有空补丁：%q", empty)
+	}
+
+	writeFile(t, filepath.Join(root, "pkg/a.txt"), "new\n")
+	writeFile(t, filepath.Join(root, "b.txt"), "two\n")
+	if _, err := g.Commit(context.Background(), repo, "改动"); err != nil {
+		t.Fatalf("提交失败：%v", err)
+	}
+	patch, err := g.Patch(context.Background(), f.base)
+	if err != nil {
+		t.Fatalf("产出补丁失败：%v", err)
+	}
+	if !strings.Contains(patch, "pkg/a.txt") || !strings.Contains(patch, "b.txt") {
+		t.Fatalf("补丁缺改动文件：%s", patch)
+	}
+
+	// 干净基线上必须能应用。
+	apply := filepath.Join(t.TempDir(), "apply")
+	runGit(t, "", "clone", "-q", f.remote, apply)
+	runGit(t, apply, "checkout", "-q", f.base)
+	patchFile := filepath.Join(t.TempDir(), "x.patch")
+	if err := os.WriteFile(patchFile, []byte(patch), 0o644); err != nil {
+		t.Fatalf("写补丁失败：%v", err)
+	}
+	runGit(t, apply, "apply", patchFile)
+	if b, err := os.ReadFile(filepath.Join(apply, "pkg", "a.txt")); err != nil || string(b) != "new\n" {
+		t.Fatalf("补丁应用结果不对：%q err=%v", b, err)
+	}
+}
+
 // 回收：临时工作树被删除；重复调用是空操作。
 func TestClean_RemovesWorktreeAndIsIdempotent(t *testing.T) {
 	requireGit(t)
