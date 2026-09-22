@@ -89,7 +89,7 @@
 │  │    hunt/basic     read · write · edit · find · glob           │ │
 │  │    hunt/symbolic  symbol_read · symbol_edit · symbol_rename   │ │
 │  │    hunt/gate      check（+ 自动检查点钩子）                    │ │
-│  │  提示词插件：prompt/agentsmd · prompt/skills                   │ │
+│  │  提示词插件：prompt/agentsmd · prompt/skills · prompt/task      │ │
 │  └──────────────┬───────────────────────────┬────────────────────┘ │
 │                 │ 能力抽象（基础包）          │                     │
 │  ┌──────────────▼──────────┐  ┌─────────────▼──────────┐          │
@@ -167,8 +167,8 @@
 |---|---|
 | `harness.New` | `provider` ＋ 三组 handler：`{session.Prepare}` / `{session.OnTurn}` / `{session.Finalize}` |
 | `hunt.Config.Tools` | `defaultTools(ws, ex)`：按产品设计的工具集规格定序（`cmd/xhunter/primitives.go`），`checkpoint` 殿后 |
-| `hunt.Config.SystemPlugins` | `prompt/agentsmd`（项目约定 → system 段） |
-| `hunt.Config.UserPlugins` | `prompt/skills`（技能清单 → user 段） |
+| `hunt.Config.SystemPlugins` | `prompt/agentsmd`（项目约定）· `prompt/skills`（技能清单）→ system 段 |
+| `hunt.Config.UserPlugins` | `prompt/task`（任务陈述）→ user 段 |
 | `hunt.Config.Filters` | 一期为空：结果加工链留空即原样透传 |
 | `hunt.Config.Policy` | `internal/policy`：路径边界 ＋ 三重预算（token / 轮数 / 墙钟，0 = 不限） |
 | `harness.Config` | 轮数硬上限、连续失败止损（缺省即可用）；与 `Policy` 的分工见 §7.4 |
@@ -433,7 +433,7 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
         └─ 插件正文       任务陈述                              ← 每次不同
 ```
 
-> **一期现状**：两段**只由插件正文构成**（`prompt/agentsmd` → system，`prompt/skills` → user）；工具面说明层、内核条款、环境事实与门禁注入均**尚未实现**——`firstPrompt` 目前只负责"摆位置与顺序"。上面这张图是目标形态，不是当前产出。
+> **一期现状**：两段**只由插件正文构成**（`prompt/agentsmd` + `prompt/skills` → system，`prompt/task` → user）。图中的**工具面说明层、内核条款、内核注入（环境事实与门禁清单）三项尚未实现**；`firstPrompt` 只负责"摆位置与顺序"，这三项之外的部分已落地。
 
 **约定与 skill 的默认口径**（实现见 `prompt/agentsmd/` 与 `prompt/skills/`；插件可替换，内核不规定发现方式）：
 
@@ -1021,7 +1021,7 @@ Bounty(session) ──► H6.Session
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
-| IA-2.1 | 首轮两段顺序稳定且空段不占位：system 段在前、user 段在后（一期只由插件正文构成，工具面说明层与内核条款待接入），缓存友好 | `TestFirstPrompt_KeepsOrderAndSkipsEmpty`（hunt）、`TestDefaultPromptPlugins_OrderIsThePromptOrder`（cmd） |
+| IA-2.1 | 首轮两段顺序稳定且空段不占位：system 段在前、user 段在后（一期只由插件正文构成，工具面说明层与内核条款待接入），缓存友好；**任务正文必须进 user 段**（否则模型看不到任务） | `TestFirstPrompt_KeepsOrderAndSkipsEmpty`（hunt）、`TestDefaultPromptPlugins_OrderIsThePromptOrder`、`TestPrepare_FirstPromptCarriesTaskAndConventions`（cmd） |
 | IA-2.2 | 历史按轮追加、每轮各成消息（模型说了什么 ＋ 调用结果），下一轮即可见 | `TestContextBuilder_AssemblesPromptThenHistory`（cmd） |
 | IA-2.3 | 结果加工的改动**必须先于落历史**——否则历史里是旧副本，模型看不到 | `TestOnTurn_FiltersRunBeforeRecording`（hunt） |
 | IA-2.4 | 落历史与会话材料是**值拷贝**：此后对 `Turn` 的改动不影响已记内容 | 同上（同一条用例的断言之一） |

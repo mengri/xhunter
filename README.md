@@ -9,7 +9,7 @@
 ```
 llm/                          公开：中立契约——对话形状、流式事件、Provider/Session/Caps
 harness/                      公开：核心库——模型调用循环（Engine 驱动 Prepare → infer/receive → OnTurn → Finalize）；导出值类型 + 三组 handler 契约 + 一个构造方法 New
-prompt/<kind>/                公开：默认提示词插件（agentsmd 项目约定 / skills 技能清单），构造时显式接收工作区
+prompt/<kind>/                公开：默认提示词插件（agentsmd 项目约定 / skills 技能清单 → system 段；task 任务陈述 → user 段），构造时显式接收工作区
 provider/adapter/             公开：协议实现的共用件（SSE 分帧、调用拼装、错误形状、上限契约）
 provider/openaichat/          公开：协议——OpenAI 兼容对话补全（自持 wire，包注释含协议版本基线）
 provider/openairesponses/     公开：协议——OpenAI Responses
