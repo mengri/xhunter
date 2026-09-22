@@ -1187,13 +1187,13 @@ Bounty(session) ──► H6.Session
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
-| IA-11.1 | `PrepareBaseline`：获取基线（按 SHA 浅克隆，不可得则完整克隆）→ **创建并推送任务分支** → checkout + 干净校验 | **待补**（一期四个动作只到"显式 not_implemented"：`TestGit_UnimplementedFailsLoudly`） |
-| IA-11.2 | **幂等（续跑）**：分支已存在且 tip 为基线或其后代 → 成功；否则环境错误（退出码 2） | **待补** |
-| IA-11.3 | 基线不可达 / 无推送权限 / 工作区脏 → 环境错误（退出码 2） | **待补** |
-| IA-11.4 | `Commit`：提交累积自上一个检查点的全部改动并推送；**只允许 fast-forward** | **待补** |
-| IA-11.5 | 远端 tip 不是本地父提交 → 拒绝推送并返回环境错误，**绝不 force push**（FR-8.3、AC-20） | **待补** |
-| IA-11.6 | `Diff` 相对基线产出统一 diff 且**排除会话材料目录** `.xhunter/<session_id>/**`（FR-6.1、AC-1、AC-25）；失败不阻断收尾 | **待补** |
-| IA-11.7 | `Clean` 回收子进程、临时目录与文件锁；失败只记录 | 代码检查（FR-12.4、FR-12.5） |
+| IA-11.1 | `PrepareBaseline`：获取基线（按 SHA 浅取，不可得则完整 fetch）→ **创建并推送任务分支** → checkout + 干净校验 | `TestPrepareBaseline_FreshTaskCreatesAndPushesBranch`（cli）、`TestEndToEnd_LocalRunProducesDeliveryCommit`（cmd） |
+| IA-11.2 | **幂等（续跑）**：分支已存在且 tip 为基线或其后代 → 成功（checkout 到分支 tip）；分叉即环境错误（退出码 2） | `TestPrepareBaseline_ResumeChecksOutBranchTip`、`TestPrepareBaseline_DivergedBranchIsEnvError`（cli） |
+| IA-11.3 | 基线不可达 / 远端不可达 / 缺部署事实 → 环境错误（退出码 2），且失败路径不留临时工作树 | `TestPrepareBaseline_FailsAtStartupOnUnusableFacts`（cli） |
+| IA-11.4 | `Commit`：提交累积自上一个检查点的全部改动并推送；**无改动不产生空提交**（FR-1.3c） | `TestCommit_PushesFastForwardAndSkipsEmptyCommit`、`TestEndToEnd_LocalRunProducesDeliveryCommit`（cmd） |
+| IA-11.5 | 远端 tip 不是本地父提交 → 拒绝推送并返回环境错误，**绝不 force push**（FR-8.3、AC-20） | `TestCommit_RejectsNonFastForward`（断言远端 tip 未被改写） |
+| IA-11.6 | `Diff` 相对基线产出改动文件清单（FR-6.1、AC-1）；失败不阻断收尾（`Finalize` 只记 warn）。**排除会话材料目录 `.xhunter/<session_id>/**` 待接入**（会话材料尚未落盘） | `TestDiff_ListsFilesChangedSinceBaseline`、`TestEndToEnd_LocalRunProducesDeliveryCommit`（deliverable 事件） |
+| IA-11.7 | `Clean` 回收临时工作树，可重复调用；回收后提交显式失败；失败只记录 | `TestClean_RemovesWorktreeAndIsIdempotent`（cli） |
 | IA-11.8 | **调用时机与不可见性（INV-11）**：`PrepareBaseline` 是 `Prepare` 的第一个动作，先于任何工具执行；`Commit` 只在轮边界与收尾被调用；两者**都不作为原语暴露**给模型 | **待补**（断言调用顺序 ＋ 工具面不含 git 原语） |
 | IA-11.9 | **检查点自愈与止损（AC-22）**：单次提交失败不中止（下一轮累积重提）；连续失败达上限 → 环境错误 | 自愈部分：代码检查（`checkpoint` 失败只记 warn）；**连败上限待接入** |
 | IA-11.10 | **时间语义**：检查点提交的是**本轮已应用的改动**（执行在 `OnTurn` 内、提交紧随其后），不含下一轮内容；末轮改动由收尾交付 | **待补** |
@@ -1210,7 +1210,7 @@ Bounty(session) ──► H6.Session
 | IA-12.3 | 两段插件清单的顺序**即**正文拼接顺序，且不重复 | `TestDefaultPromptPlugins_OrderIsThePromptOrder`、`TestDefaultPromptPlugins_NoDuplicate` |
 | IA-12.4 | 后端实现可构造且满足契约；坏根在打开期被拒（不等到第一次读写） | `TestBackends_SatisfyContracts`、`TestBackends_RejectBadRoot` |
 | IA-12.5 | 部署事实缺失 → 启动期退出码 2，并指出缺哪一项 | `TestBountyFromEnv_RequiresRepoFacts`、`TestSelectionFromEnv_Validate`、`TestProviderFor_UnknownSDKTellsWhereToAddAFactory` |
-| IA-12.6 | **端到端**：本地驱动跑通一次（基线 → 至少一轮 → 交付提交 → `hunt_end`），退出码与事件序列符合契约 | **待补**（需夹具仓库 ＋ 假 Provider） |
+| IA-12.6 | **端到端**：本地驱动跑通一次（基线 → 至少一轮 → 工具落盘 → 轮边界检查点 → 交付 = 分支 tip → `hunt_end`），退出码与事件序列符合契约；事件只走 stdout、收尾清理工作树 | `TestEndToEnd_LocalRunProducesDeliveryCommit`（真 git 夹具 + 本地假上游） |
 | IA-12.7 | 装配结果无运行期注册面：改装配只改装配代码，框架侧无注册 API | 代码检查（`harness` 只有 `New(provider, ...)`；`hunt.Config` 是构造参数） |
 | IA-12.8 | **信号接线**：SIGINT / SIGTERM 取消运行段的 `ctx`（循环停止发起新的推理与工具调用、`Finalize` 照常收敛、退出码 3）；启动期仍走默认处置 | `TestSignalContext_CancelsOnSignal`、`TestSignalContext_StopCancelsContext`；进程级 AC-6 断言**待补** |
 
@@ -1245,7 +1245,7 @@ Bounty(session) ──► H6.Session
 | 压缩（§7.2、IA-2.5~2.8） | `ContextBuilder` 只有「组装」没有「下压」：水位、分层下压、结构化工作日志投影 |
 | 门禁（§7.8、IA-11.12） | 清单来源裁决、`check` 实现、收尾补跑、检查点联动、结果缓存 |
 | 符号能力（§7.7） | `ext.ExtHost` 无实现；`hunt/symbolic` 声明不实现 |
-| git 四动作（IA-11.1~11.6） | `internal/git/cli` 只到"显式未实现" |
+| git 剩余语义（IA-11.8~11.13） | 四个动作已落地；检查点密度分档、连败上限、门禁驱动检查点与调用顺序断言待补 |
 | 流看门狗与权限询问（§6.3 L4、§10.3） | `llm.Event` 尚无权限询问形态；不活动超时未接入 |
 | 检查点密度与结构检查（IA-11.11、§6.3 L6） | 只有"有改动即提交"一档；`every_write` / `interval` / `final_only` 与结构判定待接入 |
 | 生效配置快照（§4、IA-12.x） | 装配清单未进结果文件 |
@@ -1257,10 +1257,10 @@ Bounty(session) ──► H6.Session
 |---|---|
 | **写盘与执行器级用例（IA-3.3、IA-3.6）** | `Committer` 的"未读即写被拒 / 读后被改动被拒 / 只改目标区间"目前没有用例——它就在 `hunt` 包里，补起来最便宜 |
 | 绑定层用例（IA-3.9） | `BindToolCall` 拒绝未知字段 / 未知工具名、且**不判断名字存不存在** |
-| 进程级信号（SIGTERM 优雅退出） | 接线已落地（`signalContext`，见 IA-12.8），引擎级 `ctx` 取消也有用例；缺的是**进程级**断言：真实二进制收到信号后退出 3、发出 `hunt_end{cancelled}` 并完成清理（AC-6） |
+| 进程级信号（其余信号形态） | SIGTERM 的进程级断言已落地（`TestEndToEnd_SigtermConvergesToCancelled`，AC-6）；SIGKILL / 中断时机的更多组合仍可补 |
 | 扩展崩溃隔离（IA-7.6） | 需要真实子进程的扩展宿主测试（M2 引入扩展后补） |
 | 凭据静态扫描（IA-6.8、IA-8.4） | 需要 CI 级扫描规则，非单测能覆盖（AC-8） |
-| stdout 纯净性（IA-5.2） | 需要端到端运行断言（AC-9） |
+| stdout 纯净性与通道断裂（IA-5.2、IA-5.3） | 纯净性已有进程级断言（`TestHuntCmd_EventsGoToStdoutAndLogsGoToStderr`、端到端用例）；**写入失败（EPIPE/磁盘满 → 退出 2）仍待补** |
 | 恢复正确性（AC-7） | 需要断言：恢复后工作区 == 最后检查点、**未重做已完成轮次**、恢复过程**零写操作执行** |
-| 装配层端到端（IA-12.6） | 需要夹具仓库 ＋ 假 Provider 跑完整一次（基线 → 一轮 → 交付提交 → `hunt_end`） |
+| ~~装配层端到端（IA-12.6）~~ | **已落地**：`TestEndToEnd_LocalRunProducesDeliveryCommit`（真 git 夹具 + 本地假上游，不联网） |
 | 嵌套约定附注（IA-2.10） | 算出"路径链上最近且未注入过的那份约定"需要一份**约定清单（路径 ＋ 正文）**，而当前插件契约只交正文（`PromptPart.Body`）。补法是给 system 段的结果带上它；等真有消费方时再加，眼下先不摆无人读的契约 |
