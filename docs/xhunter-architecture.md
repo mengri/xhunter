@@ -1086,9 +1086,10 @@ Bounty(session) ──► H6.Session
 | IA-5.2 | stdout 只有外部事件行，合法 NDJSON；日志一律 stderr | **待补**（端到端断言，AC-9） |
 | IA-5.3 | **事件写入失败 → 上抛**，不得静默继续（FR-10.4、AC-19） | **待补**（注入写失败的 sink） |
 | IA-5.4 | 心跳按任务输出（非 runtime），携带阶段与已用时 | **待接入**（`Heartbeat` 已实现，调用点未接入） |
-| IA-5.5 | 工具结果事件携带 `ok` / `summary`（失败再加 `error` / `message`） | 代码检查（`emitToolResult`） |
+| IA-5.5 | **每次工具调用恰好一条 `tool_result`**（成功、原语报错、执行失败、落盘失败、名字不认识、参数绑定失败、检查点都有），且必带 `call_id` / `tool` / `ok` / `summary` / `duration_ms`，失败再加 `error` / `message` | `TestExecuteCall_EveryOutcomeEmitsOneToolResult`、`TestExecuteCall_SuccessRecordsOpsAndSummary`（hunt） |
 | IA-5.6 | 失败信息自含足以远程定位的上下文 | 代码检查（FR-11.5） |
 | IA-5.7 | 每个事件携带信封四字段：`type` / `bounty_id` / `trace_id` / `ts`（契约权威在使用手册 §5） | **待补**（当前只保证 `type` ＋ 载荷） |
+| IA-5.8 | 策略拒绝上报 `policy_denied`（`call_id` / `action` / `reason`），且被拒调用**不产生任何落盘** | `TestExecuteCall_PolicyDenialIsReported`（hunt） |
 
 ### 12.6 H6 — `hunt.SessionRecorder`
 

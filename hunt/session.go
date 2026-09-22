@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"xhunter/git"
 	"xhunter/harness"
@@ -115,41 +116,66 @@ func (s *Session) decls() []llm.ToolDecl {
 // ============================================================ 工具调用（OnTurn 里执行）
 
 // executeCall 执行一次工具调用：绑定参数 → 查表 → 裁决 → 原语执行 → 统一落盘 → 回灌结果。
+//
+// **每一次调用都恰好留下一条 tool_result 事件**（AC-28）：绑定失败、名字不认识、
+// 策略拒绝、执行报错、落盘失败都算"模型提了一次调用、系统给了一个结果"，一律如实上报。
+// 事件里必须带 `call_id`——并行或多调用时它是外部消费者唯一的配对依据（IA-1.5）。
+// 用 defer 统一收口，是因为"每条 return 都记得发事件"这种纪律迟早会被漏掉一条。
 func (s *Session) executeCall(ctx context.Context, turn *harness.Turn, tc llm.ToolCall) llm.ToolResult {
+	started := time.Now()
+	ev := toolResultEvent{callID: tc.ID}
+	defer func() { s.emitToolResult(ev, time.Since(started)) }()
+
 	call, fault := BindToolCall(tc)
+	ev.tool = string(call.Primitive)
 	if fault != nil {
+		ev.fault = fault
 		return llm.ToolResult{CallID: tc.ID, IsError: true,
-			Output: resultText(Result{CallID: ToolCallID(tc.ID), Err: fault})}
+			Output: resultText(Result{CallID: call.ID, Err: fault})}
 	}
 
 	// 检查点原语不读写工作区，单独接走：只把意图转交，真正提交由 OnTurn 完成。
 	if call.Primitive == PrimCheckpoint {
-		return s.executeCheckpoint(call)
+		res := s.executeCheckpoint(call)
+		ev.summary = res.Output
+		return res
 	}
 
 	prim, ok := s.tools[call.Primitive]
 	if !ok {
-		return llm.ToolResult{CallID: tc.ID, IsError: true,
-			Output: fmt.Sprintf("没有名为 %q 的工具；可用的是：%s", call.Primitive, s.available())}
+		f := &llm.Fault{Kind: "unknown_tool",
+			Message: fmt.Sprintf("没有名为 %q 的工具；可用的是：%s", call.Primitive, s.available())}
+		ev.fault = f
+		return llm.ToolResult{CallID: tc.ID, IsError: true, Output: f.Message}
 	}
 
 	if s.cfg.Policy != nil {
 		d, err := s.cfg.Policy.Decide(ctx, call)
 		if err != nil {
-			return llm.ToolResult{CallID: tc.ID, IsError: true, Output: "策略裁决失败：" + err.Error()}
+			f := &llm.Fault{Kind: "policy_error", Message: "策略裁决失败：" + err.Error(), Retryable: true}
+			ev.fault = f
+			return llm.ToolResult{CallID: tc.ID, IsError: true, Output: f.Message}
 		}
 		if d.Verdict != VerdictAllow {
+			// 拒绝要留两条痕迹：回灌给模型的原因（让它换做法），以及外部可见的
+			// policy_denied（平台据此看出"模型在撞哪堵墙"）。
+			f := &llm.Fault{Kind: "policy_denied", Message: d.Reason}
+			ev.fault = f
+			s.emitPolicyDenied(call, d.Reason)
 			return llm.ToolResult{CallID: tc.ID, IsError: true, Output: d.Reason}
 		}
 	}
 
 	res, edits, err := prim.Execute(ctx, call, s)
 	if err != nil {
-		return llm.ToolResult{CallID: tc.ID, IsError: true, Output: "工具执行失败：" + err.Error()}
+		f := &llm.Fault{Kind: "execute_failed", Message: "工具执行失败：" + err.Error(), Retryable: true}
+		ev.fault = f
+		return llm.ToolResult{CallID: tc.ID, IsError: true, Output: f.Message}
 	}
 	if res.Err != nil {
 		res.CallID = call.ID
-		s.emitToolResult(call, false, res.Summary, res.Err)
+		ev.summary = res.Summary
+		ev.fault = res.Err
 		return UnbindToolResult(res)
 	}
 
@@ -157,7 +183,9 @@ func (s *Session) executeCall(ctx context.Context, turn *harness.Turn, tc llm.To
 	if len(edits) > 0 {
 		ops, err := newCommitter(s.storage, s.ledger).Commit(edits)
 		if err != nil {
-			return llm.ToolResult{CallID: tc.ID, IsError: true, Output: "落盘失败：" + err.Error()}
+			f := &llm.Fault{Kind: "commit_failed", Message: "落盘失败：" + err.Error(), Retryable: true}
+			ev.fault = f
+			return llm.ToolResult{CallID: tc.ID, IsError: true, Output: f.Message}
 		}
 		for i := range ops {
 			ops[i].Turn = TurnNo(turn.No)
@@ -169,7 +197,7 @@ func (s *Session) executeCall(ctx context.Context, turn *harness.Turn, tc llm.To
 
 	res.CallID = call.ID
 	res.OK = true
-	s.emitToolResult(call, true, res.Summary, nil)
+	ev.summary = res.Summary
 	return llm.ToolResult{CallID: tc.ID, Output: res.Summary}
 }
 
@@ -197,20 +225,50 @@ func (s *Session) available() string {
 	return strings.Join(names, "、")
 }
 
-func (s *Session) emitToolResult(call Call, ok bool, summary string, fault *llm.Fault) {
+// toolResultEvent 是一次调用要上报的事实：即使失败也必须有 call_id 与工具名。
+type toolResultEvent struct {
+	callID  string
+	tool    string
+	summary string
+	fault   *llm.Fault
+}
+
+// emitToolResult 上报一次工具调用结果。载荷字段与使用手册 §5 的事件契约一一对应：
+// `call_id` 用于配对，`tool`/`ok`/`summary` 描述结局，失败再补 `error`/`message`，
+// `duration_ms` 供平台侧看单次调用的代价。
+func (s *Session) emitToolResult(ev toolResultEvent, elapsed time.Duration) {
 	if s.cfg.Sink == nil {
 		return
 	}
 	payload := map[string]any{
-		"tool":    string(call.Primitive),
-		"ok":      ok,
-		"summary": summary,
+		"call_id":     ev.callID,
+		"tool":        ev.tool,
+		"ok":          ev.fault == nil,
+		"summary":     ev.summary,
+		"duration_ms": elapsed.Milliseconds(),
 	}
-	if fault != nil {
-		payload["error"] = fault.Kind
-		payload["message"] = fault.Message
+	if ev.fault != nil {
+		payload["error"] = ev.fault.Kind
+		payload["message"] = ev.fault.Message
 	}
 	_ = s.cfg.Sink.Emit(ExternalEvent{Type: "tool_result", Payload: payload})
+}
+
+// emitPolicyDenied 上报一次策略拒绝：平台据此看出模型在撞哪堵墙，而不是只看到
+// 一串失败结果（使用手册 §5 的 policy_denied）。
+func (s *Session) emitPolicyDenied(call Call, reason string) {
+	if s.cfg.Sink == nil {
+		return
+	}
+	payload := map[string]any{
+		"call_id": string(call.ID),
+		"action":  string(call.Primitive),
+		"reason":  reason,
+	}
+	if call.Target != "" {
+		payload["target"] = call.Target
+	}
+	_ = s.cfg.Sink.Emit(ExternalEvent{Type: "policy_denied", Payload: payload})
 }
 
 var _ Facts = (*Session)(nil)
