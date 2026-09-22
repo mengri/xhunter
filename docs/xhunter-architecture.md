@@ -1047,7 +1047,7 @@ Bounty(session) ──► H6.Session
 | IA-3.4 | 内容寻址不放宽匹配语义：未找到 → `not_found`（可重试）；多处匹配 → `ambiguous` ＋ 数量 | `TestEdit_NoMatchReportsNotFound`、`TestEdit_AmbiguousReportsCount` |
 | IA-3.5 | 符号寻址只接受 `Prepared` 的定位结果，落盘仍走 `Committer` | **待接入**（符号原语声明不实现） |
 | IA-3.6 | 落盘只改写目标字节区间，其余字节原样保留 | **待补**（需 `Committer` 级用例） |
-| IA-3.7 | 路径解析与工作区根校验：`../` 与符号链接逃逸一律拒绝 | `TestResolve_RejectsPathsOutsideWorkspace`、`TestResolve_RejectsSymlinkEscape`（osfs） |
+| IA-3.7 | 路径解析与工作区根校验：`../` 与符号链接逃逸一律拒绝；**新建文件（叶子尚不存在）与深层路径同样要拦**，且指向工作区内部的软链不误伤 | `TestResolve_RejectsPathsOutsideWorkspace`、`TestResolve_RejectsSymlinkEscape`、`TestResolve_RejectsSymlinkEscapeForNewFile`、`TestResolve_AllowsSymlinkInsideWorkspace`（osfs） |
 | IA-3.8 | 枚举跳过噪音但保留控制目录（`.xhunter`）；同状态枚举顺序稳定 | `TestList_SkipsNoiseButKeepsControlDir`、`TestList_OrderIsStable`（osfs） |
 | IA-3.9 | 绑定层拒绝形状不成立的调用（未知字段 / 未知工具名），并回灌结构化错误 | **待补**（需绑定层用例） |
 | IA-3.10 | 结果按 `CallID` 严格配对，**禁止按顺序猜测** | 代码检查（`produced()` 里 tool 消息携带 `Results[].CallID`） |

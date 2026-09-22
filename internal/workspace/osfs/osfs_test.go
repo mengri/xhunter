@@ -103,6 +103,55 @@ func TestResolve_RejectsSymlinkEscape(t *testing.T) {
 	}
 }
 
+// 写盘路径上的符号链接逃逸：中间级是软链、**叶子还不存在**时也必须拦住。
+//
+// 这是最容易漏的一档：叶子不存在，EvalSymlinks 对整条路径会失败，若据此跳过边界检查，
+// 写新文件就会顺着软链落到工作区之外——而"写新文件"正是这条边界最该生效的场合。
+func TestResolve_RejectsSymlinkEscapeForNewFile(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	link := filepath.Join(root, "escape")
+	if err := symlink(outside, link); err != nil {
+		t.Skipf("环境不支持创建符号链接：%v", err)
+	}
+
+	st := open(t, root)
+	// 读不存在的叶子
+	if _, err := st.Read("escape/new.txt", workspace.LineRange{}); err == nil {
+		t.Error("经符号链接读工作区外的不存在文件必须被拒绝")
+	}
+	// 写不存在的叶子：唯一写盘入口同样要走这道检查
+	if _, err := st.WriteRange("escape/new.txt", workspace.ByteRange{}, "pwned"); err == nil {
+		t.Error("经符号链接写工作区外的新文件必须被拒绝")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "new.txt")); err == nil {
+		t.Fatal("工作区之外出现了写入结果——边界被绕过")
+	}
+	// 更深一层同理：祖先链上任何一级越界都要拦住。
+	if _, err := st.WriteRange("escape/deep/new.txt", workspace.ByteRange{}, "pwned"); err == nil {
+		t.Error("深层路径同样必须被拒绝")
+	}
+}
+
+// 反向：指向**工作区内部**的符号链接不是逃逸，不能误伤。
+func TestResolve_AllowsSymlinkInsideWorkspace(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "real"), 0o755); err != nil {
+		t.Fatalf("建目录失败：%v", err)
+	}
+	if err := symlink(filepath.Join("real"), filepath.Join(root, "link")); err != nil {
+		t.Skipf("环境不支持创建符号链接：%v", err)
+	}
+
+	st := open(t, root)
+	if _, err := st.WriteRange("link/new.txt", workspace.ByteRange{}, "ok"); err != nil {
+		t.Fatalf("指向工作区内部的软链应放行：%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "real", "new.txt")); err != nil {
+		t.Errorf("写入应落在软链目标（工作区内）：%v", err)
+	}
+}
+
 // 符号链接相关的测试辅助。
 
 func writeOutside(dir string) error {

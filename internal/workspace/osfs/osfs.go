@@ -53,6 +53,11 @@ type storage struct {
 var _ workspace.Storage = (*storage)(nil)
 
 // resolve 是路径解析与边界校验的唯一实现，三道都拦：绝对路径、".." 字面逃逸、符号链接逃逸。
+//
+// 符号链接这一道必须对**尚不存在的目标**同样成立：写新文件时叶子不存在，EvalSymlinks
+// 会失败；若因此跳过检查，路径中间的软链（例如仓库里提交过的 link → 工作区之外）就会被
+// 顺着写出去。因此这里逐级向上找到第一个"能被解析"的祖先，对它做解析与边界比较——
+// 越界与否由该祖先的真实位置决定，与叶子是否存在无关。
 func (s *storage) resolve(rel string) (string, error) {
 	if strings.TrimSpace(rel) == "" {
 		return "", &llm.Fault{Kind: "invalid_path", Message: "空路径"}
@@ -66,13 +71,34 @@ func (s *storage) resolve(rel string) (string, error) {
 	}
 	abs := filepath.Join(s.root, clean)
 
-	if real, err := filepath.EvalSymlinks(abs); err == nil {
-		rootReal, err2 := filepath.EvalSymlinks(s.root)
-		if err2 == nil && real != rootReal && !strings.HasPrefix(real, rootReal+string(filepath.Separator)) {
-			return "", &llm.Fault{Kind: "path_escape", Message: fmt.Sprintf("符号链接逃逸：%q 指向工作区之外", rel)}
+	// 根在 Open 时已验证存在；解析失败时退回字面值，后续比较仍按"严格在根之下"判定。
+	rootReal, err := filepath.EvalSymlinks(s.root)
+	if err != nil {
+		rootReal = filepath.Clean(s.root)
+	}
+
+	for probe := abs; ; {
+		real, err := filepath.EvalSymlinks(probe)
+		switch {
+		case err == nil:
+			if real != rootReal && !strings.HasPrefix(real, rootReal+string(filepath.Separator)) {
+				return "", &llm.Fault{Kind: "path_escape", Message: fmt.Sprintf("符号链接逃逸：%q 指向工作区之外", rel)}
+			}
+			return abs, nil
+		case errors.Is(err, fs.ErrNotExist):
+			// 这一级还不存在：越界判定交给最近的、真实存在的那一级。
+			parent := filepath.Dir(probe)
+			if parent == probe {
+				return abs, nil
+			}
+			probe = parent
+		default:
+			// 解析不了（权限、软链成环、中间级不是目录……）一律不放行：
+			// 这是边界，宁可拒绝也不要"因为看不懂所以跳过检查"。
+			return "", &llm.Fault{Kind: "invalid_path",
+				Message: fmt.Sprintf("路径无法解析：%q（%v）", rel, err)}
 		}
 	}
-	return abs, nil
 }
 
 func (s *storage) Read(rel string, r workspace.LineRange) (workspace.FileContent, error) {
