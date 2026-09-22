@@ -168,21 +168,27 @@ func (s *Session) executeCall(ctx context.Context, turn *harness.Turn, tc llm.To
 		return llm.ToolResult{CallID: tc.ID, IsError: true, Output: f.Message}
 	}
 
-	if s.cfg.Policy != nil {
-		d, err := s.cfg.Policy.Decide(ctx, call)
-		if err != nil {
-			f := &llm.Fault{Kind: "policy_error", Message: "策略裁决失败：" + err.Error(), Retryable: true}
-			ev.fault = f
-			return llm.ToolResult{CallID: tc.ID, IsError: true, Output: f.Message}
-		}
-		if d.Verdict != VerdictAllow {
-			// 拒绝要留两条痕迹：回灌给模型的原因（让它换做法），以及外部可见的
-			// policy_denied（平台据此看出"模型在撞哪堵墙"）。
-			f := &llm.Fault{Kind: "policy_denied", Message: d.Reason}
-			ev.fault = f
-			s.emitPolicyDenied(call, d.Reason)
-			return llm.ToolResult{CallID: tc.ID, IsError: true, Output: d.Reason}
-		}
+	if s.cfg.Policy == nil {
+		// 未装配策略 = **默认拒绝**（INV-4、hunt/policy.go 的开篇约定）。这里绝不
+		// "跳过裁决"：忘装配策略不该让执行体变成无边界的写入者。
+		f := &llm.Fault{Kind: "policy_missing",
+			Message: "未装配策略：拒绝执行任何工具调用（装配期缺件）"}
+		ev.fault = f
+		return llm.ToolResult{CallID: tc.ID, IsError: true, Output: f.Message}
+	}
+	d, err := s.cfg.Policy.Decide(ctx, call)
+	if err != nil {
+		f := &llm.Fault{Kind: "policy_error", Message: "策略裁决失败：" + err.Error(), Retryable: true}
+		ev.fault = f
+		return llm.ToolResult{CallID: tc.ID, IsError: true, Output: f.Message}
+	}
+	if d.Verdict != VerdictAllow {
+		// 拒绝要留两条痕迹：回灌给模型的原因（让它换做法），以及外部可见的
+		// policy_denied（平台据此看出"模型在撞哪堵墙"）。
+		f := &llm.Fault{Kind: "policy_denied", Message: d.Reason}
+		ev.fault = f
+		s.emitPolicyDenied(call, d.Reason)
+		return llm.ToolResult{CallID: tc.ID, IsError: true, Output: d.Reason}
 	}
 
 	res, edits, err := prim.Execute(ctx, call, s)

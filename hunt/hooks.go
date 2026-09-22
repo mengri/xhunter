@@ -2,6 +2,7 @@ package hunt
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"unicode"
@@ -21,7 +22,24 @@ import (
 //
 // 工作区在这里就打开并检查——失败即返回错误，循环根本不会开始，因此不存在「跑到一半
 // 才发现工作区不可用」的中间态。
+//
+// 装配缺件也在这里显式失败（FR-1.8：缺件在首轮推理之前失败，退出码 2）。此前
+// Git / Opener 缺失是**调用即 panic**（被引擎收敛成一句 "panic: invalid memory
+// address"），而 Policy 缺失会被静默跳过——同一份"装配校验"的说法，三种行为。
 func (s *Session) Prepare(ctx context.Context, run *harness.Run) error {
+	if s.cfg.Git == nil {
+		return errors.New("装配不完整：缺少 git（基线获取、任务分支、检查点与交付提交都靠它）")
+	}
+	if s.cfg.Opener == nil {
+		return errors.New("装配不完整：缺少工作区打开点（Opener）")
+	}
+	if s.cfg.Policy == nil {
+		return errors.New("装配不完整：缺少策略（无人类场景下它是唯一顶替人的位置，不能省）")
+	}
+	if s.cfg.Context == nil {
+		s.logf("warn", "未装配上下文组装器：模型只看得到首轮消息，看不到自己上一轮做过什么")
+	}
+
 	root, err := s.cfg.Git.PrepareBaseline(ctx, s.cfg.Bounty.Repo)
 	if err != nil {
 		return err

@@ -3,6 +3,7 @@ package hunt
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -57,11 +58,16 @@ func (p stubPrim) Execute(context.Context, Call, Facts) (Result, []workspace.Fil
 	return p.res, p.edits, p.err
 }
 
-type captureSink struct{ events []ExternalEvent }
+type captureSink struct {
+	events []ExternalEvent
+	logs   []string
+}
 
 func (c *captureSink) Emit(ev ExternalEvent) error { c.events = append(c.events, ev); return nil }
-func (c *captureSink) Log(string, string, ...any)  {}
-func (c *captureSink) Heartbeat(Phase) error       { return nil }
+func (c *captureSink) Log(_, msg string, kv ...any) {
+	c.logs = append(c.logs, msg+fmt.Sprint(kv...))
+}
+func (c *captureSink) Heartbeat(Phase) error { return nil }
 
 func (c *captureSink) ofType(kind string) []map[string]any {
 	var out []map[string]any
@@ -72,6 +78,15 @@ func (c *captureSink) ofType(kind string) []map[string]any {
 	}
 	return out
 }
+
+// allowAll 是"全部放行"的策略桩：本文件的用例关心的是事件与落盘，不是边界判定。
+type allowAll struct{}
+
+func (allowAll) Decide(context.Context, Call) (Decision, error) {
+	return Decision{Verdict: VerdictAllow, Reason: "测试放行"}, nil
+}
+func (allowAll) Charge(llm.Usage)                {}
+func (allowAll) Exhausted(TurnNo) (bool, string) { return false, "" }
 
 type denyAll struct{ reason string }
 
@@ -112,7 +127,7 @@ func TestExecuteCall_EveryOutcomeEmitsOneToolResult(t *testing.T) {
 		stubPrim{name: "write_prim", res: Result{Summary: "已新建 new.txt"}, edits: []workspace.FileEdit{{File: "new.txt", NewContent: "x"}}},
 		stubPrim{name: "stale_prim", edits: []workspace.FileEdit{{File: "a.txt", NewContent: "y"}}},
 	}
-	session := newTestSession(t, st, nil, sink, prims...)
+	session := newTestSession(t, st, allowAll{}, sink, prims...)
 
 	cases := []struct {
 		name     string
@@ -218,7 +233,7 @@ func TestExecuteCall_PolicyDenialIsReported(t *testing.T) {
 func TestExecuteCall_SuccessRecordsOpsAndSummary(t *testing.T) {
 	st := &memStorage{files: map[string]string{}}
 	sink := &captureSink{}
-	session := newTestSession(t, st, nil, sink,
+	session := newTestSession(t, st, allowAll{}, sink,
 		stubPrim{name: "write_prim", res: Result{Summary: "已新建 new.txt"},
 			edits: []workspace.FileEdit{{File: "new.txt", NewContent: "hi"}}})
 
@@ -236,5 +251,26 @@ func TestExecuteCall_SuccessRecordsOpsAndSummary(t *testing.T) {
 	results := sink.ofType("tool_result")
 	if len(results) != 1 || results[0]["summary"] != "已新建 new.txt" || results[0]["ok"] != true {
 		t.Errorf("tool_result 载荷不对：%v", results)
+	}
+}
+
+// 未装配策略 = 默认拒绝（INV-4）：忘装配不该让执行体变成无边界的写入者。
+func TestExecuteCall_MissingPolicyFailsClosed(t *testing.T) {
+	st := &memStorage{files: map[string]string{}}
+	sink := &captureSink{}
+	session := newTestSession(t, st, nil, sink,
+		stubPrim{name: "write_prim", res: Result{Summary: "本不该执行"},
+			edits: []workspace.FileEdit{{File: "new.txt", NewContent: "x"}}})
+
+	res := session.executeCall(context.Background(), &harness.Turn{No: 1}, call("c1", "write_prim", `{}`))
+	if !res.IsError {
+		t.Fatalf("缺策略必须拒绝：%+v", res)
+	}
+	if len(st.files) != 0 || len(session.ops) != 0 {
+		t.Errorf("被拒调用不得产生任何落盘：files=%v ops=%v", st.files, session.ops)
+	}
+	results := sink.ofType("tool_result")
+	if len(results) != 1 || results[0]["error"] != "policy_missing" {
+		t.Errorf("应以 policy_missing 上报：%v", results)
 	}
 }

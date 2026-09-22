@@ -142,7 +142,7 @@
 
 具体是两道闸，都在**进入首轮推理之前**：
 
-1. **构造期**：`harness.New` 缺模型即返回错误；`hunt.NewSession` 的装配参数在该用它的地方显式失败，不猜默认值（如 `Prepare` 缺 git/opener、执行期缺工具表都当场报错）。
+1. **构造期／初始化期**：`harness.New` 缺模型即返回错误；`hunt.NewSession` 的装配参数在**该用它的地方显式失败**且报出缺哪一项——`Prepare` 缺 git / opener / policy 当场失败（退出 2），缺上下文组装器只记 warn（降级为「无历史」）；**缺策略时工具调用默认拒绝**，绝不「跳过裁决」（INV-4）。
 2. **初始化期**：`Prepare` 依次「取基线 → 打开工作区 → 定格工具面 → 构造两段提示词 → 组装首轮消息」，**任一步失败即终止**——循环根本不开始。因此不存在"跑到一半才发现工作区不可用"的中间态。
 
 **不变量的落点（同上，换成装配口径）**：
@@ -1059,6 +1059,7 @@ Bounty(session) ──► H6.Session
 | IA-3.15 | 未实现的原语给出**可解释结果**而非执行失败：`not_implemented` ＋ 不可重试 ＋ 零编辑 | `TestFind_ReportsNotImplemented`、`TestSymbolics_ReportNotImplemented`、`TestCheck_ReportsNotImplemented` |
 | IA-3.16 | **门禁不是任意命令执行**：`check` 的参数面精确等于 `{name}`，`required` 只有 `name` | `TestCheck_DeclSurfaceIsExactlyTheGateName` |
 | IA-3.17 | 符号原语只走符号寻址：参数面里没有内容寻址槽位（无降级形态） | `TestSymbolics_SurfaceHasNoContentAddressingSlot`、`TestSymbolics_DeclShapes` |
+| IA-3.18 | **装配缺件显式失败**：`Prepare` 缺 git / opener / policy 时返回指明缺件的错误（不是 panic、也不是静默放行）；`policy` 缺失时工具调用**默认拒绝**且不产生任何落盘 | `TestPrepare_IncompleteAssemblyFailsLoudly`、`TestExecuteCall_MissingPolicyFailsClosed`（hunt） |
 
 ### 12.4 H4 — `hunt.Policy`
 

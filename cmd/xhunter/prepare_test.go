@@ -49,6 +49,7 @@ func TestPrepare_FirstPromptCarriesTaskAndConventions(t *testing.T) {
 			Repo: git.RepoRef{Remote: "r", Branch: "b", BaseCommit: "0123456789abcdef"},
 		},
 		Opener:        osfs.Opener{},
+		Policy:        defaultPolicy(hunt.Budget{}), // 装配缺件即失败：策略是必需件
 		Git:           &stubGit{root: root},
 		Context:       ctxb,
 		Session:       &sessionRecorder{},

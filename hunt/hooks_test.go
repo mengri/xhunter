@@ -10,6 +10,7 @@ import (
 	"xhunter/git"
 	"xhunter/harness"
 	"xhunter/llm"
+	"xhunter/workspace"
 )
 
 // 记录桩：只关心「本轮是什么时候、以什么内容被记下来的」。
@@ -141,6 +142,75 @@ func TestFirstPrompt_KeepsOrderAndAppendsKernelBlocks(t *testing.T) {
 // gitRepoRef 给组装用例一个最小仓库事实。
 func gitRepoRef() git.RepoRef {
 	return git.RepoRef{Remote: "r", Branch: "xhunter/x", BaseCommit: "0123456789abcdef0123456789abcdef"}
+}
+
+// 装配缺件必须在首轮推理之前显式失败，而且要说清缺哪一项（FR-1.8、IA-12.5）：
+// 此前 Git / Opener 缺失是调用即 panic（收敛成一句 "invalid memory address"），
+// 而 Policy 缺失被**静默跳过**——同一份"装配校验"的说法，三种行为。
+func TestPrepare_IncompleteAssemblyFailsLoudly(t *testing.T) {
+	sink := &captureSink{}
+	full := Config{
+		Bounty: Bounty{ID: "b1", Task: "t", Repo: gitRepoRef()},
+		Git:    &stubBaselineGit{}, Opener: stubOpener{}, Policy: allowAll{}, Sink: sink,
+	}
+	cases := []struct {
+		name    string
+		mutate  func(*Config)
+		wantSub string
+	}{
+		{"缺 git", func(c *Config) { c.Git = nil }, "缺少 git"},
+		{"缺工作区打开点", func(c *Config) { c.Opener = nil }, "缺少工作区打开点"},
+		{"缺策略", func(c *Config) { c.Policy = nil }, "缺少策略"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := full
+			tc.mutate(&cfg)
+			err := NewSession(cfg).Prepare(context.Background(), &harness.Run{})
+			if err == nil {
+				t.Fatal("缺件必须显式失败")
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("错误信息应指明缺哪一项（%q）：%v", tc.wantSub, err)
+			}
+		})
+	}
+
+	// 缺上下文组装器不判死，但要留痕：模型会看不到自己上一轮做过什么。
+	cfg := full
+	cfg.Context = nil
+	if err := NewSession(cfg).Prepare(context.Background(), &harness.Run{}); err != nil {
+		t.Fatalf("缺上下文不该判死（降级而非缺件）：%v", err)
+	}
+	warned := false
+	for _, line := range sink.logs {
+		if strings.Contains(line, "上下文组装器") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Errorf("缺上下文必须留下可见的降级记录：%v", sink.logs)
+	}
+}
+
+// stubBaselineGit 只提供 PrepareBaseline：装配用例不需要真的仓库。
+type stubBaselineGit struct{}
+
+func (stubBaselineGit) PrepareBaseline(context.Context, git.RepoRef) (string, error) {
+	return "root", nil
+}
+func (stubBaselineGit) Commit(context.Context, git.RepoRef, string) (git.Commit, error) {
+	return git.Commit{}, nil
+}
+func (stubBaselineGit) Diff(context.Context, string) ([]string, error) { return nil, nil }
+func (stubBaselineGit) Patch(context.Context, string) (string, error)  { return "", nil }
+func (stubBaselineGit) Clean(context.Context) error                    { return nil }
+
+// stubOpener 交出一个内存工作区。
+type stubOpener struct{}
+
+func (stubOpener) Open(string) (workspace.Storage, error) {
+	return &memStorage{files: map[string]string{}}, nil
 }
 
 // 净化是格式不可伪造的保证：只取首行、剥控制与格式字符、折叠空白、按上限截断。
