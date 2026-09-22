@@ -16,13 +16,16 @@
 
 import argparse
 import os
+import pathlib
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
 
-WORK_REL = "/work/agents/xhunter"
+# 工作目录由脚本位置推导（scripts/check.py 的上一级），而不是硬编码——
+# 硬编码会让这份"规范验证入口"换一台机器就跑不了。
+WORK_REL = str(pathlib.Path(__file__).resolve().parent.parent)
 WIN_GO_CANDIDATES = [
     r"C:\Users\黄孟柱\.g\go\bin\go.exe",
     r"C:\Program Files\Go\bin\go.exe",
@@ -47,9 +50,9 @@ def decode(raw: bytes) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
-def run(cmd: list[str], env: dict, timeout: int = 1800):
+def run(cmd: list[str], env: dict, timeout: int = 1800, cwd: str | None = None):
     try:
-        r = subprocess.run(cmd, capture_output=True, env=env, timeout=timeout)
+        r = subprocess.run(cmd, capture_output=True, env=env, timeout=timeout, cwd=cwd)
         return r.returncode, decode(r.stdout or b"").strip(), decode(r.stderr or b"").strip()
     except subprocess.TimeoutExpired:
         return 124, "", "超时"
@@ -99,12 +102,13 @@ def env_for(go: str | None, cross: bool = False) -> dict:
 
 def probe() -> int:
     print("== 环境探测")
-    print("  工作目录      ", os.getcwd())
+    print("  工作目录      ", WORK_REL)
+    print("  调用目录      ", os.getcwd())
     native = find_native_go()
     if native:
-        _, out, _ = run([native, "version"], env_for(native))
-        _, goos, _ = run([native, "env", "GOOS"], env_for(native))
-        _, arch, _ = run([native, "env", "GOARCH"], env_for(native))
+        _, out, _ = run([native, "version"], env_for(native), cwd=WORK_REL)
+        _, goos, _ = run([native, "env", "GOOS"], env_for(native), cwd=WORK_REL)
+        _, arch, _ = run([native, "env", "GOARCH"], env_for(native), cwd=WORK_REL)
         print("  本机 go        ", out or "?")
         print("  本机平台       ", f"{goos}/{arch}")
     else:
@@ -143,9 +147,12 @@ def check(use_wsl: bool, race: bool) -> int:
         print("未找到 go 工具链：请安装 Go，或用 --wsl 在 WSL 内执行", file=sys.stderr)
         return 2
 
+    steps = [["build", "./..."], ["vet", "./..."], ["test", "./...", "-count=1"]]
+    if race:
+        steps.append(["test", "-race", "./...", "-count=1"])
     failed = 0
-    for args in (["build", "./..."], ["vet", "./..."], ["test", "./...", "-count=1"]):
-        rc, out, err = run([go] + args, env_for(go))
+    for args in steps:
+        rc, out, err = run([go] + args, env_for(go), cwd=WORK_REL)
         print(f"== go {' '.join(args)} -> exit {rc}")
         if out:
             print(out)
@@ -154,9 +161,9 @@ def check(use_wsl: bool, race: bool) -> int:
         failed |= rc
 
     # 一期目标是 linux/amd64：本机平台不符时，至少验证目标平台能编译（D6）。
-    _, goos, _ = run([go, "env", "GOOS"], env_for(go))
+    _, goos, _ = run([go, "env", "GOOS"], env_for(go), cwd=WORK_REL)
     if goos and goos != TARGET[0]:
-        rc, out, err = run([go, "build", "./..."], env_for(go, cross=True))
+        rc, out, err = run([go, "build", "./..."], env_for(go, cross=True), cwd=WORK_REL)
         print(f"== 交叉编译 {TARGET[0]}/{TARGET[1]} -> exit {rc}")
         if err:
             print(err)
@@ -169,7 +176,7 @@ def check(use_wsl: bool, race: bool) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Xhunter 编译与测试检查")
     ap.add_argument("--wsl", action="store_true", help="在 WSL 内执行（一期目标平台 linux/amd64）")
-    ap.add_argument("--race", action="store_true", help="额外执行竞态检测（仅 --wsl 有效）")
+    ap.add_argument("--race", action="store_true", help="额外执行竞态检测")
     ap.add_argument("--probe", action="store_true", help="只探测环境")
     args = ap.parse_args()
     if args.probe:

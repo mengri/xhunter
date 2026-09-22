@@ -712,7 +712,7 @@ Provider Adapter 是唯一知道供应商的地方（INV-1），但它**不把�
 1. `limit.context` → `Caps.MaxContextTokens`，`limit.output` → 压缩公式的输出预留，**直接落实 FR-9.5 与 FR-9.6**；
 2. 新增供应商或模型 = 改配置，不改核心——与"扩展把符号能力外挂"是**同一手法**：把编译期决策降级为部署期选择；
 3. 凭据是配置里的 `{env:VAR}` **引用**，值仍在环境变量中（FR-1.2、FR-8.4）；配置结构里没有任何字段承载凭据明文；
-4. 未命中目录且未配置 → 启动期 `EnvError`（退出码 2），与既有的 `MaxContextTokens <= 0` 检查合流。
+4. 未命中目录且未配置 → 启动期失败（退出码 2），与既有的 `MaxContextTokens <= 0` 检查合流。
 
 **分层与落点**（协议实现只管协议，装配归组装层）：
 
@@ -989,7 +989,7 @@ Bounty(session) ──► H6.Session
 
 ### 12.0 通用约定
 
-- **错误分类决定退出码**（使用手册 §7）：普通失败 → `1`；环境或资源问题 → `2`（可重试，平台可重派）；取消 → `3`；成功 → `0`。实现侧约定：以 `EnvError(err)` 标记环境问题。
+- **错误分类决定退出码**（使用手册 §7）：普通失败 → `1`；环境或资源问题 → `2`（可重试，平台可重派）；取消 → `3`；成功 → `0`。实现侧没有独立的错误类型来标记环境问题：**退出码由终态直接给出**（`harness.Terminal.Code`，见 §6.3 的终止条件映射），协作方只需返回错误，由装配层与执行体决定它算哪一档。
 - **终态总是显式**（INV-3）：`Engine.Run` **只返回 `Outcome`**——正常路径、panic、初始化失败都收敛到显式终态，因此不存在"有错误却没有终态"的情形。任何协作方返回错误都必须被转换为终态，不允许静默挂起。
 - **事件契约只追加**（INV-5）：外部事件类型与字段一旦发布不可修改；新增字段不算破坏性变更。
 - **判定主体是代码与测试**：接口即契约，测试即判定；所有用例不依赖模型（NFR-8）。
@@ -1034,7 +1034,7 @@ Bounty(session) ──► H6.Session
 | IA-2.10 | **AGENTS.md 注入**（FR-2.6 / AC-23）：根级全文进 system 段；文件名精确匹配（大小写反例不注入）；空白视同不存在；超限在行边界收刀并留下降级记录；构造一次冻结 | `TestBuild_InjectsRootConventions`、`TestBuild_CaseVariantIsNotRecognized`、`TestBuild_BlankContentIsTreatedAsAbsent`、`TestBuild_OversizeTruncatesWithNotice`、`TestBuild_WithoutBaseCommitFallsBackToWorktree` |
 | IA-2.11 | **skill 发现清单**（FR-15.2/15.5/15.6 / AC-24）：只注入 name+description 与入口路径（正文绝不进清单，总量封顶、溢出上报）；非法 frontmatter / 名字与目录名不符者跳过且事件流可见；SKILL.md 全文由模型经 `read` 按需获取 | `TestBuild_ListsNameDescriptionAndPath`、`TestBuild_InvalidEntryIsSkippedWithNotice`、`TestBuild_NameMustMatchDirectory`、`TestBuild_IgnoresSkillFilesOutsideDirectory`、`TestBuild_TruncatesBeyondLimit`、`TestBuild_NoSkillsYieldsEmptyPart`、`TestParseFrontmatter`、`TestParseFrontmatter_LengthLimitsComeFromSpec` |
 | IA-2.12 | **书写/生效分离**（FR-15.3 / AC-25）：`.xhunter/skills/**` 禁写、`.xhunter/skills.draft/**` 放行 | `TestDecide_WriteToControlDirDenied`、`TestDecide_WriteToSkillsDraftAllowed`（策略侧）；**diff 排除规则待补** |
-| IA-2.13 | **两段正文由插件贡献**（FR-7.8/7.9 / AC-29）：同段多插件按装配顺序拼接、空正文整段跳过、不重复；两段都不接只记 warn、不判死 | `TestDefaultPromptPlugins_OrderIsThePromptOrder`、`TestDefaultPromptPlugins_NoDuplicate`（cmd）、`TestFirstPrompt_KeepsOrderAndSkipsEmpty`（hunt）；**插件失败按环境错误收敛的用例待补** |
+| IA-2.13 | **两段正文由插件贡献**（FR-7.8/7.9 / AC-29）：同段多插件按装配顺序拼接、空正文整段跳过、不重复；两段都不接只记 warn、不判死 | `TestDefaultPromptPlugins_OrderIsThePromptOrder`、`TestDefaultPromptPlugins_NoDuplicate`（cmd）、`TestFirstPrompt_KeepsOrderAndAppendsKernelBlocks`（hunt）；**插件失败按环境错误收敛的用例待补** |
 
 ### 12.3 H3 — 原语与执行流水线（`hunt.Primitive` ＋ `hunt.Session.OnTurn`）
 
@@ -1147,8 +1147,8 @@ Bounty(session) ──► H6.Session
 | IA-8.15 | **协议版本基线写在包注释里**（端点 / 版本标识 / 形状基线 / 结束语义 / 何时需要动本包） | 代码检查（三个协议包的包注释） |
 | IA-8.16 | **自持传输层**：不使用厂商 SDK，核心二进制保持零第三方运行时依赖（NFR-1） | 代码检查：`go.mod` 无 `require`；协议实现自解分帧 |
 | IA-8.17 | 未知角色显式报错，不得原样透传（拼错的角色名会变成对端的静默行为差异） | `TestInfer_RejectsUnknownRole`、`TestToWireMessages_UnknownRoleIsRejected` |
-| IA-8.15 | **Messages 协议的形状**：系统提示提到顶层字段、工具调用与工具结果都是内容块（结果挂在用户消息下）、请求体带生成上限、工具用 `input_schema` | `TestInfer_SendsProtocolRequest`、`TestProviderFor_AnthropicWiring`（`provider/anthropicmessages`） |
-| IA-8.16 | **Responses 协议的形状**：对话是类型化条目数组（消息 / 函数调用 / 结果各占一条）、工具声明不带"函数"外层包装、用量取自收尾事件 | `TestInfer_SendsProtocolRequest`、`TestInfer_AssemblesFunctionCallFromDeltas`（`provider/openairesponses`） |
+| IA-8.15 | **Messages 协议的形状**：系统提示提到顶层字段、工具调用与工具结果都是内容块（结果挂在用户消息下）、请求体带生成上限、工具用 `input_schema` | `TestInfer_SendsProtocolRequest`、`TestInfer_UsageIsNotDoubleCounted`（`provider/anthropicmessages`）、`TestProviderFor_BuildsEveryKnownProtocol`（cmd） |
+| IA-8.16 | **Responses 协议的形状**：对话是类型化条目数组（消息 / 函数调用 / 结果各占一条）、工具声明不带"函数"外层包装、用量取自收尾事件 | `TestInfer_SendsProtocolRequest`、`TestInfer_AssemblesRawFunctionCallFromDeltas`、`TestInfer_FallsBackToItemArguments`（`provider/openairesponses`） |
 | IA-8.17 | **收尾语义按协议各自定义**：Anthropic 无 `message_stop`、Responses 无 `response.completed` → 显式截断；`response.incomplete`（输出被截断）算正常结束 | `TestInfer_TruncatedWithoutMessageStopIsExplicit`、`TestInfer_TruncatedWithoutCompletedIsExplicit`、`TestInfer_IncompleteIsNormalEnd` |
 | IA-8.18 | 上游错误按协议分类可重试性（限流/过载可重试，请求不合法/鉴权失败不可重试） | `TestInfer_ErrorEventIsClassified`（两个协议各一） |
 
@@ -1260,12 +1260,12 @@ Bounty(session) ──► H6.Session
 
 | 缺口 | 说明 |
 |---|---|
-| **写盘与执行器级用例（IA-3.3、IA-3.6）** | `Committer` 的"未读即写被拒 / 读后被改动被拒 / 只改目标区间"目前没有用例——它就在 `hunt` 包里，补起来最便宜 |
-| 绑定层用例（IA-3.9） | `BindToolCall` 拒绝未知字段 / 未知工具名、且**不判断名字存不存在** |
+| ~~写盘与执行器级用例（IA-3.3、IA-3.6）~~ | **已落地**：`hunt/commit_test.go`（未读即写、读后过期、只改目标区间、越界、新建形态、台账更新、批量先校验后写） |
+| ~~绑定层用例（IA-3.9）~~ | **已落地**：`hunt/bind_test.go`（槽位映射、空参数、五类形状不成立、不判断名字、往返、可重试性） |
 | 进程级信号（其余信号形态） | SIGTERM 的进程级断言已落地（`TestEndToEnd_SigtermConvergesToCancelled`，AC-6）；SIGKILL / 中断时机的更多组合仍可补 |
 | 扩展崩溃隔离（IA-7.6） | 需要真实子进程的扩展宿主测试（M2 引入扩展后补） |
 | 凭据静态扫描（IA-6.8、IA-8.4） | 需要 CI 级扫描规则，非单测能覆盖（AC-8） |
-| stdout 纯净性与通道断裂（IA-5.2、IA-5.3） | 纯净性已有进程级断言（`TestHuntCmd_EventsGoToStdoutAndLogsGoToStderr`、端到端用例）；**写入失败（EPIPE/磁盘满 → 退出 2）仍待补** |
+| 事件写入失败（IA-5.3） | 纯净性已有进程级断言；**写入失败（EPIPE / 磁盘满 → 退出 2）仍待补**——需要注入会失败的 sink 或真实断管 |
 | 恢复正确性（AC-7） | 需要断言：恢复后工作区 == 最后检查点、**未重做已完成轮次**、恢复过程**零写操作执行** |
 | ~~装配层端到端（IA-12.6）~~ | **已落地**：`TestEndToEnd_LocalRunProducesDeliveryCommit`（真 git 夹具 + 本地假上游，不联网） |
 | 嵌套约定附注（IA-2.10） | 算出"路径链上最近且未注入过的那份约定"需要一份**约定清单（路径 ＋ 正文）**，而当前插件契约只交正文（`PromptPart.Body`）。补法是给 system 段的结果带上它；等真有消费方时再加，眼下先不摆无人读的契约 |

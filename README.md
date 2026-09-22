@@ -18,7 +18,7 @@ providerconfig/               公开：Provider 配置模型与解析（组装�
 cmd/xhunter/                  CLI 入口 + 组装层（SDK 值 → 针对性工厂；工具集 / 插件 / 后端 / 策略的注入点）
 internal/                     CLI 侧实现（不对外）：policy 策略引擎、workspace/osfs、git/cli、modelcatalog
 docs/                         治理文档（产品设计 / 使用手册 / 架构设计）
-scripts/check.py              一键 build + vet + test + 竞态检测（目标平台 linux/amd64）
+scripts/check.py              一键 build + vet + test（`--race` 追加竞态检测；目标平台 linux/amd64）
 scripts/build.sh              单二进制构建，版本号经 ldflags 注入 → bin/xhunter
 Makefile                      构建与验证编排（build / cross / test / vet / check / clean）
 ```
