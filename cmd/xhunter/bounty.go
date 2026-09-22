@@ -18,6 +18,7 @@ const (
 	envRepoBase     = "XHUNTER_REPO_BASE_COMMIT"
 	envBountyID     = "XHUNTER_BOUNTY_ID"
 	envSessionID    = "XHUNTER_SESSION_ID"
+	envTraceID      = "XHUNTER_TRACE_ID"
 	envProvider     = "XHUNTER_PROVIDER"
 	envModel        = "XHUNTER_MODEL"
 	envProviderFile = "XHUNTER_PROVIDER_CONFIG"
@@ -61,7 +62,11 @@ func bountyFromEnv(task string, lookup lookupEnv) (hunt.Bounty, error) {
 		id = shortSHA(base)
 	}
 
-	bounty := hunt.Bounty{ID: hunt.BountyID(id), Task: task}
+	bounty := hunt.Bounty{ID: hunt.BountyID(id), Task: task, TraceID: readEnv(lookup, envTraceID)}
+	if bounty.TraceID == "" {
+		// 追踪标识缺省回填：没有它，事件流就串不回平台上的那一次投递。
+		bounty.TraceID = id
+	}
 	if session := readEnv(lookup, envSessionID); session != "" {
 		bounty.Session = &hunt.SessionRef{ID: session}
 	}

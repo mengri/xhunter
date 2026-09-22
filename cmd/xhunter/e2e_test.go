@@ -334,6 +334,69 @@ func TestEndToEnd_BudgetExhaustionStopsTheRun(t *testing.T) {
 	}
 }
 
+// 通道断裂即环境错误（FR-10.4、AC-19）：消费者已不在通道上时，继续跑只是自说自话。
+// 这里让 stdout 指向一个**读端已关**的管道：写入得到 EPIPE，进程必须以退出码 2
+// 收敛并记下原因——而不是把"写不出去"降级成一条 warn。
+//
+// 场景取"本来会成功"的那条路：否则退出码 2 无法与任务自身的失败区分开。
+func TestEndToEnd_BrokenEventChannelIsEnvError(t *testing.T) {
+	requireGitForE2E(t)
+	fx := newRepoFixture(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", filepath.Join(tmp, "work"))
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, sseWithText("做完了"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	taskPath, cfgPath := writeRunInputs(t, tmp, "随便看看", srv.URL+"/v1")
+	setRunEnv(t, taskPath, cfgPath, fx)
+
+	// stderr 收进文件；stdout 接一个读端已关的管道。
+	stderrFile, err := os.CreateTemp(t.TempDir(), "stderr-*")
+	if err != nil {
+		t.Fatalf("建临时 stderr 失败：%v", err)
+	}
+	oldErr := os.Stderr
+	os.Stderr = stderrFile
+	t.Cleanup(func() { os.Stderr = oldErr })
+
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("建管道失败：%v", err)
+	}
+	reader.Close() // 读端关掉：写入必然失败
+	oldOut := os.Stdout
+	os.Stdout = writer
+	t.Cleanup(func() { os.Stdout = oldOut; writer.Close() })
+
+	code := run([]string{"--bounty", taskPath})
+
+	os.Stderr = oldErr
+	if err := stderrFile.Sync(); err != nil {
+		t.Fatalf("刷新 stderr 失败：%v", err)
+	}
+	errText, err := os.ReadFile(stderrFile.Name())
+	if err != nil {
+		t.Fatalf("读取 stderr 失败：%v", err)
+	}
+	_ = writer.Close()
+
+	if code != exitEnv {
+		t.Fatalf("事件写不出去必须以退出码 2 收敛，实际 %d\nstderr:\n%s", code, errText)
+	}
+	if !strings.Contains(string(errText), "事件通道写入失败") {
+		t.Errorf("必须记下通道断裂的原因：\n%s", errText)
+	}
+}
+
 // ============================================================ 夹具
 
 type repoFixture struct {

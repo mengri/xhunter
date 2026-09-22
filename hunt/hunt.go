@@ -50,8 +50,12 @@ type SessionRef struct {
 
 // Bounty 是一次任务分派的完整输入。Repo 引用 git 基础包的仓库形状。
 type Bounty struct {
-	ID         BountyID
-	Task       string
+	ID   BountyID
+	Task string
+	// TraceID 是贯穿平台侧记录的追踪标识（FR-11.3）：它进事件的信封，
+	// 用来把"这一串事件"对回平台上的那一次投递。为空表示调用方未提供，
+	// 由装配层回填（缺省取 BountyID）。
+	TraceID    string
 	Repo       git.RepoRef
 	Session    *SessionRef
 	Budget     Budget

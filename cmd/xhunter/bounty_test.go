@@ -246,3 +246,35 @@ func TestSelectionFromEnv_Validate(t *testing.T) {
 		}
 	}
 }
+
+// 追踪标识（FR-11.3）：投递给了就用它，没给则回填 bounty id——
+// 事件流靠它串回平台上的那一次投递，不能为空。
+func TestBountyFromEnv_TraceID(t *testing.T) {
+	base := map[string]string{envRepoURL: "git@example.com:x/y.git", envRepoBase: "0123456789abcdef"}
+	t.Run("显式给出", func(t *testing.T) {
+		env := map[string]string{envTraceID: "trace-abc"}
+		for k, v := range base {
+			env[k] = v
+		}
+		b, err := bountyFromEnv("任务", fakeEnv(env))
+		if err != nil {
+			t.Fatalf("解析失败：%v", err)
+		}
+		if b.TraceID != "trace-abc" {
+			t.Errorf("TraceID = %q，期望 trace-abc", b.TraceID)
+		}
+	})
+	t.Run("缺省回填 bounty id", func(t *testing.T) {
+		env := map[string]string{envBountyID: "b-7"}
+		for k, v := range base {
+			env[k] = v
+		}
+		b, err := bountyFromEnv("任务", fakeEnv(env))
+		if err != nil {
+			t.Fatalf("解析失败：%v", err)
+		}
+		if b.TraceID != "b-7" {
+			t.Errorf("TraceID 应回填为 bounty id，实际 %q", b.TraceID)
+		}
+	})
+}

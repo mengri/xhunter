@@ -1087,11 +1087,11 @@ Bounty(session) ──► H6.Session
 |---|---|---|
 | IA-5.1 | 事件行形状：一行一条 JSON、`type` 在顶层、载荷**摊平**（与使用手册 §5 一一对应） | `TestEventSink_EmitsFlatJSONLine` |
 | IA-5.2 | stdout 只有外部事件行，合法 NDJSON；日志一律 stderr | **待补**（端到端断言，AC-9） |
-| IA-5.3 | **事件写入失败 → 上抛**，不得静默继续（FR-10.4、AC-19） | **待补**（注入写失败的 sink） |
+| IA-5.3 | **事件写入失败 → 上抛**，不得静默继续（FR-10.4、AC-19）：出口记住第一次失败，装配层据此以退出码 2 收敛并记原因 | `TestEventSink_RemembersFirstWriteFailure`、`TestEndToEnd_BrokenEventChannelIsEnvError`（cmd，读端已关的管道） |
 | IA-5.4 | 心跳按任务输出（非 runtime），携带阶段与已用时 | **待接入**（`Heartbeat` 已实现，调用点未接入） |
 | IA-5.5 | **每次工具调用恰好一条 `tool_result`**（成功、原语报错、执行失败、落盘失败、名字不认识、参数绑定失败、检查点都有），且必带 `call_id` / `tool` / `ok` / `summary` / `duration_ms`，失败再加 `error` / `message` | `TestExecuteCall_EveryOutcomeEmitsOneToolResult`、`TestExecuteCall_SuccessRecordsOpsAndSummary`（hunt） |
 | IA-5.6 | 失败信息自含足以远程定位的上下文 | 代码检查（FR-11.5） |
-| IA-5.7 | 每个事件携带信封四字段：`type` / `bounty_id` / `trace_id` / `ts`（契约权威在使用手册 §5） | **待补**（当前只保证 `type` ＋ 载荷） |
+| IA-5.7 | 每个事件携带信封四字段：`type` / `bounty_id` / `trace_id` / `ts`——由出口**统一盖章**，业务载荷覆盖不了；`ts` 为 RFC3339 UTC（契约权威在使用手册 §5） | `TestEventSink_StampsEnvelopeOnEveryEvent`、`TestHuntCmd_EventsGoToStdoutAndLogsGoToStderr`、`TestBountyFromEnv_TraceID`（cmd） |
 | IA-5.8 | 策略拒绝上报 `policy_denied`（`call_id` / `action` / `reason`），且被拒调用**不产生任何落盘** | `TestExecuteCall_PolicyDenialIsReported`（hunt） |
 
 ### 12.6 H6 — `hunt.SessionRecorder`
@@ -1254,7 +1254,7 @@ Bounty(session) ──► H6.Session
 | 流看门狗与权限询问（§6.3 L4、§10.3） | `llm.Event` 尚无权限询问形态；不活动超时未接入 |
 | 检查点密度与结构检查（IA-11.11、§6.3 L6） | 只有"有改动即提交"一档；`every_write` / `interval` / `final_only` 与结构判定待接入 |
 | 生效配置快照（§4、FR-11.6） | 结果文件已落地（IA-12.9），但 `effective_config` 装配快照与 `gates` 未进文件 |
-| 事件信封四字段（IA-5.7） | 当前只保证 `type` ＋ 载荷（`bounty_id` / `trace_id` / `ts` 待补） |
+| ~~事件信封四字段（IA-5.7）~~ | **已落地**：出口统一盖章（`type` / `bounty_id` / `trace_id` / `ts`） |
 
 ### 14.2 判定方式缺用例
 
@@ -1265,7 +1265,7 @@ Bounty(session) ──► H6.Session
 | 进程级信号（其余信号形态） | SIGTERM 的进程级断言已落地（`TestEndToEnd_SigtermConvergesToCancelled`，AC-6）；SIGKILL / 中断时机的更多组合仍可补 |
 | 扩展崩溃隔离（IA-7.6） | 需要真实子进程的扩展宿主测试（M2 引入扩展后补） |
 | 凭据静态扫描（IA-6.8、IA-8.4） | 需要 CI 级扫描规则，非单测能覆盖（AC-8） |
-| 事件写入失败（IA-5.3） | 纯净性已有进程级断言；**写入失败（EPIPE / 磁盘满 → 退出 2）仍待补**——需要注入会失败的 sink 或真实断管 |
+| ~~事件写入失败（IA-5.3 / AC-19）~~ | **已落地**：断管（读端已关的管道）→ 退出 2 并记原因（`TestEndToEnd_BrokenEventChannelIsEnvError`） |
 | 恢复正确性（AC-7） | 需要断言：恢复后工作区 == 最后检查点、**未重做已完成轮次**、恢复过程**零写操作执行** |
 | ~~装配层端到端（IA-12.6）~~ | **已落地**：`TestEndToEnd_LocalRunProducesDeliveryCommit`（真 git 夹具 + 本地假上游，不联网） |
 | 嵌套约定附注（IA-2.10） | 算出"路径链上最近且未注入过的那份约定"需要一份**约定清单（路径 ＋ 正文）**，而当前插件契约只交正文（`PromptPart.Body`）。补法是给 system 段的结果带上它；等真有消费方时再加，眼下先不摆无人读的契约 |

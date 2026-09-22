@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"xhunter/harness"
 	"xhunter/hunt"
@@ -139,3 +141,51 @@ func TestDefaultTools_FaceIsFixed(t *testing.T) {
 }
 
 var _ = hunt.PrimCheckpoint // 控制原语声明存在，装配工具面时殿后
+
+// 信封四字段由 sink 统一盖章：调用点只交业务载荷，"每个事件都带信封"是结构事实，
+// 不靠每个发出点各自记得（FR-11.3、INV-5）；业务载荷覆盖不了它们。
+func TestEventSink_StampsEnvelopeOnEveryEvent(t *testing.T) {
+	var events, logs bytes.Buffer
+	sink := &eventSink{
+		events: &events, logs: &logs,
+		bountyID: "b-1", traceID: "t-9",
+		now: func() time.Time { return time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC) },
+	}
+	// 载荷里塞同名键：信封必须赢。
+	if err := sink.Emit(hunt.ExternalEvent{Type: "tool_result", Payload: map[string]any{
+		"tool": "read", "bounty_id": "伪造", "ts": "伪造",
+	}}); err != nil {
+		t.Fatalf("写事件失败：%v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(events.String())), &got); err != nil {
+		t.Fatalf("事件不是合法 JSON：%v", err)
+	}
+	if got["type"] != "tool_result" || got["bounty_id"] != "b-1" || got["trace_id"] != "t-9" {
+		t.Errorf("信封字段不对：%v", got)
+	}
+	if got["ts"] != "2026-09-22T12:00:00Z" {
+		t.Errorf("ts 应为 RFC3339 的 UTC 时间：%v", got["ts"])
+	}
+	if got["tool"] != "read" {
+		t.Errorf("业务载荷不该丢：%v", got)
+	}
+}
+
+// 写入失败要留下痕迹：通道断裂由装配层据此收敛为环境错误（FR-10.4）。
+func TestEventSink_RemembersFirstWriteFailure(t *testing.T) {
+	sink := &eventSink{events: failingWriter{}, logs: &bytes.Buffer{}}
+	if err := sink.Emit(hunt.ExternalEvent{Type: "tool_result"}); err == nil {
+		t.Fatal("写入失败必须上抛")
+	}
+	if sink.Failed() == nil {
+		t.Fatal("必须记住这次失败")
+	}
+	if sink.Failed().Error() != "管道断了" {
+		t.Errorf("记住的应是第一次的原因：%v", sink.Failed())
+	}
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("管道断了") }

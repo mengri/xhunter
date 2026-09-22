@@ -82,6 +82,7 @@ xhunter version
 | `XHUNTER_REPO_BASE_COMMIT` | ✅ | 完整哈希，作为 patch 与提交的父提交基准 |
 | `XHUNTER_REPO_BRANCH` | — | 任务分支名（缺省 `xhunter/<session_id>`）。**该分支由 Xhunter 创建并推送**（FR-1.3）：不存在则从基线创建后推送；**已存在且 tip 为基线或其后代 → 幂等成功**（续跑时 tip 本来就在基线之后，这不是错误）；tip 与基线**分叉**（非后代）即环境错误（退出码 2） |
 | `XHUNTER_BOUNTY_ID` | — | **本次投递**的标识（缺省取基线前 12 位）。事件流信封与结果文件按它记账 |
+| `XHUNTER_TRACE_ID` | — | 贯穿平台侧记录的**追踪标识**（FR-11.3），进每个事件的信封；缺省回填为 `bounty_id` |
 | `XHUNTER_SESSION_ID` | — | **会话**的标识（可选）。同一个会话下的多次投递**共享记忆与分支**；不传时本次投递自成一次新会话（会话标识即本任务的 id） |
 | `XHUNTER_PROVIDER` / `XHUNTER_MODEL` | ✅ | 本次使用哪个供应商与哪个模型 |
 | `XHUNTER_PROVIDER_CONFIG` | ✅ | Provider 配置文件路径（形态见 §4） |
@@ -186,7 +187,7 @@ xhunter version
 {"type": "<事件名>", "bounty_id": "...", "trace_id": "...", "ts": "<RFC3339>"}
 ```
 
-`trace_id` 串联平台侧记录：Xhunter 启动时从 Bounty 继承（缺省则自行生成并回填），全流程不变。
+`trace_id` 串联平台侧记录：由 `XHUNTER_TRACE_ID` 给出（FR-11.3），缺省回填为 `bounty_id`，全流程不变——**每个事件都带这四字段**，由事件出口统一盖章，发出点只需交业务载荷。
 
 ```json
 {"type":"hunt_start","bounty_id":"...","trace_id":"...","ts":"..."}

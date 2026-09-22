@@ -31,6 +31,8 @@ func TestHuntCmd_EventsGoToStdoutAndLogsGoToStderr(t *testing.T) {
 		t.Fatalf("写 provider 配置失败：%v", err)
 	}
 
+	t.Setenv("XHUNTER_BOUNTY_ID", "b-42")
+	t.Setenv("XHUNTER_TRACE_ID", "trace-envelope")
 	t.Setenv("XHUNTER_REPO_URL", filepath.Join(tmp, "no-such-repo.git"))
 	t.Setenv("XHUNTER_REPO_BASE_COMMIT", "0123456789abcdef0123456789abcdef01234567")
 	t.Setenv("XHUNTER_PROVIDER", "localgw")
@@ -41,15 +43,26 @@ func TestHuntCmd_EventsGoToStdoutAndLogsGoToStderr(t *testing.T) {
 	code := run([]string{"--bounty", taskPath})
 	stdoutText, stderrText := drainStdStreams(t, stdout, stderr)
 
+	checked := 0
 	for _, line := range nonEmptyLines(stdoutText) {
 		var ev map[string]any
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			t.Errorf("stdout 只允许出现事件行，这一行不是合法 JSON：%q", line)
 			continue
 		}
-		if _, ok := ev["type"].(string); !ok {
-			t.Errorf("事件行必须带 type：%q", line)
+		// 信封四字段每行都要有（FR-11.3、IA-5.7）。
+		for _, k := range []string{"type", "bounty_id", "trace_id", "ts"} {
+			if v, ok := ev[k].(string); !ok || v == "" {
+				t.Errorf("事件缺信封字段 %s：%q", k, line)
+			}
 		}
+		if ev["trace_id"] != "trace-envelope" || ev["bounty_id"] != "b-42" {
+			t.Errorf("信封取值应来自投递事实：%q", line)
+		}
+		checked++
+	}
+	if checked == 0 {
+		t.Fatal("stdout 上没有任何事件行")
 	}
 
 	// 初始化期失败也是显式终态（INV-3），因此事件流里必须有 hunt_end。

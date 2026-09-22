@@ -129,7 +129,9 @@ func huntCmd(args []string) int {
 	}
 	// 通道分工是外部契约：事件流独占 stdout（机器消费），人类日志走 stderr。
 	// 写错方向不会让任何单测失败，却会让所有按文档实现的驱动者读不到事件。
-	sink := &eventSink{events: os.Stdout, logs: logs, start: time.Now()}
+	// 信封里的追踪标识来自投递事实（缺省已回填为 bounty id）。
+	sink := &eventSink{events: os.Stdout, logs: logs, start: time.Now(),
+		bountyID: string(bounty.ID), traceID: bounty.TraceID}
 
 	// 业务执行体：向循环提供三组 handler，同时是原语看到的 Facts。上下文、会话材料与
 	// 事件出口都由它自己持有——循环不认识这些东西。
@@ -177,6 +179,12 @@ func huntCmd(args []string) int {
 	// 交付记录在终态之后写：无论成败都要留档（FR-1.5），写不出来属环境问题。
 	if err := writeRunOutputs(*resultPath, *patchPath, bounty, outcome, session.Delivery()); err != nil {
 		fmt.Fprintf(os.Stderr, "%v（终态已定：%s/%s）\n", err, outcome.Status, outcome.Reason)
+		return exitEnv
+	}
+	// 通道断裂即环境错误（FR-10.4）：消费者已不在通道上，继续跑只是在自说自话。
+	// 事件出口记着第一次写失败，这里收口——不把"写不出去"降级成一条 warn。
+	if err := sink.Failed(); err != nil {
+		fmt.Fprintf(os.Stderr, "事件通道写入失败：%v（终态已定：%s/%s）\n", err, outcome.Status, outcome.Reason)
 		return exitEnv
 	}
 	return int(outcome.ExitCode)
