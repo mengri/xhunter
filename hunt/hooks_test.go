@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
+	"xhunter/git"
 	"xhunter/harness"
 	"xhunter/llm"
 )
@@ -97,17 +99,48 @@ func TestOnTurn_AnsweredCallIsNotReExecuted(t *testing.T) {
 	}
 }
 
-// 首轮两段正文的摆法与组装：system 在前、user 在后，空段不占位置。
-func TestFirstPrompt_KeepsOrderAndSkipsEmpty(t *testing.T) {
-	if got := firstPrompt("S", "U"); len(got) != 2 || got[0].Role != llm.RoleSystem || got[1].Role != llm.RoleUser {
-		t.Errorf("两段都在时必须 system 在前 user 在后：%+v", got)
+// 首轮两段的摆法与组装：system 在前、user 在后；插件正文为空时不占位置，
+// 但内核那两块（内核条款 / 环境事实）**照旧存在**——它们不由插件提供。
+func TestFirstPrompt_KeepsOrderAndAppendsKernelBlocks(t *testing.T) {
+	bounty := Bounty{Repo: gitRepoRef()}
+	got := firstPrompt("PLUGIN_SYS", "PLUGIN_USER", bounty)
+	if len(got) != 2 || got[0].Role != llm.RoleSystem || got[1].Role != llm.RoleUser {
+		t.Fatalf("两段都必须存在且 system 在前：%+v", got)
 	}
-	if got := firstPrompt("S", "  \n "); len(got) != 1 || got[0].Role != llm.RoleSystem {
-		t.Errorf("空段不该占位置：%+v", got)
+	// system = 插件正文 + 内核条款（条款在末尾，插件改不动它）
+	if !strings.Contains(got[0].Content, "PLUGIN_SYS") || !strings.Contains(got[0].Content, kernelClauseMarker) {
+		t.Errorf("system 段应含插件正文与内核条款：%q", got[0].Content)
 	}
-	if got := firstPrompt("", ""); len(got) != 0 {
-		t.Errorf("两段都空时不产出消息：%+v", got)
+	if strings.Index(got[0].Content, "PLUGIN_SYS") > strings.Index(got[0].Content, kernelClauseMarker) {
+		t.Error("内核条款必须在插件正文之后（末尾追加）")
 	}
+	// user = 环境事实 + 插件正文
+	if !strings.Contains(got[1].Content, environmentFactMarker) || !strings.Contains(got[1].Content, "PLUGIN_USER") {
+		t.Errorf("user 段应含环境事实与插件正文：%q", got[1].Content)
+	}
+	if strings.Index(got[1].Content, environmentFactMarker) > strings.Index(got[1].Content, "PLUGIN_USER") {
+		t.Error("环境事实必须在插件正文之前")
+	}
+
+	// 插件两段都空：不留空行、不产出多余消息，但内核两块仍在。
+	empty := firstPrompt("  \n ", "", bounty)
+	if len(empty) != 2 {
+		t.Fatalf("内核两块必须各自成段：%+v", empty)
+	}
+	if strings.TrimSpace(empty[0].Content) != strings.TrimSpace(kernelClauses()) {
+		t.Errorf("没有插件正文时 system 段应恰为内核条款：%q", empty[0].Content)
+	}
+	if !strings.Contains(empty[1].Content, environmentFactMarker) {
+		t.Errorf("user 段应恰为环境事实：%q", empty[1].Content)
+	}
+	if strings.Contains(empty[0].Content, "\n\n\n") || strings.HasPrefix(empty[0].Content, "\n") {
+		t.Errorf("空插件段不该留下多余空行：%q", empty[0].Content)
+	}
+}
+
+// gitRepoRef 给组装用例一个最小仓库事实。
+func gitRepoRef() git.RepoRef {
+	return git.RepoRef{Remote: "r", Branch: "xhunter/x", BaseCommit: "0123456789abcdef0123456789abcdef"}
 }
 
 // 净化是格式不可伪造的保证：只取首行、剥控制与格式字符、折叠空白、按上限截断。

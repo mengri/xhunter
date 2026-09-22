@@ -433,7 +433,7 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
         └─ 插件正文       任务陈述                              ← 每次不同
 ```
 
-> **一期现状**：两段**只由插件正文构成**（`prompt/agentsmd` + `prompt/skills` → system，`prompt/task` → user）。图中的**工具面说明层、内核条款、内核注入（环境事实与门禁清单）三项尚未实现**；`firstPrompt` 只负责"摆位置与顺序"，这三项之外的部分已落地。
+> **一期现状**：system 段 = 插件正文（`prompt/agentsmd` + `prompt/skills`）＋ **内核条款**（末尾追加：无人类条款、止损规则、工具纪律、安全边界）；user 段 = **环境事实**（内核注入：平台、基线、路径规则、能力边界）＋ 插件正文（`prompt/task`）。图中的**门禁清单注入待接入**（门禁未实现）；**工具面说明层不做**——FR-7.7 要求能在工具 schema 里表达的不得在提示词里重复，工具声明随每次请求下发，另写一层只会漂移。
 
 **约定与 skill 的默认口径**（实现见 `prompt/agentsmd/` 与 `prompt/skills/`；插件可替换，内核不规定发现方式）：
 
@@ -1021,7 +1021,8 @@ Bounty(session) ──► H6.Session
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
-| IA-2.1 | 首轮两段顺序稳定且空段不占位：system 段在前、user 段在后（一期只由插件正文构成，工具面说明层与内核条款待接入），缓存友好；**任务正文必须进 user 段**（否则模型看不到任务） | `TestFirstPrompt_KeepsOrderAndSkipsEmpty`（hunt）、`TestDefaultPromptPlugins_OrderIsThePromptOrder`、`TestPrepare_FirstPromptCarriesTaskAndConventions`（cmd） |
+| IA-2.1 | 首轮两段顺序稳定：system 段在前、user 段在后，缓存友好；**任务正文必须进 user 段**（否则模型看不到任务）；空插件正文不占位置 | `TestFirstPrompt_KeepsOrderAndAppendsKernelBlocks`（hunt）、`TestDefaultPromptPlugins_OrderIsThePromptOrder`、`TestPrepare_FirstPromptCarriesTaskAndConventions`（cmd） |
+| IA-2.11 | **内核条款与环境事实不由插件贡献**（AC-29、FR-7.2/7.3/7.5）：条款追加在 system 段**末尾**（含无人类条款与止损规则），环境事实摆在 user 段**最前**；插件两段都为空时它们仍然在场，插件没有删除途径 | `TestFirstPrompt_KeepsOrderAndAppendsKernelBlocks`、`TestPrepare_FirstPromptCarriesTaskAndConventions`（断言位置与在场） |
 | IA-2.2 | 历史按轮追加、每轮各成消息（模型说了什么 ＋ 调用结果），下一轮即可见 | `TestContextBuilder_AssemblesPromptThenHistory`（cmd） |
 | IA-2.3 | 结果加工的改动**必须先于落历史**——否则历史里是旧副本，模型看不到 | `TestOnTurn_FiltersRunBeforeRecording`（hunt） |
 | IA-2.4 | 落历史与会话材料是**值拷贝**：此后对 `Turn` 的改动不影响已记内容 | 同上（同一条用例的断言之一） |

@@ -52,9 +52,9 @@ func (s *Session) Prepare(ctx context.Context, run *harness.Run) error {
 	}
 	s.emitNotices(system.Notices, user.Notices)
 
-	prompt := firstPrompt(system.Body, user.Body)
-	if len(prompt) == 0 && s.cfg.Sink != nil {
-		s.cfg.Sink.Log("warn", "首轮两段正文都为空：没有插件贡献内容，模型将看不到任何项目约定")
+	prompt := firstPrompt(system.Body, user.Body, s.cfg.Bounty)
+	if system.Body == "" && user.Body == "" {
+		s.logf("warn", "没有任何插件贡献正文：模型只会看到内核条款与环境事实，看不到项目约定与任务描述")
 	}
 
 	// 提示词交给上下文持有者，历史也归它——harness 只拿组装好的消息。
@@ -67,17 +67,32 @@ func (s *Session) Prepare(ctx context.Context, run *harness.Run) error {
 	return nil
 }
 
-// firstPrompt 把两段正文摆成首轮消息：system 在前、user 在后，空段不占位置。
-// 位置与顺序是业务定的，插件只提供正文，插不进第三段、也删不掉内核条款。
-func firstPrompt(system, user string) []llm.Message {
+// firstPrompt 把两段正文摆成首轮消息：system 在前、user 在后。
+//
+// 内核那两块不由插件贡献，位置也固定（FR-7.8）：system 段 = 插件正文 + **内核条款**
+// （末尾追加），user 段 = **环境事实**（最前面）+ 插件正文。插件只交正文，插不进
+// 第三段、也删不掉内核条款与环境事实——它们在这里生成，插件没有表达"删除"的途径。
+// 插件正文为空时它不占位置（不留空行），内核那两块照旧。
+func firstPrompt(system, user string, b Bounty) []llm.Message {
 	msgs := make([]llm.Message, 0, 2)
-	if b := strings.TrimSpace(system); b != "" {
-		msgs = append(msgs, llm.Message{Role: llm.RoleSystem, Content: b})
+	if body := joinBlocks(system, kernelClauses()); body != "" {
+		msgs = append(msgs, llm.Message{Role: llm.RoleSystem, Content: body})
 	}
-	if b := strings.TrimSpace(user); b != "" {
-		msgs = append(msgs, llm.Message{Role: llm.RoleUser, Content: b})
+	if body := joinBlocks(environmentFacts(b), user); body != "" {
+		msgs = append(msgs, llm.Message{Role: llm.RoleUser, Content: body})
 	}
 	return msgs
+}
+
+// joinBlocks 按顺序拼接非空块（各自 TrimSpace），空块不留下多余空行。
+func joinBlocks(blocks ...string) string {
+	kept := make([]string, 0, len(blocks))
+	for _, b := range blocks {
+		if t := strings.TrimSpace(b); t != "" {
+			kept = append(kept, t)
+		}
+	}
+	return strings.Join(kept, "\n\n")
 }
 
 func (s *Session) systemPlugins(storage workspace.Storage) []PromptPlugin {

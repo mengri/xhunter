@@ -77,6 +77,27 @@ func TestPrepare_FirstPromptCarriesTaskAndConventions(t *testing.T) {
 		t.Errorf("user 段缺少任务正文：%q", run.Messages[1].Content)
 	}
 
+	// 内核那两块不由插件贡献，但必须在场且位置固定（AC-29、FR-7.2/7.3/7.5）：
+	// 无人类条款与止损规则追加在 system 段末尾，环境事实摆在 user 段最前。
+	if !strings.Contains(run.Messages[0].Content, "[内核条款]") {
+		t.Errorf("system 段缺少内核条款：%q", run.Messages[0].Content)
+	}
+	if !strings.Contains(run.Messages[0].Content, "不得提问") || !strings.Contains(run.Messages[0].Content, "止损") {
+		t.Errorf("内核条款缺少无人类条款或止损规则：%q", run.Messages[0].Content)
+	}
+	if strings.Index(run.Messages[0].Content, "仓库约定") > strings.Index(run.Messages[0].Content, "[内核条款]") {
+		t.Error("内核条款必须在插件正文之后（末尾追加，插件删不掉）")
+	}
+	if !strings.Contains(run.Messages[1].Content, "[环境事实]") {
+		t.Errorf("user 段缺少环境事实：%q", run.Messages[1].Content)
+	}
+	if strings.Index(run.Messages[1].Content, "[环境事实]") > strings.Index(run.Messages[1].Content, marker) {
+		t.Error("环境事实必须摆在插件正文之前")
+	}
+	if !strings.Contains(run.Messages[1].Content, "0123456789ab") {
+		t.Errorf("环境事实应含基线 commit：%q", run.Messages[1].Content)
+	}
+
 	// 任务原文只应出现一次：重复注入等于同一条指令在提示词里出现两遍。
 	all := run.Messages[0].Content + "\n" + run.Messages[1].Content
 	if n := strings.Count(all, marker); n != 1 {
