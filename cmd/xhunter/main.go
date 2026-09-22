@@ -17,7 +17,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"xhunter/harness"
@@ -154,7 +156,13 @@ func huntCmd(args []string) int {
 		firstLine(bounty.Task), bounty.Repo.Remote, bounty.Repo.Branch, bounty.Repo.BaseCommit,
 		selection.ProviderID, selection.ModelID)
 
-	outcome, err := engine.Run(context.Background(), harness.Input{Meta: map[string]any{
+	// 取消入口：循环内任何阻塞调用都靠 ctx 打断。信号只在**运行段**接管——
+	// 启动期的读文件、建 Provider 仍走默认处置（那里还没有任何状态需要保住，
+	// 接管反而会让一个卡住的启动过程变得杀不掉）。
+	ctx, stop := signalContext()
+	defer stop()
+
+	outcome, err := engine.Run(ctx, harness.Input{Meta: map[string]any{
 		"bounty_id":  string(bounty.ID),
 		"session_id": SessionID(bounty),
 	}})
@@ -163,6 +171,15 @@ func huntCmd(args []string) int {
 		return exitEnv
 	}
 	return int(outcome.ExitCode)
+}
+
+// signalContext 返回一个在 SIGINT / SIGTERM 时取消的上下文。
+//
+// 它是"外部打断"进引擎的唯一通道：取消后循环不再发起新的推理与工具调用，
+// Finalize 照常跑（交付提交、材料落盘、清理、`hunt_end`），终态是 cancelled / 退出 3。
+// 不接信号时，进程被默认处置直接杀掉——没有终态事件、没有清理、退出码也不是 3。
+func signalContext() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 
 // logTarget 给出日志去向的显示值（空表示默认 stderr）。

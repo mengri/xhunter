@@ -1004,7 +1004,7 @@ Bounty(session) ──► H6.Session
 |---|---|---|
 | IA-1.1 | `Prepare` 失败即终止，**不进入任何一轮推理** | `TestEngine_PrepareFailureStopsBeforeInference`（断言零次推理） |
 | IA-1.2 | `OnTurn` 返回 `false` 即停止；handler 已置的终态不被覆盖 | `TestEngine_HandlerTerminalWinsOverStop` |
-| IA-1.3 | 取消优先级最高：`ctx` 取消即以 `cancelled/3` 收敛，且不再发起推理 | `TestEngine_CancelledBeforeFirstTurn` |
+| IA-1.3 | 取消优先级最高：`ctx` 取消即以 `cancelled/3` 收敛，且不再发起推理；**推理在途中被取消也按取消归因**（不得判成推理失败/环境错误） | `TestEngine_CancelledBeforeFirstTurn`、`TestEngine_CancelDuringInferIsCancelled` |
 | IA-1.4 | 轮数达 `Config.MaxTurns` → `failed/1`（`turn_limit_exceeded`） | `TestEngine_TurnLimitIsMechanicalCap`（断言推理次数恰等于上限） |
 | IA-1.5 | 连续失败轮数达 `Config.MaxFailStreak` → `failed/1`（止损） | `TestEngine_FailStreakStopsLoss` |
 | IA-1.6 | 本轮无工具调用 → 成功路径（`no_tool_call`）；handler 拿到整轮内容与用量 | `TestEngine_NoToolCallSucceedsAndCollectsTurn` |
@@ -1212,6 +1212,7 @@ Bounty(session) ──► H6.Session
 | IA-12.5 | 部署事实缺失 → 启动期退出码 2，并指出缺哪一项 | `TestBountyFromEnv_RequiresRepoFacts`、`TestSelectionFromEnv_Validate`、`TestProviderFor_UnknownSDKTellsWhereToAddAFactory` |
 | IA-12.6 | **端到端**：本地驱动跑通一次（基线 → 至少一轮 → 交付提交 → `hunt_end`），退出码与事件序列符合契约 | **待补**（需夹具仓库 ＋ 假 Provider） |
 | IA-12.7 | 装配结果无运行期注册面：改装配只改装配代码，框架侧无注册 API | 代码检查（`harness` 只有 `New(provider, ...)`；`hunt.Config` 是构造参数） |
+| IA-12.8 | **信号接线**：SIGINT / SIGTERM 取消运行段的 `ctx`（循环停止发起新的推理与工具调用、`Finalize` 照常收敛、退出码 3）；启动期仍走默认处置 | `TestSignalContext_CancelsOnSignal`、`TestSignalContext_StopCancelsContext`；进程级 AC-6 断言**待补** |
 
 ---
 
@@ -1256,7 +1257,7 @@ Bounty(session) ──► H6.Session
 |---|---|
 | **写盘与执行器级用例（IA-3.3、IA-3.6）** | `Committer` 的"未读即写被拒 / 读后被改动被拒 / 只改目标区间"目前没有用例——它就在 `hunt` 包里，补起来最便宜 |
 | 绑定层用例（IA-3.9） | `BindToolCall` 拒绝未知字段 / 未知工具名、且**不判断名字存不存在** |
-| 进程级信号（SIGTERM 优雅退出） | 引擎级的 `ctx` 取消已有用例；信号注入需要集成用例（AC-6） |
+| 进程级信号（SIGTERM 优雅退出） | 接线已落地（`signalContext`，见 IA-12.8），引擎级 `ctx` 取消也有用例；缺的是**进程级**断言：真实二进制收到信号后退出 3、发出 `hunt_end{cancelled}` 并完成清理（AC-6） |
 | 扩展崩溃隔离（IA-7.6） | 需要真实子进程的扩展宿主测试（M2 引入扩展后补） |
 | 凭据静态扫描（IA-6.8、IA-8.4） | 需要 CI 级扫描规则，非单测能覆盖（AC-8） |
 | stdout 纯净性（IA-5.2） | 需要端到端运行断言（AC-9） |

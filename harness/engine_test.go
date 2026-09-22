@@ -52,7 +52,7 @@ func (p *scriptedProvider) Infer(_ context.Context, _ llm.Request) (llm.Session,
 
 // stubSession 是一段「已经跑完的流」：事件一次性入队后关闭。
 type stubSession struct {
-	ch       chan llm.Event
+	ch        chan llm.Event
 	cancelled bool
 }
 
@@ -264,6 +264,38 @@ func TestEngine_StreamErrorIsEnvError(t *testing.T) {
 	if onTurn != 0 {
 		t.Error("流中断时不该进入轮边界（那一轮没有完整结果）")
 	}
+}
+
+// 推理在途中被取消：各协议实现都会回一个"请求被取消"的错误（HTTP 层如此），
+// 但归因必须仍是 cancelled/3——否则一次主动取消会被判成"环境问题、可重派"，
+// 平台会重跑一个用户刚取消的任务。
+func TestEngine_CancelDuringInferIsCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	p := &cancelMidInferProvider{cancel: cancel}
+	finals := 0
+	eng, _ := New(p, nil, nil, []FinalHandler{func(context.Context, *Run) error { finals++; return nil }})
+
+	out, err := eng.Run(ctx, Input{})
+	if err != nil {
+		t.Fatalf("终态应走 Outcome：%v", err)
+	}
+	if out.Status != StatusCancelled || out.ExitCode != ExitCancelled {
+		t.Fatalf("推理途中取消应收敛为 cancelled/3：%+v", out)
+	}
+	if finals != 1 {
+		t.Errorf("取消后收尾仍必须跑：%d", finals)
+	}
+}
+
+// cancelMidInferProvider 在自己的 Infer 里触发取消，并像真实协议实现那样返回取消错误
+// （HTTP 请求被 ctx 打断时就是这种形状）。
+type cancelMidInferProvider struct{ cancel context.CancelFunc }
+
+func (p *cancelMidInferProvider) Capabilities() llm.Caps { return llm.Caps{} }
+
+func (p *cancelMidInferProvider) Infer(context.Context, llm.Request) (llm.Session, error) {
+	p.cancel()
+	return nil, errors.New("请求被取消：context canceled")
 }
 
 // panic 收敛为环境错误：不让进程带着半截状态崩掉，且收尾照跑。
