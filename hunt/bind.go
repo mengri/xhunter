@@ -2,7 +2,9 @@ package hunt
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"xhunter/llm"
@@ -32,6 +34,16 @@ func BindToolCall(tc llm.ToolCall) (Call, *llm.Fault) {
 			return call, &llm.Fault{
 				Kind:    "invalid_arguments",
 				Message: fmt.Sprintf("%s 的参数不是合法 JSON 或含未知字段：%v", tc.Name, err),
+			}
+		}
+		// 对象之后还有内容（`{...}{...}`、`{...} 后面跟半截文本`）说明这不是一次
+		// 完整调用：只看第一个对象会静默丢掉后半段，而模型以为整段都被采用了。
+		// 判据是"再解一个值、必须恰好读到流尾"，语义不含糊（不依赖 More 的边界用法）。
+		var extra json.RawMessage
+		if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+			return call, &llm.Fault{
+				Kind:    "invalid_arguments",
+				Message: tc.Name + " 的参数在 JSON 对象之后还有多余内容",
 			}
 		}
 	}

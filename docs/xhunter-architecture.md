@@ -1044,13 +1044,13 @@ Bounty(session) ──► H6.Session
 |---|---|---|
 | IA-3.1 | 工具面由装配层定格：`Config.Tools(ws)` 的顺序 ＝ 模型可见顺序，`checkpoint` 殿后 | `TestDefaultTools_FaceIsFixed` |
 | IA-3.2 | 每个原语的声明是「已知形状」：名字、说明、合法 JSON Schema、`additionalProperties: false` | `TestDefaultTools_ShapeIsDeclared` ＋ 每个原语的 `*_DeclShape`（参数面与必填逐条断言） |
-| IA-3.3 | 未读即写被拒：改已存在的文件必须先读过，且读后未被外部改动（指纹校验） | **待补**（属于 `Committer` 的职责，需执行器级用例） |
+| IA-3.3 | 未读即写被拒：改已存在的文件必须先读过，且读后未被外部改动（指纹校验）；重读后可自愈 | `TestCommitter_RejectsWriteWithoutPriorRead`、`TestCommitter_RejectsStaleRead`（hunt） |
 | IA-3.4 | 内容寻址不放宽匹配语义：未找到 → `not_found`（可重试）；多处匹配 → `ambiguous` ＋ 数量 | `TestEdit_NoMatchReportsNotFound`、`TestEdit_AmbiguousReportsCount` |
 | IA-3.5 | 符号寻址只接受 `Prepared` 的定位结果，落盘仍走 `Committer` | **待接入**（符号原语声明不实现） |
-| IA-3.6 | 落盘只改写目标字节区间，其余字节原样保留 | **待补**（需 `Committer` 级用例） |
+| IA-3.6 | 落盘只改写目标字节区间（其余字节原样保留），越界区间在落盘前被拒；**批量编辑先全部校验再依次落盘**（校验失败即零落盘） | `TestCommitter_OnlyReplacesTargetRange`、`TestCommitter_RejectsOutOfRange`、`TestCommitter_BatchIsAllOrNothingOnValidation`、`TestCommitter_NewFileRules`、`TestCommitter_MarksNewFingerprintAfterWrite`（hunt） |
 | IA-3.7 | 路径解析与工作区根校验：`../` 与符号链接逃逸一律拒绝；**新建文件（叶子尚不存在）与深层路径同样要拦**，且指向工作区内部的软链不误伤 | `TestResolve_RejectsPathsOutsideWorkspace`、`TestResolve_RejectsSymlinkEscape`、`TestResolve_RejectsSymlinkEscapeForNewFile`、`TestResolve_AllowsSymlinkInsideWorkspace`（osfs） |
 | IA-3.8 | 枚举跳过噪音但保留控制目录（`.xhunter`）；同状态枚举顺序稳定 | `TestList_SkipsNoiseButKeepsControlDir`、`TestList_OrderIsStable`（osfs） |
-| IA-3.9 | 绑定层拒绝形状不成立的调用（未知字段 / 未知工具名），并回灌结构化错误 | **待补**（需绑定层用例） |
+| IA-3.9 | 绑定层拒绝形状不成立的调用（非对象 / 未知字段 / **对象之后还有内容**），并回灌结构化错误；**不判断工具名是否存在**（那是查表的事）；往返可还原 | `TestBindToolCall_RejectsShapesThatWouldExecuteTheWrongThing`、`TestBindToolCall_MapsSlots`、`TestBindToolCall_DoesNotKnowToolNames`、`TestUnbindToolCall_RoundTripsNonEmptyFields`（hunt） |
 | IA-3.10 | 结果按 `CallID` 严格配对，**禁止按顺序猜测** | 代码检查（`produced()` 里 tool 消息携带 `Results[].CallID`） |
 | IA-3.11 | 已答复的调用不重复执行（前置 handler 的短路通道真实可用） | `TestOnTurn_AnsweredCallIsNotReExecuted`（hunt） |
 | IA-3.12 | 输出超限时标注截断位置与总量，并给出可直接照抄的续读起点 | `TestRead_OversizeTruncatesWithContinuationHint` |
