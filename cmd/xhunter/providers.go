@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -111,17 +112,21 @@ func anthropicMessages(r providerconfig.Resolved) (llm.Provider, error) {
 func requestHeaders(r providerconfig.Resolved) (map[string]string, error) {
 	headers := make(map[string]string, len(r.Headers)+2)
 	for name, value := range r.Headers {
-		if strings.EqualFold(name, "User-Agent") {
+		// 头名先归一（http.Header 的规范形式），否则 `authorization` 与下面补的
+		// `Authorization` 会成为两个 key，而 map 迭代顺序决定了谁赢——同一份配置
+		// 两次运行可能发出不同的鉴权头。
+		canonical := http.CanonicalHeaderKey(name)
+		if strings.EqualFold(canonical, "User-Agent") {
 			continue // 客户端标识不提供配置入口
 		}
 		expanded, err := providerconfig.ExpandEnvRef(value, os.LookupEnv)
 		if err != nil {
 			return nil, fmt.Errorf("请求头 %s：%w", name, err)
 		}
-		headers[name] = expanded
+		headers[canonical] = expanded
 	}
 
-	if _, ok := r.Headers["Authorization"]; !ok && r.HasAPIKey {
+	if _, ok := headers["Authorization"]; !ok && r.HasAPIKey {
 		key := strings.TrimSpace(os.Getenv(r.APIKeyEnv))
 		if key == "" {
 			return nil, fmt.Errorf("%w: %s", errNoCredential, r.APIKeyEnv)

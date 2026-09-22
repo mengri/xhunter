@@ -116,6 +116,13 @@ func splitScalar(line string) (key, value string, ok bool) {
 	if strings.HasPrefix(value, "{") || strings.HasPrefix(value, "[") {
 		return "", "", false
 	}
+	// 块标量（`|` `>`）、锚点与别名（`&` `*`）同样不是平面标量。它们必须**拒收**
+	// 而不是把 `|` 当成描述正文收下：那会把一段多行说明渲染成一行 "|"，
+	// 属于"看不懂却假装看懂了"。
+	switch value[0] {
+	case '|', '>', '&', '*':
+		return "", "", false
+	}
 	return key, unquote(value), true
 }
 

@@ -101,6 +101,7 @@ type Report struct {
 	UpstreamEntries   int `json:"upstream_entries"`
 	Converted         int `json:"converted"`
 	SkippedSampleSpec int `json:"skipped_sample_spec"`
+	SkippedNoProvider int `json:"skipped_no_provider"`
 	SkippedMode       int `json:"skipped_mode"`
 	SkippedNoLimits   int `json:"skipped_no_limits"`
 	SkippedIncoherent int `json:"skipped_incoherent"`
@@ -118,7 +119,7 @@ const sampleSpecKey = "sample_spec"
 // Convert 把上游目录转换为 Xhunter 的 provider 配置形态。
 //
 // 规则：
-//   - 跳过 sample_spec 与无关模式；
+//   - 跳过 sample_spec、没有供应商归属的条目与无关模式；
 //   - 上下文上限取 max_input_tokens，回退 max_tokens；输出上限取 max_output_tokens，回退 max_tokens；
 //   - 上限缺失的条目跳过——它们无法满足 FR-9.5；
 //   - **输出 >= 上下文**的条目不丢弃：上游只有"总窗口"一个数时，上下文取该事实值，
@@ -147,7 +148,9 @@ func Convert(raw map[string]Entry, outputReserve int) (providerconfig.Config, Re
 		}
 		e := raw[key]
 		if e.LitellmProvider == "" {
-			rep.SkippedMode++
+			// 没有供应商归属的条目没法映射成配置，但原因与"模式无关"不同：
+			// 分开计数，快照元数据才能用来定位"哪一类条目没进来"。
+			rep.SkippedNoProvider++
 			continue
 		}
 		if !defaultModes[e.Mode] {

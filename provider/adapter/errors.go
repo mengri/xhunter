@@ -34,7 +34,8 @@ func (e *StatusError) Error() string {
 }
 
 // NewStatusError 按状态码构造：限流与服务端错误重试有意义；请求本身不合法时
-// 重试永远得到同一个答案。官方 SDK 抛出的错误多半带着状态码，各协议实现用它归一。
+// 重试永远得到同一个答案。各协议实现用它把"上游返回了什么"归一成一种形状——
+// 本项目不引厂商 SDK，状态码来自 HTTP 响应本身。
 func NewStatusError(status int, body string) *StatusError {
 	return &StatusError{
 		Status:    status,
@@ -49,8 +50,9 @@ func StatusErrorFrom(resp *http.Response) *StatusError {
 	return NewStatusError(resp.StatusCode, strings.TrimSpace(string(body)))
 }
 
-// statusCarrier 是"能给出 HTTP 状态码的错误"的最小形状。两家官方 SDK 的错误类型
-// 都带状态码，但类型各不相同；用最小接口接住它们，协议实现就不必各自判断。
+// statusCarrier 是"能给出 HTTP 状态码的错误"的最小形状。错误类型由注入的
+// HTTP 客户端或协议实现给出，各自的类型不同；用最小接口接住它们，
+// 调用方就不必对具体类型做判断。
 type statusCarrier interface {
 	StatusCode() int
 }

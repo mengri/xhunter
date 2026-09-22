@@ -176,6 +176,10 @@ type session struct {
 	ch     chan llm.Event
 	cancel context.CancelFunc
 	body   io.ReadCloser
+	// reportedOut 是已经上报过的输出用量水位：本协议的 usage 是**累计值**
+	// （message_start 给起始值、message_delta 给最终值），而消费端会把事件相加，
+	// 因此这里只交增量——把累计值当增量上报会重复计数。
+	reportedOut int
 }
 
 func (s *session) Events() <-chan llm.Event { return s.ch }
@@ -215,9 +219,9 @@ func (s *session) run() {
 
 		switch ev.Type {
 		case "message_start":
-			// 输入用量在这里，输出用量要到 message_delta 才给。
+			// 输入用量在这里就齐了；输出用量这里只是起始值，等 message_delta 报增量。
 			if ev.Message != nil && ev.Message.Usage != nil {
-				u := llm.Usage{InputTokens: ev.Message.Usage.InputTokens, OutputTokens: ev.Message.Usage.OutputTokens}
+				u := llm.Usage{InputTokens: ev.Message.Usage.InputTokens}
 				if !s.emit(llm.Event{Kind: llm.EvUsage, Usage: u}) {
 					return
 				}
@@ -248,9 +252,10 @@ func (s *session) run() {
 			// 变成"模型的回答"。要保留它，应先给中立事件加槽位。
 
 		case "message_delta":
-			if ev.Usage != nil {
-				u := llm.Usage{OutputTokens: ev.Usage.OutputTokens}
-				if !s.emit(llm.Event{Kind: llm.EvUsage, Usage: u}) {
+			if ev.Usage != nil && ev.Usage.OutputTokens > s.reportedOut {
+				delta := ev.Usage.OutputTokens - s.reportedOut
+				s.reportedOut = ev.Usage.OutputTokens
+				if !s.emit(llm.Event{Kind: llm.EvUsage, Usage: llm.Usage{OutputTokens: delta}}) {
 					return
 				}
 			}

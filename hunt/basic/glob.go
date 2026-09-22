@@ -23,9 +23,9 @@ type globPrim struct{ ws workspace.Workspace }
 func (globPrim) Decl() llm.ToolDecl {
 	return llm.ToolDecl{
 		Name:        string(Glob),
-		Description: "按文件名模式匹配工作区内的文件。",
+		Description: "按模式列出工作区内的文件。不含 / 的模式按文件名匹配（任意深度）；含 / 的模式按路径匹配，整段 ** 表示零到多层目录。",
 		Schema: llm.ObjectSchema(`{
-			"scope": {"type": "string", "description": "文件名模式，如 *.go"}
+			"scope": {"type": "string", "description": "模式，如 *.go、internal/*.go、internal/**/*.go"}
 		}`, "scope"),
 	}
 }

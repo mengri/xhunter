@@ -169,3 +169,74 @@ func open(t *testing.T, root string) workspace.Storage {
 	}
 	return st
 }
+
+// 模式语义要覆盖模型惯用的两种写法：带目录的路径模式与 `**/` 通配。
+// 此前只按 basename 匹配，`internal/*.go` 与 `**/*.go` 都静默返回空——
+// "调用写错了"看起来像"仓库里没有这类文件"。
+func TestList_PatternSemantics(t *testing.T) {
+	root := t.TempDir()
+	st := open(t, root)
+	for _, p := range []string{"top.go", "internal/a.go", "internal/deep/b.go", "docs/readme.md"} {
+		if _, err := st.WriteRange(p, workspace.ByteRange{Start: 0, End: 0}, "x"); err != nil {
+			t.Fatalf("准备夹具失败：%v", err)
+		}
+	}
+	cases := []struct {
+		pattern string
+		want    []string
+	}{
+		{"*.go", []string{"internal/a.go", "internal/deep/b.go", "top.go"}}, // 文件名模式：任意深度
+		{"**/*.go", []string{"internal/a.go", "internal/deep/b.go", "top.go"}},
+		{"internal/*.go", []string{"internal/a.go"}}, // 路径模式：`*` 不跨目录
+		{"internal/**/*.go", []string{"internal/a.go", "internal/deep/b.go"}},
+		{"docs/*.md", []string{"docs/readme.md"}},
+		{"*.md", []string{"docs/readme.md"}},
+	}
+	for _, tc := range cases {
+		got, err := st.List(tc.pattern)
+		if err != nil {
+			t.Fatalf("List(%q) 失败：%v", tc.pattern, err)
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("List(%q) = %v，期望 %v", tc.pattern, got, tc.want)
+		}
+	}
+
+	// 空模式是显式错误：它一个都匹配不到，返回空列表会把"调用写错"伪装成"没有这类文件"。
+	if _, err := st.List("   "); err == nil {
+		t.Error("空模式必须报错")
+	}
+}
+
+// 按行范围读取要交出真实起点行号：模型据此写出的"第 N 行"必须指向同一行。
+func TestRead_ReportsFirstLineOfRange(t *testing.T) {
+	st := open(t, t.TempDir())
+	if _, err := st.WriteRange("a.txt", workspace.ByteRange{Start: 0, End: 0}, "L1\nL2\nL3\nL4\n"); err != nil {
+		t.Fatalf("准备夹具失败：%v", err)
+	}
+	fc, err := st.Read("a.txt", workspace.LineRange{From: 3, To: 4})
+	if err != nil {
+		t.Fatalf("读取失败：%v", err)
+	}
+	if fc.Raw != "L3\nL4" || !fc.Truncated {
+		t.Fatalf("区间读取结果不对：%q truncated=%v", fc.Raw, fc.Truncated)
+	}
+	if fc.FirstLine != 3 {
+		t.Errorf("FirstLine = %d，期望 3", fc.FirstLine)
+	}
+	if fc.TotalLines != 4 {
+		t.Errorf("TotalLines = %d，期望 4（总量不受区间影响）", fc.TotalLines)
+	}
+
+	// 全文读取：起点是 1。
+	all, _ := st.Read("a.txt", workspace.LineRange{})
+	if all.FirstLine != 1 {
+		t.Errorf("全文读取的 FirstLine = %d，期望 1", all.FirstLine)
+	}
+
+	// 区间起点越界：交出空内容，但起点仍如实报告（不假装是第 1 行）。
+	beyond, _ := st.Read("a.txt", workspace.LineRange{From: 99, To: 100})
+	if beyond.Raw != "" || beyond.FirstLine != 99 {
+		t.Errorf("越界区间应给空内容与真实起点：%q first=%d", beyond.Raw, beyond.FirstLine)
+	}
+}

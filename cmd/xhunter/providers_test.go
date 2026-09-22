@@ -333,3 +333,44 @@ func TestProviderFor_IgnoresConfiguredUserAgent(t *testing.T) {
 		t.Errorf("客户端标识 = %q，期望恒为系统值 xhunter/<version>，配置里的同名头被忽略", got)
 	}
 }
+
+// 头名大小写不该决定鉴权结果：`authorization` 与 apiKey 便捷形式派生出的
+// `Authorization` 必须被当成同一个头，否则 map 迭代顺序会决定发出去哪一个。
+func TestProviderFor_HeaderNamesAreCaseInsensitive(t *testing.T) {
+	r := testResolved("https://gw.example/v1")
+	r.Headers = map[string]string{"authorization": "Bearer from-config"}
+	r.HasAPIKey = true
+	r.APIKeyEnv = "SOME_KEY"
+	t.Setenv("SOME_KEY", "from-env")
+
+	headers, err := requestHeaders(r)
+	if err != nil {
+		t.Fatalf("构造请求头失败：%v", err)
+	}
+	if got := headers["Authorization"]; got != "Bearer from-config" {
+		t.Errorf("配置里显式写的鉴权头应生效且只发一份：%q", got)
+	}
+	// 不该同时留下小写那份。
+	for name := range headers {
+		if name != http.CanonicalHeaderKey(name) {
+			t.Errorf("头名应归一为规范形式：%q", name)
+		}
+	}
+}
+
+// User-Agent 由系统注入：配置里怎么写都不会覆盖它（任意大小写）。
+func TestProviderFor_UserAgentAlwaysSystemValue(t *testing.T) {
+	r := testResolved("https://gw.example/v1")
+	r.Headers = map[string]string{"user-agent": "custom/1.0", "X-Keep": "v"}
+
+	headers, err := requestHeaders(r)
+	if err != nil {
+		t.Fatalf("构造请求头失败：%v", err)
+	}
+	if got := headers["User-Agent"]; got != "xhunter/"+version {
+		t.Errorf("User-Agent = %q，期望系统值", got)
+	}
+	if headers["X-Keep"] != "v" {
+		t.Errorf("其它头应原样保留：%v", headers)
+	}
+}

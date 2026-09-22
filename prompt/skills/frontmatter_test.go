@@ -122,3 +122,18 @@ func TestParseFrontmatter_LengthLimitsComeFromSpec(t *testing.T) {
 		t.Errorf("恰好达到上限不该判非法：%v", err)
 	}
 }
+
+// 块标量（`|` `>`）与锚点（`&` `*`）不是平面标量：必须按"格式非法"跳过，
+// 而不是把 "|" 当成描述正文收下——那会把一段多行说明渲染成一行竖线。
+func TestParseFrontmatter_RejectsNonFlatScalars(t *testing.T) {
+	for _, body := range []string{
+		"---\nname: x\ndescription: |\n  a\n  b\n---\n",
+		"---\nname: x\ndescription: >\n  a\n---\n",
+		"---\nname: x\ndescription: &anchor text\n---\n",
+		"---\nname: x\ndescription: *alias\n---\n",
+	} {
+		if _, err := parseFrontmatter(body); err == nil {
+			t.Errorf("块标量/锚点应被拒（%q）", body)
+		}
+	}
+}

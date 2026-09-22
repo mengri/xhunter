@@ -241,10 +241,17 @@ func (s *Session) executeCheckpoint(call Call) llm.ToolResult {
 	return llm.ToolResult{CallID: string(call.ID), Output: msg}
 }
 
+// available 列出模型可用的工具名，供"名字不认识"时回灌。**必须包含 checkpoint**：
+// 它由业务层自带、不经过原语表，漏掉它会让可用清单与实际工具面不一致。
 func (s *Session) available() string {
-	names := make([]string, 0, len(s.tools))
-	for n := range s.tools {
-		names = append(names, string(n))
+	seen := make(map[string]bool, len(s.tools)+1)
+	names := make([]string, 0, len(s.tools)+1)
+	for _, name := range s.order {
+		names = append(names, string(name))
+		seen[string(name)] = true
+	}
+	if !seen[string(PrimCheckpoint)] {
+		names = append(names, string(PrimCheckpoint))
 	}
 	sort.Strings(names)
 	return strings.Join(names, "、")

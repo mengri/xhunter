@@ -121,7 +121,9 @@ func (s *storage) Read(rel string, r workspace.LineRange) (workspace.FileContent
 		TotalLines:  countLines(raw),
 	}
 	if r.From > 0 || r.To > 0 {
-		fc.Raw, fc.Truncated = sliceLines(raw, r)
+		fc.Raw, fc.Truncated, fc.FirstLine = sliceLines(raw, r)
+	} else {
+		fc.FirstLine = 1
 	}
 	return fc, nil
 }
@@ -143,10 +145,24 @@ func (s *storage) Stat(rel string) (workspace.FileInfo, error) {
 }
 
 // List 返回相对路径列表，按字典序排序。
+//
+// 模式语义（模型惯用的写法都要能用，而不是静默返回空）：
+//   - 不含 "/" 的模式按**文件名**匹配（`*.go` 命中任意深度）；
+//   - 含 "/" 的模式按**工作区相对路径**匹配（`internal/*.go`）；
+//   - `**/` 前缀表示"任意深度"（`**/*.go` 等价于 `*.go` 按文件名匹配）。
+//
+// 空模式是显式错误：它一个文件都匹配不到，静默返回空列表会让"调用写错了"看起来像
+// "仓库里没有这类文件"。
 func (s *storage) List(pattern string) ([]string, error) {
+	if strings.TrimSpace(pattern) == "" {
+		return nil, &llm.Fault{Kind: "invalid_path", Message: "模式不能为空"}
+	}
 	if filepath.IsAbs(pattern) || strings.Contains(pattern, "..") {
 		return nil, &llm.Fault{Kind: "invalid_path", Message: "模式必须是工作区内相对模式"}
 	}
+
+	pat := filepath.ToSlash(pattern)
+
 	var out []string
 	err := filepath.WalkDir(s.root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -162,8 +178,9 @@ func (s *storage) List(pattern string) ([]string, error) {
 		if rerr != nil {
 			return nil
 		}
-		if ok, _ := filepath.Match(pattern, filepath.Base(rel)); ok {
-			out = append(out, filepath.ToSlash(rel))
+		rel = filepath.ToSlash(rel)
+		if matchPattern(pat, rel) {
+			out = append(out, rel)
 		}
 		return nil
 	})
@@ -172,6 +189,46 @@ func (s *storage) List(pattern string) ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// matchPattern 是枚举面的模式匹配：
+//
+//   - 不含 "/" 的模式按**文件名**匹配，命中任意深度（`*.go`）；
+//   - 含 "/" 的模式按**路径分段**匹配，其中整段为 `**` 表示"零到多层目录"
+//     （`internal/**/*.go`）；
+//   - 每段仍走 filepath.Match 的通配语义（`*` / `?` / `[...]`，不跨 "/"）。
+//
+// 标准库的 Match 不认 `**`，但它是模型最惯用的写法之一；不认就会静默返回空列表，
+// 把"模式写错了"伪装成"仓库里没有这类文件"。
+func matchPattern(pattern, rel string) bool {
+	if !strings.Contains(pattern, "/") {
+		ok, _ := filepath.Match(pattern, filepath.Base(rel))
+		return ok
+	}
+	return matchSegments(strings.Split(pattern, "/"), strings.Split(rel, "/"))
+}
+
+func matchSegments(pattern, path []string) bool {
+	if len(pattern) == 0 {
+		return len(path) == 0
+	}
+	if pattern[0] == "**" {
+		// `**` 吃掉零到任意多层，剩下的模式在每一层后缀上再试。
+		for i := 0; i <= len(path); i++ {
+			if matchSegments(pattern[1:], path[i:]) {
+				return true
+			}
+		}
+		return false
+	}
+	if len(path) == 0 {
+		return false
+	}
+	ok, _ := filepath.Match(pattern[0], path[0])
+	if !ok {
+		return false
+	}
+	return matchSegments(pattern[1:], path[1:])
 }
 
 // WriteRange 把 [br.Start, br.End) 替换为 content，是唯一的写入原语。
@@ -224,7 +281,9 @@ func countLines(s string) int {
 }
 
 // sliceLines 取 1-based 闭区间行；越界时收敛到有效范围，并报告是否发生了截断。
-func sliceLines(s string, r workspace.LineRange) (string, bool) {
+// 同时交出**实际起点行号**：回显给模型的行号必须与文件真实行号一致，否则模型据此
+// 写的"第 20 行"会指向别处。
+func sliceLines(s string, r workspace.LineRange) (raw string, truncated bool, first int) {
 	lines := strings.Split(s, "\n")
 	from, to := r.From, r.To
 	if from <= 0 {
@@ -234,7 +293,7 @@ func sliceLines(s string, r workspace.LineRange) (string, bool) {
 		to = len(lines)
 	}
 	if from > len(lines) {
-		return "", true
+		return "", true, from
 	}
-	return strings.Join(lines[from-1:to], "\n"), from > 1 || to < len(lines)
+	return strings.Join(lines[from-1:to], "\n"), from > 1 || to < len(lines), from
 }

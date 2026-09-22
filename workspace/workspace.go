@@ -39,6 +39,9 @@ type FileContent struct {
 	Fingerprint string // 内容指纹，用于「改前必读」校验
 	Truncated   bool   // Raw 是否只是文件的一部分
 	TotalLines  int    // 截断时给出总量，让调用方知道丢了多少
+	// FirstLine 是 Raw 第一行在文件中的行号（1 起）。按行范围读取时不能假定它是 1：
+	// 回显给模型的行号若从 1 重新开始，模型据此写出的行号会整体错位。
+	FirstLine int
 }
 
 // FileInfo 是一次 Stat 的结果，用于区分「新建」与「改写」。

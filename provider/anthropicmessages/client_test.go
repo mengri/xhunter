@@ -495,3 +495,32 @@ func TestInfer_CancelUnblocksTheStream(t *testing.T) {
 		}
 	}
 }
+
+// 本协议的 usage 是累计值：message_start 给起始输出用量、message_delta 给最终值。
+// 消费端把事件相加，因此实现只能交增量——否则每轮都多算一次。
+func TestInfer_UsageIsNotDoubleCounted(t *testing.T) {
+	up := &fakeUpstream{parts: []string{
+		"event: message_start\n" + sse(`{"type":"message_start","message":{"usage":{"input_tokens":100,"output_tokens":1}}}`),
+		"event: content_block_delta\n" + sse(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}`),
+		"event: message_delta\n" + sse(`{"type":"message_delta","usage":{"output_tokens":57}}`),
+		"event: message_stop\n" + sse(`{"type":"message_stop"}`),
+	}}
+	c := newAgainst(t, up, nil)
+	sess, err := c.Infer(context.Background(), llm.Request{Messages: []llm.Message{{Role: llm.RoleUser, Content: "hi"}}})
+	if err != nil {
+		t.Fatalf("Infer 失败：%v", err)
+	}
+	var in, out int
+	for _, ev := range drain(t, sess) {
+		if ev.Kind == llm.EvUsage {
+			in += ev.Usage.InputTokens
+			out += ev.Usage.OutputTokens
+		}
+	}
+	if in != 100 {
+		t.Errorf("输入用量 = %d，期望 100", in)
+	}
+	if out != 57 {
+		t.Errorf("输出用量 = %d，期望 57（累计值要差分成增量，而不是 1+57）", out)
+	}
+}

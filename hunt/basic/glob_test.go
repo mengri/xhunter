@@ -103,3 +103,26 @@ func TestGlob_DeclShape(t *testing.T) {
 		t.Errorf("required = %v，期望只有 scope", s.Required)
 	}
 }
+
+// 目录模式与 `**/` 必须能用：这是模型最惯用的两种写法（见 List 的模式语义）。
+func TestGlob_DirectoryAndDeepPatterns(t *testing.T) {
+	st := newStore(t)
+	for _, f := range []string{"top.go", "internal/a.go", "internal/deep/b.go"} {
+		seed(t, st, f, "package x")
+	}
+	cases := map[string]string{
+		"internal/*.go":    "internal/a.go",
+		"internal/**/*.go": "internal/deep/b.go",
+		"**/*.go":          "top.go",
+	}
+	for pattern, want := range cases {
+		res, _, err := GlobTool(st).Execute(context.Background(),
+			hunt.Call{ID: "c1", Primitive: Glob, Selector: hunt.Selector{Scope: pattern}}, newFacts())
+		if err != nil {
+			t.Fatalf("模式 %q 失败：%v", pattern, err)
+		}
+		if !strings.Contains(res.Summary, want) {
+			t.Errorf("模式 %q 应命中 %q：%s", pattern, want, res.Summary)
+		}
+	}
+}

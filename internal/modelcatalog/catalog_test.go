@@ -82,8 +82,11 @@ func TestConvert_FiltersAndNormalizes(t *testing.T) {
 	if rep.SkippedSampleSpec != 1 {
 		t.Fatalf("sample_spec 必须跳过，实际 %d", rep.SkippedSampleSpec)
 	}
-	if rep.SkippedMode < 3 { // embedding / image_generation / 无 provider
+	if rep.SkippedMode != 2 { // embedding / image_generation
 		t.Fatalf("无关模式应被跳过，实际 %d", rep.SkippedMode)
+	}
+	if rep.SkippedNoProvider != 1 { // 没有 litellm_provider 的条目
+		t.Fatalf("缺供应商归属应单独计数，实际 %d", rep.SkippedNoProvider)
 	}
 	if rep.SkippedNoLimits != 1 {
 		t.Fatalf("缺上限应被跳过，实际 %d", rep.SkippedNoLimits)

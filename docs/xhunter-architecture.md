@@ -1043,17 +1043,17 @@ Bounty(session) ──► H6.Session
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
 | IA-3.1 | 工具面由装配层定格：`Config.Tools(ws)` 的顺序 ＝ 模型可见顺序，`checkpoint` 殿后 | `TestDefaultTools_FaceIsFixed` |
-| IA-3.2 | 每个原语的声明是「已知形状」：名字、说明、合法 JSON Schema、`additionalProperties: false` | `TestDefaultTools_ShapeIsDeclared` ＋ 每个原语的 `*_DeclShape`（参数面与必填逐条断言） |
+| IA-3.2 | 每个原语的声明是「已知形状」：名字、说明、合法 JSON Schema、`additionalProperties: false`；schema 片段**压掉排版空白但保留字符串内容**，片段不合法即当场失败（编程错误，不把坏 schema 发出去） | `TestDefaultTools_ShapeIsDeclared` ＋ 每个原语的 `*_DeclShape`、`TestObjectSchema_CompactsSyntaxButKeepsStringContent`、`TestObjectSchema_InvalidFragmentPanics`（llm） |
 | IA-3.3 | 未读即写被拒：改已存在的文件必须先读过，且读后未被外部改动（指纹校验）；重读后可自愈 | `TestCommitter_RejectsWriteWithoutPriorRead`、`TestCommitter_RejectsStaleRead`（hunt） |
 | IA-3.4 | 内容寻址不放宽匹配语义：未找到 → `not_found`（可重试）；多处匹配 → `ambiguous` ＋ 数量 | `TestEdit_NoMatchReportsNotFound`、`TestEdit_AmbiguousReportsCount` |
 | IA-3.5 | 符号寻址只接受 `Prepared` 的定位结果，落盘仍走 `Committer` | **待接入**（符号原语声明不实现） |
 | IA-3.6 | 落盘只改写目标字节区间（其余字节原样保留），越界区间在落盘前被拒；**批量编辑先全部校验再依次落盘**（校验失败即零落盘） | `TestCommitter_OnlyReplacesTargetRange`、`TestCommitter_RejectsOutOfRange`、`TestCommitter_BatchIsAllOrNothingOnValidation`、`TestCommitter_NewFileRules`、`TestCommitter_MarksNewFingerprintAfterWrite`（hunt） |
 | IA-3.7 | 路径解析与工作区根校验：`../` 与符号链接逃逸一律拒绝；**新建文件（叶子尚不存在）与深层路径同样要拦**，且指向工作区内部的软链不误伤 | `TestResolve_RejectsPathsOutsideWorkspace`、`TestResolve_RejectsSymlinkEscape`、`TestResolve_RejectsSymlinkEscapeForNewFile`、`TestResolve_AllowsSymlinkInsideWorkspace`（osfs） |
-| IA-3.8 | 枚举跳过噪音但保留控制目录（`.xhunter`）；同状态枚举顺序稳定 | `TestList_SkipsNoiseButKeepsControlDir`、`TestList_OrderIsStable`（osfs） |
+| IA-3.8 | 枚举跳过噪音但保留控制目录（`.xhunter`）；顺序稳定；**模式语义**：不含 `/` 按文件名（任意深度）、含 `/` 按路径、`**` 表示零到多层、空模式是显式错误 | `TestList_SkipsNoiseButKeepsControlDir`、`TestList_OrderIsStable`、`TestList_PatternSemantics`（osfs）、`TestGlob_DirectoryAndDeepPatterns`（basic） |
 | IA-3.9 | 绑定层拒绝形状不成立的调用（非对象 / 未知字段 / **对象之后还有内容**），并回灌结构化错误；**不判断工具名是否存在**（那是查表的事）；往返可还原 | `TestBindToolCall_RejectsShapesThatWouldExecuteTheWrongThing`、`TestBindToolCall_MapsSlots`、`TestBindToolCall_DoesNotKnowToolNames`、`TestUnbindToolCall_RoundTripsNonEmptyFields`（hunt） |
 | IA-3.10 | 结果按 `CallID` 严格配对，**禁止按顺序猜测** | 代码检查（`produced()` 里 tool 消息携带 `Results[].CallID`） |
 | IA-3.11 | 已答复的调用不重复执行（前置 handler 的短路通道真实可用） | `TestOnTurn_AnsweredCallIsNotReExecuted`（hunt） |
-| IA-3.12 | 输出超限时标注截断位置与总量，并给出可直接照抄的续读起点 | `TestRead_OversizeTruncatesWithContinuationHint` |
+| IA-3.12 | 输出超限时标注截断位置与总量，并给出可直接照抄的续读起点；**行号是文件真实行号**（按行范围读取从请求起点起算，不从 1 重来） | `TestRead_OversizeTruncatesWithContinuationHint`、`TestRead_LineRangeIsHonoured`（basic）、`TestRead_ReportsFirstLineOfRange`（osfs） |
 | IA-3.13 | **原语不自己判路径、不自己落盘**：越界路径 / 非法模式由工作区拒绝，原语只产出编辑计划 | `TestWrite_InvalidPathPropagates`、`TestGlob_InvalidPatternPropagates`、`TestRead_MissingFileIsError` |
 | IA-3.14 | 新建只建新文件：目标已存在 → `file_exists`（可重试 ＋ 指向 `edit`），且不产出编辑 | `TestWrite_ExistingFileIsRejectedWithGuidance` |
 | IA-3.15 | 未实现的原语给出**可解释结果**而非执行失败：`not_implemented` ＋ 不可重试 ＋ 零编辑 | `TestFind_ReportsNotImplemented`、`TestSymbolics_ReportNotImplemented`、`TestCheck_ReportsNotImplemented` |
@@ -1172,7 +1172,7 @@ Bounty(session) ──► H6.Session
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
 | IA-10.1 | 上游说明性条目（`sample_spec`）被跳过，且其**字符串型数值字段不会导致整份目录解析失败** | `TestConvert_FiltersAndNormalizes` |
-| IA-10.2 | 无关模式（embedding / image_generation / …）被跳过并计数 | 同上 |
+| IA-10.2 | 无关模式（embedding / image_generation / …）被跳过并计数；**缺供应商归属的条目单独计数**（诊断要能回答「哪一类没进来」） | `TestConvert_FiltersAndNormalizes` |
 | IA-10.3 | 缺上限的条目被跳过（无法满足 FR-9.5） | 同上 |
 | IA-10.4 | 带 provider 前缀的键名去前缀（`gemini/gemini-2.0-flash` → `gemini-2.0-flash`） | 同上 |
 | IA-10.5 | 同名冲突按"信息更全者胜"取舍，且结果确定 | 同上 |
@@ -1194,7 +1194,7 @@ Bounty(session) ──► H6.Session
 | IA-11.1 | `PrepareBaseline`：获取基线（按 SHA 浅取，不可得则完整 fetch）→ **创建并推送任务分支** → checkout + 干净校验 | `TestPrepareBaseline_FreshTaskCreatesAndPushesBranch`（cli）、`TestEndToEnd_LocalRunProducesDeliveryCommit`（cmd） |
 | IA-11.2 | **幂等（续跑）**：分支已存在且 tip 为基线或其后代 → 成功（checkout 到分支 tip）；分叉即环境错误（退出码 2） | `TestPrepareBaseline_ResumeChecksOutBranchTip`、`TestPrepareBaseline_DivergedBranchIsEnvError`（cli） |
 | IA-11.3 | 基线不可达 / 远端不可达 / 缺部署事实 → 环境错误（退出码 2），且失败路径不留临时工作树 | `TestPrepareBaseline_FailsAtStartupOnUnusableFacts`（cli） |
-| IA-11.4 | `Commit`：提交累积自上一个检查点的全部改动并推送；**无改动不产生空提交**（FR-1.3c） | `TestCommit_PushesFastForwardAndSkipsEmptyCommit`、`TestEndToEnd_LocalRunProducesDeliveryCommit`（cmd） |
+| IA-11.4 | `Commit`：提交累积自上一个检查点的全部改动并推送；**无改动不产生空提交**（FR-1.3c）且结果里如实报告 `Created=false`（日志不得因此假称「已创建检查点」） | `TestCommit_PushesFastForwardAndSkipsEmptyCommit`、`TestCheckpoint_LogsNoOpWhenNothingWasCommitted`（hunt）、`TestEndToEnd_LocalRunProducesDeliveryCommit`（cmd） |
 | IA-11.5 | 远端 tip 不是本地父提交 → 拒绝推送并返回环境错误，**绝不 force push**（FR-8.3、AC-20） | `TestCommit_RejectsNonFastForward`（断言远端 tip 未被改写） |
 | IA-11.6 | `Diff` 产出改动文件清单、`Patch` 产出**可应用到基线的统一 diff**（FR-6.1、AC-1）；失败不阻断收尾（`Finalize` 只记 warn）。**排除会话材料目录 `.xhunter/<session_id>/**` 待接入**（会话材料尚未落盘） | `TestDiff_ListsFilesChangedSinceBaseline`、`TestPatch_AppliesCleanlyToBaseline`（`git apply` 验证）、`TestEndToEnd_LocalRunProducesDeliveryCommit`（deliverable 事件 ＋ 补丁应用到基线） |
 | IA-11.7 | `Clean` 回收临时工作树，可重复调用；回收后提交显式失败；失败只记录 | `TestClean_RemovesWorktreeAndIsIdempotent`（cli） |

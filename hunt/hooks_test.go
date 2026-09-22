@@ -240,3 +240,50 @@ func TestSanitizeIntent(t *testing.T) {
 		t.Errorf("超长必须截断到 %d 字并加省略号，实得 %d 字", maxIntentRunes, len(runes))
 	}
 }
+
+// 检查点是空操作时日志不能报"已创建"（FR-1.3c：无新改动不提交）。
+// 假装干了活，比不干活更难查。
+func TestCheckpoint_LogsNoOpWhenNothingWasCommitted(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		created     bool
+		wantMessage string
+	}{
+		{"真提交", true, "已创建检查点"},
+		{"空操作", false, "未产生提交"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sink := &captureSink{}
+			s := NewSession(Config{
+				Bounty: Bounty{ID: "b", Task: "t", Repo: gitRepoRef()},
+				Git:    &recordingCommitGit{created: tc.created},
+				Policy: allowAll{}, Sink: sink,
+			})
+			s.ops = []WriteOp{{File: "a.txt"}} // 有改动，检查点才会走到提交
+			s.checkpoint(context.Background(), &harness.Turn{No: 1})
+
+			found := false
+			for _, line := range sink.logs {
+				if strings.Contains(line, tc.wantMessage) {
+					found = true
+				}
+				if tc.created == false && strings.Contains(line, "已创建检查点") {
+					t.Errorf("空操作不得报已创建：%v", sink.logs)
+				}
+			}
+			if !found {
+				t.Errorf("日志应含 %q：%v", tc.wantMessage, sink.logs)
+			}
+		})
+	}
+}
+
+// recordingCommitGit 记录一次提交的返回值，用于断言日志口径。
+type recordingCommitGit struct {
+	stubBaselineGit
+	created bool
+}
+
+func (g *recordingCommitGit) Commit(context.Context, git.RepoRef, string) (git.Commit, error) {
+	return git.Commit{SHA: "sha", Branch: "b", Created: g.created}, nil
+}

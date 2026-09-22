@@ -57,12 +57,22 @@ func rangeOf(call hunt.Call) workspace.LineRange {
 const readFullByteLimit = 64 << 10
 
 // render 把读取结果渲染成回灌给模型的文本，逐行带行号前缀。
+// 行号是**文件里的真实行号**：按范围读取时从 FirstLine 起算，不从 1 重来。
 func render(fc workspace.FileContent) string {
+	first := fc.FirstLine
+	if first <= 0 {
+		first = 1
+	}
 	if fc.Truncated {
-		return fmt.Sprintf("%s（已按行范围截断，共 %d 行）\n%s", fc.Path, fc.TotalLines, numberLines(fc.Raw, 1))
+		if strings.TrimSpace(fc.Raw) == "" {
+			return fmt.Sprintf("%s（从第 %d 行起没有内容；共 %d 行）", fc.Path, first, fc.TotalLines)
+		}
+		last := first + countLines(fc.Raw) - 1
+		return fmt.Sprintf("%s（第 %d–%d 行；共 %d 行）\n%s",
+			fc.Path, first, last, fc.TotalLines, numberLines(fc.Raw, first))
 	}
 	if len(fc.Raw) <= readFullByteLimit {
-		return fmt.Sprintf("%s（%d 行）\n%s", fc.Path, fc.TotalLines, numberLines(fc.Raw, 1))
+		return fmt.Sprintf("%s（%d 行）\n%s", fc.Path, fc.TotalLines, numberLines(fc.Raw, first))
 	}
 	cut := strings.LastIndexByte(fc.Raw[:readFullByteLimit], '\n')
 	if cut <= 0 {
@@ -72,8 +82,20 @@ func render(fc workspace.FileContent) string {
 	}
 	shown := fc.Raw[:cut]
 	shownLines := strings.Count(shown, "\n")
-	return fmt.Sprintf("%s（已截断：显示第 1–%d 行，共 %d 行；请从第 %d 行续读）\n%s",
-		fc.Path, shownLines, fc.TotalLines, shownLines+1, numberLines(shown, 1))
+	return fmt.Sprintf("%s（已截断：显示第 %d–%d 行，共 %d 行；请从第 %d 行续读）\n%s",
+		fc.Path, first, first+shownLines-1, fc.TotalLines, first+shownLines, numberLines(shown, first))
+}
+
+// countLines 按行计数：末行没有换行符也算一行。
+func countLines(s string) int {
+	if s == "" {
+		return 0
+	}
+	n := strings.Count(s, "\n")
+	if !strings.HasSuffix(s, "\n") {
+		n++
+	}
+	return n
 }
 
 // numberLines 给每行加上右对齐的行号前缀（"    7→原文"）。

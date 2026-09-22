@@ -191,14 +191,6 @@ func signalContext() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 
-// logTarget 给出日志去向的显示值（空表示默认 stderr）。
-func logTarget(path string) string {
-	if path == "" {
-		return "stderr"
-	}
-	return path
-}
-
 // firstLine 取正文首行用于诊断输出。
 func firstLine(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
@@ -261,8 +253,8 @@ func modelsUpdate(args []string) int {
 	fmt.Printf("  上游规模  %d 条 / %.1f MB（sha256 %s…）\n",
 		rep.UpstreamEntries, float64(snap.Meta.UpstreamBytes)/(1<<20), snap.Meta.UpstreamSHA256[:12])
 	fmt.Printf("  转换结果  %d 个模型 / %d 个供应商\n", rep.Converted, rep.Providers)
-	fmt.Printf("  跳过      sample_spec %d · 无关模式 %d · 缺上限 %d · 窗口小于默认值 %d · 同名冲突 %d\n",
-		rep.SkippedSampleSpec, rep.SkippedMode, rep.SkippedNoLimits, rep.SkippedIncoherent, rep.Collisions)
+	fmt.Printf("  跳过      sample_spec %d · 缺供应商 %d · 无关模式 %d · 缺上限 %d · 窗口小于默认值 %d · 同名冲突 %d\n",
+		rep.SkippedSampleSpec, rep.SkippedNoProvider, rep.SkippedMode, rep.SkippedNoLimits, rep.SkippedIncoherent, rep.Collisions)
 	return exitOK
 }
 

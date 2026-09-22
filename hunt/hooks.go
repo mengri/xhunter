@@ -233,7 +233,12 @@ func (s *Session) checkpoint(ctx context.Context, turn *harness.Turn) {
 		return
 	}
 	s.commit = &cm
-	s.logf("info", "已创建检查点", "turn", turn.No, "model_requested", requested)
+	if cm.Created {
+		s.logf("info", "已创建检查点", "turn", turn.No, "model_requested", requested)
+	} else {
+		// 本轮没有新改动：提交是空操作（FR-1.3c）。日志不能报"已创建"。
+		s.logf("info", "本轮无新改动，未产生提交", "turn", turn.No)
+	}
 }
 
 // snapshot 让会话材料落盘，供崩溃后按「tip + 会话材料」恢复。

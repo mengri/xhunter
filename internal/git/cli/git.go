@@ -157,7 +157,7 @@ func (g *Git) Commit(ctx context.Context, repo git.RepoRef, msg string) (git.Com
 		return git.Commit{}, envFault("push_rejected",
 			"推送任务分支失败（只允许 fast-forward，绝不 force push）："+err.Error())
 	}
-	return git.Commit{SHA: sha, Branch: repo.Branch}, nil
+	return git.Commit{SHA: sha, Branch: repo.Branch, Created: true}, nil
 }
 
 // Diff 产出相对基线的改动文件清单。

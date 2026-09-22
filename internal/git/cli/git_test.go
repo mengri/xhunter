@@ -212,6 +212,12 @@ func TestCommit_PushesFastForwardAndSkipsEmptyCommit(t *testing.T) {
 	if again.SHA != headBefore {
 		t.Errorf("无改动不应产生新提交：%s → %s", headBefore, again.SHA)
 	}
+	if !cm.Created {
+		t.Error("第一次提交应报告 Created=true")
+	}
+	if again.Created {
+		t.Error("无改动的提交必须报告 Created=false：日志不能报「已创建检查点」")
+	}
 	if got := runGit(t, root, "rev-list", "--count", "HEAD"); got != "2" {
 		t.Errorf("提交数 = %s，期望 2（基线 + 一次检查点）", got)
 	}

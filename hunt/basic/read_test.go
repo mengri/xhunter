@@ -84,6 +84,13 @@ func TestRead_LineRangeIsHonoured(t *testing.T) {
 	if !strings.Contains(res.Summary, "L2") || strings.Contains(res.Summary, "L1") {
 		t.Errorf("只应回显区间内的行：%s", head(res.Summary))
 	}
+	// 行号必须是文件里的真实行号：从 1 重来会让模型后续的行号引用整体错位。
+	if !strings.Contains(res.Summary, "2→L2") || !strings.Contains(res.Summary, "3→L3") {
+		t.Errorf("行号应从请求的起点开始：%s", res.Summary)
+	}
+	if strings.Contains(res.Summary, "1→") {
+		t.Errorf("区间读取不该从第 1 行重新编号：%s", res.Summary)
+	}
 }
 
 // 读不存在的文件由工作区报错——原语不自己判断路径与存在性。

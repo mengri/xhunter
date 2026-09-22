@@ -19,6 +19,10 @@ type RepoRef struct {
 type Commit struct {
 	SHA    string
 	Branch string
+	// Created 报告这次调用**是否真的产生了新提交**。轮边界的检查点在"本轮无新改动"
+	// 时是空操作（FR-1.3c「无新写操作不提交」），调用方据此决定怎么记日志与记账——
+	// 空操作却打印"已创建检查点"是在假装干了活。
+	Created bool
 }
 
 // GitWorktree 负责基线获取、任务分支与提交。

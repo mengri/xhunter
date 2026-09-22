@@ -1,7 +1,9 @@
 package llm
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 )
 
@@ -11,9 +13,10 @@ import (
 // 字段，模型照 schema 多传一个就会吃到参数错误——描述与实现必须是同一句话。
 //
 // 片段写成多行更好维护，但发往上游的字节必须紧凑（它逐字进入每一轮请求），
-// 所以这里顺手压掉空白。片段本身必须是合法 JSON。
+// 所以这里顺手压掉空白。片段本身必须是合法 JSON——不合法就当场炸（编程错误），
+// 而不是把一段坏 schema 发给供应商，让错误在模型那一侧以奇怪的方式暴露。
 func ObjectSchema(properties string, required ...string) json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":` + compact(properties) +
+	return json.RawMessage(`{"type":"object","properties":` + compactJSON(properties) +
 		`,"required":` + jsonArray(required) + `,"additionalProperties":false}`)
 }
 
@@ -24,32 +27,35 @@ func ObjectSchemaAnyOf(properties string, anyOf ...[]string) json.RawMessage {
 	for _, req := range anyOf {
 		branches = append(branches, `{"required":`+jsonArray(req)+`}`)
 	}
-	return json.RawMessage(`{"type":"object","properties":` + compact(properties) +
+	return json.RawMessage(`{"type":"object","properties":` + compactJSON(properties) +
 		`,"anyOf":[` + strings.Join(branches, ",") + `],"additionalProperties":false}`)
 }
 
-// compact 去掉片段里的换行与缩进：schema 会被逐字发给上游，注释式的排版只浪费字节。
-// 它只做去空白，不做任何 JSON 修补——片段本身就是合法 JSON。
-func compact(s string) string {
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		switch r {
-		case '\n', '\t', '\r':
-			continue
-		}
-		b.WriteRune(r)
+// compactJSON 压掉片段里的排版空白。
+//
+// 用标准库的 Compact，而不是自己删空白字符：**字符串值里的空格是内容**，
+// 按字符删会改掉 "description": "read a file" 这类默认值，而 schema 是发给模型看的。
+func compactJSON(fragment string) string {
+	var buf bytes.Buffer
+	trimmed := strings.TrimSpace(fragment)
+	if !json.Valid([]byte(trimmed)) {
+		panic(fmt.Sprintf("llm：schema 属性片段不是合法 JSON：%s", trimmed))
 	}
-	return b.String()
+	if err := json.Compact(&buf, []byte(trimmed)); err != nil {
+		panic(fmt.Sprintf("llm：schema 属性片段无法压缩：%v", err))
+	}
+	return buf.String()
 }
 
+// jsonArray 把名字列表编成 JSON 数组。空列表是 `[]` 而不是 `null`——
+// `"required": null` 与 `"required": []` 在 schema 里是两种意思。
 func jsonArray(items []string) string {
-	if len(items) == 0 {
-		return "[]"
+	if items == nil {
+		items = []string{}
 	}
-	quoted := make([]string, 0, len(items))
-	for _, s := range items {
-		quoted = append(quoted, `"`+s+`"`)
+	b, err := json.Marshal(items)
+	if err != nil {
+		panic(fmt.Sprintf("llm：required 列表无法编码：%v", err))
 	}
-	return "[" + strings.Join(quoted, ",") + "]"
+	return string(b)
 }
