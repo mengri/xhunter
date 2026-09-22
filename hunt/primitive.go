@@ -1,0 +1,56 @@
+package hunt
+
+import (
+	"context"
+
+	"xhunter/llm"
+	"xhunter/workspace"
+)
+
+// Primitive 是一个业务原语：模型可见的声明 + 执行一次调用的实现。
+//
+// 原语**自己决定寻址与降级**：写限定名走符号、写字面量走文本、符号不可用时降级——
+// 这些是原语自身的性质，不经过任何统一分发层。因此一个原语是否支持符号化，看它的
+// 实现，而不是一张寻址性质表。
+//
+// 原语只产出结果与编辑计划，绝不自己落盘——写盘统一由执行器（见 Session）经
+// workspace 的写入原语完成，这样「写盘只有一个地方」是结构事实。
+type Primitive interface {
+	// Decl 返回模型可见的工具声明。
+	Decl() llm.ToolDecl
+	// Execute 执行一次调用。Edits 是编辑计划（可空），由执行器统一落盘。
+	Execute(ctx context.Context, call Call, facts Facts) (Result, []workspace.FileEdit, error)
+}
+
+// Facts 是原语执行时能看到的任务级事实，刻意收窄：门禁清单、读台账、检查点意图。
+// 工作区**不在这里**——原语在构造时就拿到工作区（见 basic/symbolic 的 Tool 构造），
+// 它是构造参数，不是每次执行才补的运行时事实。
+type Facts interface {
+	Gates() []Gate
+	Ledger() *Ledger
+	RequestCheckpoint(summary string)
+	CheckpointRequested() bool
+}
+
+// Ledger 记录「模型看过哪些文件、当时的内容指纹是什么」。
+//
+// 它同时解决两个问题：改一个没读过的文件应当被拒绝（避免凭想象编辑）；
+// 读完之后文件又被改动过，落笔也应当被拒绝（避免基于过期内容覆盖别人的改动）。
+// 零值即可用。
+type Ledger struct {
+	entries map[string]string
+}
+
+// Mark 登记一次读取，或一次写入后的新指纹。
+func (l *Ledger) Mark(file, fingerprint string) {
+	if l.entries == nil {
+		l.entries = map[string]string{}
+	}
+	l.entries[file] = fingerprint
+}
+
+// Fingerprint 返回文件最近登记的内容指纹。
+func (l *Ledger) Fingerprint(file string) (string, bool) {
+	fp, ok := l.entries[file]
+	return fp, ok
+}

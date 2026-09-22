@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"xhunter/harness"
+	"xhunter/workspace"
 )
 
 // 工作区是唯一写入原语与只读视图的落点，它的两条行为值得单独钉住：
@@ -26,7 +26,7 @@ func TestList_SkipsNoiseButKeepsControlDir(t *testing.T) {
 		controlDir + "/gates.yml",
 		controlDir + "/skills/release/SKILL.md",
 	} {
-		if _, err := st.WriteRange(p, harness.ByteRange{Start: 0, End: 0}, "x"); err != nil {
+		if _, err := st.WriteRange(p, workspace.ByteRange{Start: 0, End: 0}, "x"); err != nil {
 			t.Fatalf("准备夹具失败：%v", err)
 		}
 	}
@@ -53,7 +53,7 @@ func TestList_SkipsNoiseButKeepsControlDir(t *testing.T) {
 func TestList_OrderIsStable(t *testing.T) {
 	st := open(t, t.TempDir())
 	for _, p := range []string{"z.go", "a.go", "m.go"} {
-		if _, err := st.WriteRange(p, harness.ByteRange{Start: 0, End: 0}, "x"); err != nil {
+		if _, err := st.WriteRange(p, workspace.ByteRange{Start: 0, End: 0}, "x"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -76,7 +76,7 @@ func TestList_OrderIsStable(t *testing.T) {
 func TestResolve_RejectsPathsOutsideWorkspace(t *testing.T) {
 	st, _ := Opener{}.Open(t.TempDir())
 	for _, rel := range []string{"", "   ", "/etc/passwd", "../outside", "a/../../outside"} {
-		if _, err := st.Read(rel, harness.LineRange{}); err == nil {
+		if _, err := st.Read(rel, workspace.LineRange{}); err == nil {
 			t.Errorf("%q 必须被拒绝", rel)
 		}
 		if _, err := st.Stat(rel); err == nil {
@@ -98,7 +98,7 @@ func TestResolve_RejectsSymlinkEscape(t *testing.T) {
 	}
 
 	st := open(t, root)
-	if _, err := st.Read("escape/secret.txt", harness.LineRange{}); err == nil {
+	if _, err := st.Read("escape/secret.txt", workspace.LineRange{}); err == nil {
 		t.Error("指向工作区之外的符号链接必须被拒绝")
 	}
 }
@@ -112,7 +112,7 @@ func writeOutside(dir string) error {
 func symlink(target, link string) error { return os.Symlink(target, link) }
 
 // open 打开一个以 root 为根的工作区。
-func open(t *testing.T, root string) harness.Storage {
+func open(t *testing.T, root string) workspace.Storage {
 	t.Helper()
 	st, err := Opener{}.Open(root)
 	if err != nil {

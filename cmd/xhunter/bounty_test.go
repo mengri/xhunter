@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"xhunter/harness"
+	"xhunter/hunt"
 )
 
 // fakeEnv 让组装过程在测试里不依赖真实环境。
@@ -95,7 +95,7 @@ func TestBountyFromEnv_HonoursExplicitFacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("组装失败：%v", err)
 	}
-	if b.ID != harness.BountyID("B-42") || b.Repo.Branch != "feat/custom" {
+	if b.ID != hunt.BountyID("B-42") || b.Repo.Branch != "feat/custom" {
 		t.Errorf("显式给出的事实被忽略了：%+v", b)
 	}
 	if b.Session != nil {
@@ -118,7 +118,7 @@ func TestBountyFromEnv_SessionIsSharedAcrossBounties(t *testing.T) {
 		t.Fatalf("组装失败：%v", err)
 	}
 	// 本次投递有自己的标识：事件流与结果文件按它记账。
-	if b.ID != harness.BountyID("B-43") {
+	if b.ID != hunt.BountyID("B-43") {
 		t.Errorf("任务标识 = %q，期望本次投递自己的 id", b.ID)
 	}
 	// 会话标识取显式给出的值：分支与记忆都落在它那一份上。

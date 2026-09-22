@@ -8,21 +8,22 @@
 
 ```
 llm/                          公开：中立契约——对话形状、流式事件、Provider/Session/Caps
-harness/                      公开：核心库——环节执行器（Engine 驱动链 / Context 轮状态 / Runtime 工具流水线）
+harness/                      公开：核心库——模型调用循环（Engine 驱动 Prepare → infer/receive → OnTurn → Finalize）；导出值类型 + 三组 handler 契约 + 一个构造方法 New
+prompt/<kind>/                公开：默认提示词插件（agentsmd 项目约定 / skills 技能清单），构造时显式接收工作区
 provider/adapter/             公开：协议实现的共用件（SSE 分帧、调用拼装、错误形状、上限契约）
 provider/openaichat/          公开：协议——OpenAI 兼容对话补全（自持 wire，包注释含协议版本基线）
 provider/openairesponses/     公开：协议——OpenAI Responses
 provider/anthropicmessages/   公开：协议——Anthropic Messages
 providerconfig/               公开：Provider 配置模型与解析（组装层消费的连接事实）
-cmd/xhunter/                  CLI 入口 + 组装层（SDK 值 → 针对性工厂；端点与鉴权都以配置为源）
-internal/                     CLI 侧实现（不对外）：modelcatalog（模型目录快照）
+cmd/xhunter/                  CLI 入口 + 组装层（SDK 值 → 针对性工厂；工具集 / 插件 / 后端 / 策略的注入点）
+internal/                     CLI 侧实现（不对外）：policy 策略引擎、workspace/osfs、git/cli、modelcatalog
 docs/                         治理文档（产品设计 / 使用手册 / 架构设计）
 scripts/check.py              一键 build + vet + test + 竞态检测（目标平台 linux/amd64）
 scripts/build.sh              单二进制构建，版本号经 ldflags 注入 → bin/xhunter
 Makefile                      构建与验证编排（build / cross / test / vet / check / clean）
 ```
 
-**公开层与组装层严格分离**：`harness/`、`provider/...`、`providerconfig/` 都不依赖 `cmd/` 与 `internal/`，因此可被其他项目单独引用；装配（哪个配置值对应哪种协议、针对厂商怎么连线）只发生在 CLI 侧，`internal/modelcatalog` 则是安装期与 CLI 期的动作，不属于运行期契约。
+**公开层与组装层严格分离**：`llm/`、`harness/`、`provider/...`、`providerconfig/` 都不依赖 `cmd/` 与 `internal/`，因此可被其他项目单独引用；装配（业务装配、哪个配置值对应哪种协议、针对厂商怎么连线）只发生在 CLI 侧，`internal/modelcatalog` 则是安装期与 CLI 期的动作，不属于运行期契约。
 
 ## 作为库使用
 
@@ -31,32 +32,41 @@ import (
     "context"
 
     "xhunter/harness"
+    "xhunter/hunt"
 )
 
-// 所有协作方都是接口，在装配期注入——组装点唯一。
-engine, err := harness.New(
-    harness.Deps{
-        Provider: provider,   // 模型调用（无状态：历史由本地组装）
-        Context:  assembler,  // 上下文组装与压缩
-        Tools:    tools,      // 工具执行（唯一写入原语）
-        Policy:   policy,     // 策略裁决、预算与止损
-        Sink:     sink,       // 外部事件流（stdout）
-        Session:  recorder,   // 会话材料与检查点
-        Ext:      ext,        // 符号能力扩展（MCP，插件化）
-        Git:      gitwt,      // 基线获取 / 任务分支 / 检查点 / 交付
-    },
-    harness.Config{},         // 阈值与止损参数
-    harness.Pipeline{},       // 零值即默认编排
-    harness.DefaultStages,    // 环节实现（可整体替换）
+// 循环只认识「模型 + 三组 handler」：换一套 handler 就是换一套业务。
+// 业务的一切（任务、工具面、上下文、门禁、检查点、交付）都在 hunt.Session 里，
+// 它的构造参数就是装配点——原语清单、策略、工作区、git、协作者都由调用方注入。
+session := hunt.NewSession(hunt.Config{
+    Bounty:  bounty,              // 任务分派事实（正文、仓库、基线、预算）
+    Tools:   tools,               // 工具集工厂：func(Workspace) []Primitive（工作区是运行期产物）
+    Policy:  policy,              // 策略裁决、预算与止损
+    Opener:  opener,              // 工作区打开点
+    Git:     gitwt,               // 基线获取 / 任务分支 / 检查点 / 交付
+    Context: &contextBuilder{},   // 上下文组装（提示词 + 历史），hunt.ContextBuilder
+    Session: &sessionRecorder{},  // 会话材料与检查点，hunt.SessionRecorder
+    Sink:    sink,                // 外部事件流（stdout），hunt.EventSink
+    Filters: filters,             // 结果加工链：执行之后、落历史之前
+    SystemPlugins: systemPlugins, // 提示词插件工厂：func(Workspace) []PromptPlugin
+    UserPlugins:   userPlugins,   // 同上（user 段）
+})
+
+engine, err := harness.New(provider,
+    []harness.PrepareHandler{session.Prepare},   // 循环前一次：准备基线、打开工作区、定格工具面与首轮消息
+    []harness.OnTurnHandler{session.OnTurn},     // 每个轮边界：执行工具、加工结果、记录、组装下一轮、守卫
+    []harness.FinalHandler{session.Finalize},    // 循环后一次：交付提交、差异、清理、终态上报
 )
 if err != nil {
-    return err                // 非法编排在启动期即被拒绝，不会跑到一半才炸
+    return err                // 缺模型即装配错误，不会跑到一半才炸
 }
 
-out, err := engine.Run(ctx, bounty)
+out, err := engine.Run(ctx, harness.Input{Meta: map[string]any{"bounty_id": bounty.ID}})
 ```
 
-每个协作方都是**接口**（定义在 `harness/types.go`，契约以注释就地声明），因此可以在**无模型、无网络、无仓库**的条件下测试控制流（`go test ./harness/`）。
+`harness` 只导出**值类型（`Run`/`Turn`/`Terminal`/`Outcome`）+ 三组 handler 契约 + 一个构造方法 `New`**——其余构造都是包内私有，循环自身不持有任何协作者。因此可以在**无模型、无网络、无仓库**的条件下测试控制流（`go test ./harness/`）。
+
+**扩展面在业务侧，不在框架里**：想改「模型看到的文本」就在 `Config.Filters` 里加一个 `hunt.ResultFilter`（它跑在工具执行之后、落历史之前，所以加工结果一定会进下一轮上下文）；想改「某一次调用的语义」就包一层 `hunt.Primitive`（拦截、改参数后转交、美化结果——但写盘仍只走 `Committer`）；想改「模型打算怎么做」就在 `Prepare` 里调整 `run.Tools` 的声明。三条都不需要动 `harness`。
 
 ### 接入自己的模型协议
 
@@ -67,7 +77,7 @@ out, err := engine.Run(ctx, bounty)
 | **契约** | 对话的形状、流式事件的形状、Provider/Session/Caps | `llm/`，公开包；`harness` 依赖它 |
 | **协议实现** | 只有协议：请求形状、流式分帧、增量拼装、错误分类（**自持 wire，不引厂商 SDK**） | `provider/<protocol>`，公开包；包注释里写着**协议版本基线** |
 | **共用件** | 与具体协议无关的部分：SSE 分帧、调用按位置拼装、错误形状、上限契约 | `provider/adapter`，公开包 |
-| **绑定** | 模型给的"名字 + 参数 JSON"落到哪个原语、定位参数是什么 | `harness/binding.go`——**使用方**的词汇，协议层不认识 |
+| **绑定** | 模型给的"名字 + 参数 JSON"落到哪个原语、定位参数是什么 | `hunt/bind.go`——**使用方**的词汇，协议层不认识 |
 | **组装** | 哪个配置值对应哪种协议；**端点与鉴权形状都来自配置** | CLI 侧的组装层 |
 
 目前内置三个协议：

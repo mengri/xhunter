@@ -1,0 +1,142 @@
+// Package policy 实现策略引擎：无人类场景下唯一顶替人的位置。
+//
+// 它裁决三件事：**路径边界**（写到哪里合法）、**预算**（token / 轮数 / 墙钟）与
+// 止损。默认应当是拒绝——放行需要一条明确的理由，而不是反过来。
+//
+// 它是 hunt.Policy 的默认实现，由装配层注入。它与工作区层（osfs）的分工是「业务」与
+// 「机制」：工作区层管路径怎么解析（绝对路径、..、符号链接逃逸），这里写的是业务边界
+// ——哪些路径是引擎自有的材料、写进那里等于篡改自己的会话记录或验收标准。
+package policy
+
+import (
+	"context"
+	"path"
+	"strings"
+	"time"
+
+	"xhunter/hunt"
+	"xhunter/hunt/basic"
+	"xhunter/hunt/gate"
+	"xhunter/hunt/symbolic"
+	"xhunter/llm"
+)
+
+// controlDir 是引擎在仓库里的控制目录。
+const controlDir = ".xhunter"
+
+// skillsDraftDir 是唯一允许模型写入的控制子目录。
+const skillsDraftDir = ".xhunter/skills.draft"
+
+// passPrimitives 是不写盘、因此无需路径裁决的原语。
+var passPrimitives = map[hunt.PrimitiveName]bool{
+	basic.Read:          true,
+	basic.Find:          true,
+	basic.Glob:          true,
+	symbolic.SymbolRead: true,
+	gate.Check:          true,
+}
+
+// writePrimitives 是会产生写操作、因此要过路径裁决的原语。
+var writePrimitives = map[hunt.PrimitiveName]bool{
+	basic.Write:           true,
+	basic.Edit:            true,
+	symbolic.SymbolEdit:   true,
+	symbolic.SymbolRename: true,
+}
+
+// Config 是策略的装配参数。
+type Config struct {
+	Budget hunt.Budget
+	Now    func() time.Time
+}
+
+type engine struct {
+	budget  hunt.Budget
+	now     func() time.Time
+	started time.Time
+	tokens  int
+}
+
+// New 构造策略引擎。策略在一轮 Hunt 里是单例。
+func New(cfg Config) hunt.Policy {
+	now := cfg.Now
+	if now == nil {
+		now = time.Now
+	}
+	return &engine{budget: cfg.Budget, now: now, started: now()}
+}
+
+var _ hunt.Policy = (*engine)(nil)
+
+// Decide 裁决一次调用能否放行。只对写操作做路径裁决；读与门禁直接放行。
+func (e *engine) Decide(_ context.Context, call hunt.Call) (hunt.Decision, error) {
+	switch {
+	case passPrimitives[call.Primitive]:
+		return allow("只读或门禁，无路径约束"), nil
+
+	case writePrimitives[call.Primitive]:
+		if call.Target == "" {
+			// 符号级写操作（如不指定文件的符号重命名）没有目标路径可查，
+			// 它的风险是「影响面过大」，那类拦截依赖影响面，另行排期。
+			return allow("符号级写操作"), nil
+		}
+		if reason, blocked := blockPath(call.Target); blocked {
+			return deny(reason), nil
+		}
+		return allow("工作区内写操作"), nil
+
+	default:
+		return deny("未识别的原语 " + string(call.Primitive)), nil
+	}
+}
+
+// Charge 累计 token 用量。
+func (e *engine) Charge(u llm.Usage) {
+	e.tokens += u.InputTokens + u.OutputTokens
+}
+
+// Exhausted 报告是否有某一维预算耗尽，并指明是哪一个维度。
+func (e *engine) Exhausted(turn hunt.TurnNo) (bool, string) {
+	if e.budget.MaxTokens > 0 && e.tokens >= e.budget.MaxTokens {
+		return true, "tokens"
+	}
+	if e.budget.MaxTurns > 0 && int(turn) >= e.budget.MaxTurns {
+		return true, "turns"
+	}
+	if e.budget.MaxWallClock > 0 && e.now().Sub(e.started) >= e.budget.MaxWallClock {
+		return true, "wall_clock"
+	}
+	return false, ""
+}
+
+// blockPath 判断一个写目标是否越界。
+func blockPath(rel string) (string, bool) {
+	slash := strings.ReplaceAll(rel, "\\", "/")
+	if path.IsAbs(slash) || (len(slash) >= 2 && slash[1] == ':') {
+		return "拒绝绝对路径：" + rel, true
+	}
+	clean := path.Clean(slash)
+	if clean == ".." || strings.HasPrefix(clean, "../") {
+		return "路径逃逸：" + rel, true
+	}
+	if underControlDir(clean) && !underSkillsDraft(clean) {
+		return "禁止写入引擎控制目录：" + rel, true
+	}
+	return "", false
+}
+
+func underControlDir(rel string) bool {
+	return rel == controlDir || strings.HasPrefix(rel, controlDir+"/")
+}
+
+func underSkillsDraft(rel string) bool {
+	return rel == skillsDraftDir || strings.HasPrefix(rel, skillsDraftDir+"/")
+}
+
+func allow(reason string) hunt.Decision {
+	return hunt.Decision{Verdict: hunt.VerdictAllow, Reason: reason}
+}
+
+func deny(reason string) hunt.Decision {
+	return hunt.Decision{Verdict: hunt.VerdictDeny, Reason: reason}
+}

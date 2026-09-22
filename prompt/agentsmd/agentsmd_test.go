@@ -1,35 +1,43 @@
 package agentsmd
 
 import (
-	"xhunter/internal/workspace/osfs"
 	"context"
 	"strings"
 	"testing"
+	"xhunter/internal/workspace/osfs"
 
-	"xhunter/harness"
+	"xhunter/git"
+	"xhunter/hunt"
+	"xhunter/workspace"
 )
 
-// fixture 造一个带工作区与基线的输入：约定文件的读取必须走只读视图。
-func fixture(t *testing.T, files map[string]string, base string) harness.PromptInput {
+// fixture 造一个带工作区与基线的输入：约定文件的读取走插件持有的只读视图。
+func fixture(t *testing.T, files map[string]string, base string) (hunt.PromptInput, workspace.Workspace) {
 	t.Helper()
 	st := newStore(t)
 	for path, content := range files {
-		if _, err := st.WriteRange(path, harness.ByteRange{Start: 0, End: 0}, content); err != nil {
+		if _, err := st.WriteRange(path, workspace.ByteRange{Start: 0, End: 0}, content); err != nil {
 			t.Fatalf("准备夹具失败：%v", err)
 		}
 	}
-	return harness.PromptInput{
-		Bounty:    harness.Bounty{Repo: harness.RepoRef{BaseCommit: base}},
-		Workspace: st,
-	}
+	return hunt.PromptInput{
+		Bounty: hunt.Bounty{Repo: git.RepoRef{BaseCommit: base}},
+	}, st
+}
+
+// build 用夹具的工作区构造插件并执行一次 Build。
+func build(t *testing.T, files map[string]string, base string) (hunt.PromptPart, error) {
+	t.Helper()
+	in, ws := fixture(t, files, base)
+	return New(ws).Build(context.Background(), in)
 }
 
 func TestBuild_InjectsRootConventions(t *testing.T) {
-	in := fixture(t, map[string]string{
+	in, ws := fixture(t, map[string]string{
 		fileName: "# 约定\n\n- 提交信息用中文\n- 禁止引入第三方依赖\n",
 	}, "deadbeefcafe1234")
 
-	part, err := New().Build(context.Background(), in)
+	part, err := New(ws).Build(context.Background(), in)
 	if err != nil {
 		t.Fatalf("构造失败：%v", err)
 	}
@@ -47,7 +55,7 @@ func TestBuild_InjectsRootConventions(t *testing.T) {
 
 // 没有约定文件是合法状态：不是错误，也不进正文——否则模型会看到一段空的"约定"。
 func TestBuild_MissingFileIsNotAnError(t *testing.T) {
-	part, err := New().Build(context.Background(), fixture(t, nil, "abc"))
+	part, err := build(t, nil, "abc")
 	if err != nil {
 		t.Fatalf("缺少约定文件不该报错：%v", err)
 	}
@@ -57,9 +65,9 @@ func TestBuild_MissingFileIsNotAnError(t *testing.T) {
 }
 
 func TestBuild_BlankContentIsTreatedAsAbsent(t *testing.T) {
-	part, err := New().Build(context.Background(), fixture(t, map[string]string{
+	part, err := build(t, map[string]string{
 		fileName: "   \n\n\t\n",
-	}, "abc"))
+	}, "abc")
 	if err != nil {
 		t.Fatalf("空白内容不该报错：%v", err)
 	}
@@ -71,9 +79,9 @@ func TestBuild_BlankContentIsTreatedAsAbsent(t *testing.T) {
 // 文件名精确匹配：大小写变体不算规范文件——跨平台大小写敏感度不同，
 // 认下来会让"注入了什么"随文件系统而变。
 func TestBuild_CaseVariantIsNotRecognized(t *testing.T) {
-	part, err := New().Build(context.Background(), fixture(t, map[string]string{
+	part, err := build(t, map[string]string{
 		"agents.md": "# 小写变体\n",
-	}, "abc"))
+	}, "abc")
 	if err != nil {
 		t.Fatalf("构造失败：%v", err)
 	}
@@ -85,7 +93,7 @@ func TestBuild_CaseVariantIsNotRecognized(t *testing.T) {
 // 超限截断必须留痕：静默截断会让模型以为约定只有这些。
 func TestBuild_OversizeTruncatesWithNotice(t *testing.T) {
 	big := strings.Repeat("这是一条很长的约定条目，用来把文件撑过上限。\n", 2000) // 约 80KB
-	part, err := New().Build(context.Background(), fixture(t, map[string]string{fileName: big}, "abc"))
+	part, err := build(t, map[string]string{fileName: big}, "abc")
 	if err != nil {
 		t.Fatalf("构造失败：%v", err)
 	}
@@ -106,7 +114,7 @@ func TestBuild_OversizeTruncatesWithNotice(t *testing.T) {
 
 // 基线缺省（本地工作区直读）时来源同样要可追溯。
 func TestBuild_WithoutBaseCommitFallsBackToWorktree(t *testing.T) {
-	part, err := New().Build(context.Background(), fixture(t, map[string]string{fileName: "x\n"}, ""))
+	part, err := build(t, map[string]string{fileName: "x\n"}, "")
 	if err != nil {
 		t.Fatalf("构造失败：%v", err)
 	}
@@ -116,7 +124,7 @@ func TestBuild_WithoutBaseCommitFallsBackToWorktree(t *testing.T) {
 }
 
 // newStore 造一个挂在临时目录上的本地工作区（实现来自 internal/workspace/osfs）。
-func newStore(t *testing.T) harness.Storage {
+func newStore(t *testing.T) workspace.Storage {
 	t.Helper()
 	st, err := osfs.Opener{}.Open(t.TempDir())
 	if err != nil {

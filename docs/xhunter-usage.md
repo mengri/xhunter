@@ -40,7 +40,7 @@
 | **事件消费** | 读 stdout NDJSON |
 | **工作区隔离** | **必须由 Xhunter 自行 clone 到临时工作区**，不得把用户当前的仓库目录当工作区——直接改用户工作区会污染其未提交改动 |
 
-**驱动者无关性不放松任何不变量**：编排校验仍共用同一份 `Validate()`、门禁清单来源不变、模型仍无 git 能力、权限仍经策略层。**换驱动者只换"谁投递、谁消费"，不换"什么被允许"。**
+**驱动者无关性不放松任何不变量**：装配仍是**同一份装配代码**（缺件与就绪失败都在启动期以退出码 2 失败）、门禁清单来源不变、模型仍无 git 能力、权限仍经策略层。**换驱动者只换"谁投递、谁消费"，不换"什么被允许"。**
 
 为便于本地驱动，Xhunter 规划了 **Bounty 生成能力**（`xhunter run`，FR-1.10）：给定本地仓库路径 + 任务描述，探测 `remote` / 基线 commit（取 HEAD）/ 任务分支名 / 门禁候选（`.xhunter/gates.yml` 存在性）/ 预算与策略默认值，生成 Bounty 文件。
 
@@ -90,7 +90,7 @@ xhunter version
 
 **记账口径**：事件流信封与结果文件里的 `bounty_id` 是本次投递的标识，而分支与记忆路径用会话标识——同一会话的多次投递之间，两者不同，这是刻意的。
 
-**尚未定投递方式**：预算上限、检查点策略、流程编排（`pipeline`）属运行策略，它们的投递形态（环境变量还是配置文件）随策略层实现一起定；当前实现不读取它们。
+**尚未定投递方式**：预算上限、检查点策略属运行策略，它们的投递形态（环境变量还是配置文件）随策略层实现一起定；当前实现不读取它们。**流程本身不投递**——可组装的件（原语清单、两段提示词插件、结果过滤器链、三组 handler）在组装层装配，见 `xhunter-architecture.md` §4。
 
 ---
 
@@ -188,7 +188,7 @@ xhunter version
 {"type":"assumption","text":"..."}                    // 代替追问的假设外化
 {"type":"assistant_text","text":"..."}
 {"type":"tool_call","call_id":"...","tool":"edit","args":{...}}
-{"type":"tool_result","call_id":"...","tool":"edit","ok":true,"resolved_mode":"symbol","precision":"syntactic","degrade":null,"summary":"...","duration_ms":12}
+{"type":"tool_result","call_id":"...","tool":"symbol_edit","ok":true,"precision":"syntactic","degrade":null,"summary":"...","duration_ms":12}
 {"type":"check_result","gate":"unit-test","passed":true,"cached":false,"exit_code":0,"duration_ms":1234,"source":"repo","summary":"..."}
 {"type":"policy_denied","action":"...","reason":"..."}
 {"type":"gate_config_changed","source":"working_tree","gates":["..."]}   // 仅当 Bounty 授予 working_tree 时

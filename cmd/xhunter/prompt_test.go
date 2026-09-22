@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"xhunter/harness"
+	"xhunter/hunt"
 	"xhunter/prompt/agentsmd"
 	"xhunter/prompt/skills"
 )
@@ -11,7 +11,7 @@ import (
 // 装配顺序就是执行顺序：这份清单是"提示词由哪几段、以什么次序拼成"的唯一定义处，
 // 顺序一变提示词就变，因此把它钉住。
 func TestDefaultPromptPlugins_OrderIsThePromptOrder(t *testing.T) {
-	system, user := defaultPromptPlugins()
+	system, user := defaultSystemPlugins(nil), defaultUserPlugins(nil)
 
 	want := []string{"agentsmd", "skills"}
 	if len(system) != len(want) {
@@ -30,7 +30,7 @@ func TestDefaultPromptPlugins_OrderIsThePromptOrder(t *testing.T) {
 // 同一个插件实例只应出现一次：重复挂上会让同一份内容进提示词两遍，
 // 白白吃掉预算，还可能让模型以为那是一条更重要的指令。
 func TestDefaultPromptPlugins_NoDuplicate(t *testing.T) {
-	system, _ := defaultPromptPlugins()
+	system := defaultSystemPlugins(nil)
 	seen := map[string]bool{}
 	for _, p := range system {
 		k := kind(p)
@@ -41,9 +41,9 @@ func TestDefaultPromptPlugins_NoDuplicate(t *testing.T) {
 	}
 }
 
-// kind 由类型给出插件身份。刻意不给 harness.PromptPlugin 加 Name 方法——
+// kind 由类型给出插件身份。刻意不给 hunt.PromptPlugin 加 Name 方法——
 // 插件身份要到真有人消费时才值得进公开契约，眼下只有装配可读性需要它。
-func kind(p harness.PromptPlugin) string {
+func kind(p hunt.PromptPlugin) string {
 	switch p.(type) {
 	case *agentsmd.Plugin:
 		return "agentsmd"

@@ -6,7 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"xhunter/harness"
+	"xhunter/git"
+	"xhunter/llm"
 )
 
 // git 实现目前只到"入口就位"。这个包要守的是**失败形态**：
@@ -15,7 +16,7 @@ import (
 
 func TestGit_UnimplementedFailsLoudly(t *testing.T) {
 	g := New(Config{})
-	repo := harness.RepoRef{Remote: "git@example.com:x/y.git", Branch: "task/b-1", BaseCommit: "abc"}
+	repo := git.RepoRef{Remote: "git@example.com:x/y.git", Branch: "task/b-1", BaseCommit: "abc"}
 
 	cases := []struct {
 		name string
@@ -32,7 +33,7 @@ func TestGit_UnimplementedFailsLoudly(t *testing.T) {
 			if err == nil {
 				t.Fatal("未实现必须显式失败，不得返回零值")
 			}
-			var te *harness.ToolError
+			var te *llm.Fault
 			if !errors.As(err, &te) {
 				t.Fatalf("应是结构化错误：%v", err)
 			}

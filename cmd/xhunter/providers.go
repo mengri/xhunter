@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"xhunter/harness"
 	"xhunter/internal/modelcatalog"
+	"xhunter/llm"
 	"xhunter/provider/anthropicmessages"
 	"xhunter/provider/openaichat"
 	"xhunter/provider/openairesponses"
@@ -32,7 +32,7 @@ var errNoCredential = errors.New("凭据环境变量为空或未设置")
 //
 // 所有工厂在签名上完全一致，差异全在内部——这正是"针对性"的落点：
 // 同一份配置经由不同工厂可以得到不同的连线方式，而调用方不必知道差别在哪。
-type providerFactory func(providerconfig.Resolved) (harness.Provider, error)
+type providerFactory func(providerconfig.Resolved) (llm.Provider, error)
 
 // vendorFactories 返回组装层的协议表：SDK 值（指协议，不指厂商）→ 工厂。
 //
@@ -53,7 +53,7 @@ func vendorFactories() map[string]providerFactory {
 }
 
 // openAICompatible 构造对话补全协议的客户端。
-func openAICompatible(r providerconfig.Resolved) (harness.Provider, error) {
+func openAICompatible(r providerconfig.Resolved) (llm.Provider, error) {
 	headers, err := requestHeaders(r)
 	if err != nil {
 		return nil, err
@@ -67,7 +67,7 @@ func openAICompatible(r providerconfig.Resolved) (harness.Provider, error) {
 }
 
 // openAIResponses 构造 Responses 协议的客户端。
-func openAIResponses(r providerconfig.Resolved) (harness.Provider, error) {
+func openAIResponses(r providerconfig.Resolved) (llm.Provider, error) {
 	headers, err := requestHeaders(r)
 	if err != nil {
 		return nil, err
@@ -84,7 +84,7 @@ func openAIResponses(r providerconfig.Resolved) (harness.Provider, error) {
 //
 // 本协议额外要求生成上限（请求体必填 max_tokens），因此把输出预留转进去——
 // 两者口径一致，都是"留给模型生成的空间"。
-func anthropicMessages(r providerconfig.Resolved) (harness.Provider, error) {
+func anthropicMessages(r providerconfig.Resolved) (llm.Provider, error) {
 	headers, err := requestHeaders(r)
 	if err != nil {
 		return nil, err
@@ -139,7 +139,7 @@ func requestHeaders(r providerconfig.Resolved) (map[string]string, error) {
 //
 // 目录快照缺失不是错误：配置文件本身可以给出全部事实（自建网关、新模型）。
 // 真正缺事实的情况由解析与构造两处显式报出。
-func openProvider(sel providerSelection) (harness.Provider, error) {
+func openProvider(sel providerSelection) (llm.Provider, error) {
 	user, err := providerconfig.LoadFile(sel.ConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("%s：%w", envProviderFile, err)
@@ -163,7 +163,7 @@ func openProvider(sel providerSelection) (harness.Provider, error) {
 //
 // 表由调用方给出，而不是在函数里读一个包级变量：装配是一次性动作，测试也可以塞一张
 // 只含自己那条协议的表。
-func providerFor(table map[string]providerFactory, r providerconfig.Resolved) (harness.Provider, error) {
+func providerFor(table map[string]providerFactory, r providerconfig.Resolved) (llm.Provider, error) {
 	f, ok := table[r.SDK]
 	if !ok {
 		return nil, fmt.Errorf(

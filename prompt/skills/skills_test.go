@@ -1,27 +1,35 @@
 package skills
 
 import (
-	"xhunter/internal/workspace/osfs"
 	"context"
 	"strings"
 	"testing"
+	"xhunter/internal/workspace/osfs"
 
-	"xhunter/harness"
+	"xhunter/git"
+	"xhunter/hunt"
+	"xhunter/workspace"
 )
 
 // fixture 造一个带工作区与基线的输入。
-func fixture(t *testing.T, files map[string]string, base string) harness.PromptInput {
+func fixture(t *testing.T, files map[string]string, base string) (hunt.PromptInput, workspace.Workspace) {
 	t.Helper()
 	st := newStore(t)
 	for path, content := range files {
-		if _, err := st.WriteRange(path, harness.ByteRange{Start: 0, End: 0}, content); err != nil {
+		if _, err := st.WriteRange(path, workspace.ByteRange{Start: 0, End: 0}, content); err != nil {
 			t.Fatalf("准备夹具失败：%v", err)
 		}
 	}
-	return harness.PromptInput{
-		Bounty:    harness.Bounty{Repo: harness.RepoRef{BaseCommit: base}},
-		Workspace: st,
-	}
+	return hunt.PromptInput{
+		Bounty: hunt.Bounty{Repo: git.RepoRef{BaseCommit: base}},
+	}, st
+}
+
+// build 用夹具的工作区构造插件并执行一次 Build。
+func build(t *testing.T, files map[string]string, base string) (hunt.PromptPart, error) {
+	t.Helper()
+	in, ws := fixture(t, files, base)
+	return New(ws).Build(context.Background(), in)
 }
 
 func skill(name, desc string) string {
@@ -30,12 +38,12 @@ func skill(name, desc string) string {
 
 // 清单只带 name + description，并**必须带入口路径**——模型据此用 read 取全文。
 func TestBuild_ListsNameDescriptionAndPath(t *testing.T) {
-	in := fixture(t, map[string]string{
+	in, ws := fixture(t, map[string]string{
 		dir + "release/SKILL.md": skill("release", "发布流程与版本号约定"),
 		dir + "lint/SKILL.md":    skill("lint", "静态检查约定"),
 	}, "deadbeefcafe1234")
 
-	part, err := New().Build(context.Background(), in)
+	part, err := New(ws).Build(context.Background(), in)
 	if err != nil {
 		t.Fatalf("构造失败：%v", err)
 	}
@@ -61,12 +69,12 @@ func TestBuild_ListsNameDescriptionAndPath(t *testing.T) {
 
 // 单条非法只跳过这一条：一份坏文件不该让整个任务起不来，但必须留痕。
 func TestBuild_InvalidEntryIsSkippedWithNotice(t *testing.T) {
-	in := fixture(t, map[string]string{
+	in, ws := fixture(t, map[string]string{
 		dir + "good/SKILL.md": skill("good", "这条没问题"),
 		dir + "bad/SKILL.md":  "---\nname: bad\n---\n没有 description\n",
 	}, "abc")
 
-	part, err := New().Build(context.Background(), in)
+	part, err := New(ws).Build(context.Background(), in)
 	if err != nil {
 		t.Fatalf("单条非法不该让构造失败：%v", err)
 	}
@@ -87,11 +95,11 @@ func TestBuild_InvalidEntryIsSkippedWithNotice(t *testing.T) {
 
 // name 与目录名不一致时无法判断该信哪个——跳过比猜更安全。
 func TestBuild_NameMustMatchDirectory(t *testing.T) {
-	in := fixture(t, map[string]string{
+	in, ws := fixture(t, map[string]string{
 		dir + "release/SKILL.md": skill("publish", "名字与目录不符"),
 	}, "abc")
 
-	part, err := New().Build(context.Background(), in)
+	part, err := New(ws).Build(context.Background(), in)
 	if err != nil {
 		t.Fatalf("构造失败：%v", err)
 	}
@@ -106,13 +114,13 @@ func TestBuild_NameMustMatchDirectory(t *testing.T) {
 // 只认约定目录：别处的同名文件不是技能。否则仓库里任何一个 SKILL.md
 // 都会悄悄进入模型可见面。
 func TestBuild_IgnoresSkillFilesOutsideDirectory(t *testing.T) {
-	in := fixture(t, map[string]string{
-		"SKILL.md":                          skill("root", "根目录的同名文件"),
-		"vendor/other/SKILL.md":             skill("other", "第三方目录里的"),
-		dir + "release/SKILL.md":            skill("release", "这才是技能"),
+	in, ws := fixture(t, map[string]string{
+		"SKILL.md":               skill("root", "根目录的同名文件"),
+		"vendor/other/SKILL.md":  skill("other", "第三方目录里的"),
+		dir + "release/SKILL.md": skill("release", "这才是技能"),
 	}, "abc")
 
-	part, err := New().Build(context.Background(), in)
+	part, err := New(ws).Build(context.Background(), in)
 	if err != nil {
 		t.Fatalf("构造失败：%v", err)
 	}
@@ -125,7 +133,7 @@ func TestBuild_IgnoresSkillFilesOutsideDirectory(t *testing.T) {
 }
 
 func TestBuild_NoSkillsYieldsEmptyPart(t *testing.T) {
-	part, err := New().Build(context.Background(), fixture(t, nil, "abc"))
+	part, err := build(t, nil, "abc")
 	if err != nil {
 		t.Fatalf("没有技能不该报错：%v", err)
 	}
@@ -141,7 +149,7 @@ func TestBuild_TruncatesBeyondLimit(t *testing.T) {
 		name := "s" + string(rune('a'+i%26)) + pad(i)
 		files[dir+name+"/SKILL.md"] = skill(name, "说明 "+name)
 	}
-	part, err := New().Build(context.Background(), fixture(t, files, "abc"))
+	part, err := build(t, files, "abc")
 	if err != nil {
 		t.Fatalf("构造失败：%v", err)
 	}
@@ -159,7 +167,7 @@ func pad(i int) string {
 }
 
 // newStore 造一个挂在临时目录上的本地工作区（实现来自 internal/workspace/osfs）。
-func newStore(t *testing.T) harness.Storage {
+func newStore(t *testing.T) workspace.Storage {
 	t.Helper()
 	st, err := osfs.Opener{}.Open(t.TempDir())
 	if err != nil {

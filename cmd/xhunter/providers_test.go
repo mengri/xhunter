@@ -12,7 +12,6 @@ import (
 	"sync"
 	"testing"
 
-	"xhunter/harness"
 	"xhunter/llm"
 	"xhunter/provider/adapter"
 	"xhunter/provider/openaichat"
@@ -76,7 +75,7 @@ func testResolved(baseURL string) providerconfig.Resolved {
 }
 
 // inferOnce 走完一次最小推理，用来观察装配结果落在请求上的样子。
-func inferOnce(t *testing.T, p harness.Provider) {
+func inferOnce(t *testing.T, p llm.Provider) {
 	t.Helper()
 	s, err := p.Infer(context.Background(), llm.Request{})
 	if err != nil {
@@ -259,7 +258,7 @@ func TestProviderFor_VendorSpecificFactoryIsJustAnotherEntry(t *testing.T) {
 	t.Setenv("XHUNTER_TEST_KEY", "secret-value")
 
 	table := map[string]providerFactory{
-		"@test/vendor-custom-auth": func(r providerconfig.Resolved) (harness.Provider, error) {
+		"@test/vendor-custom-auth": func(r providerconfig.Resolved) (llm.Provider, error) {
 			headers, err := requestHeaders(r)
 			if err != nil {
 				return nil, err
