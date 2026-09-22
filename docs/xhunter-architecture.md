@@ -71,7 +71,7 @@
 │  │                                                              │ │
 │  │   H1  Loop      控制循环 · 状态机 · 终止判定 · 错误收敛        │ │
 │  │        │                                                     │ │
-│  │        ├─ H2  Context    提示词分层 · 历史 · 压缩 · 截断       │ │
+│  │        ├─ H2  Context    system/user 两段拼装 · 历史 · 压缩 · 截断  │ │
 │  │        ├─ H3  Tools      注册 · 并行调度 · 结果配对            │ │
 │  │        ├─ H4  Policy     边界 · 拦截 · 权限应答 · 预算 · 止损  │ │
 │  │        ├─ H5  Stream     事件映射 · 落盘 · 心跳                │ │
@@ -102,7 +102,7 @@
 
 **扩展不改变这条约束**：符号扩展（MCP）只是工具的**远端实现**，调度、裁决与落盘仍在 Harness——写类符号工具由扩展返回定位结果（文件 + 区间 + 新内容），实际写盘由 Harness 执行（FR-13.3）。因此"单一写入原语"不因扩展而分裂。
 
-**组装原则：所有模块以标准化接口暴露，由 `main` 包在装配期组装。** 图中每个方框（Provider / Tools / Policy / Sink / Session / Context / Ext / Git）都是接口，实现在装配期注入，**组装点唯一**。由此推出三点：
+**组装原则：所有模块以标准化接口暴露，由 `main` 包在装配期组装。** 图中每个方框（Provider / Tools / Policy / Sink / Session / Context / Ext / Git）都是接口，实现在装配期注入，**组装点唯一**。**提示词插件（`PromptPlugin`）同样在这里注入**（默认清单见 `cmd/xhunter/prompt.go`）——它是"内容扩展"，与 H7 的"能力扩展"并列但互不相干：H7 给工具加后端，插件只贡献首轮正文（FR-7.8）。**文件操作与 git 操作同样在装配期注入两个后端**：内核只定义契约（`Workspace`/`Storage`、`GitWorktree`）与一个打开点（`WorkspaceOpener`，因为工作区根要到基线就绪才存在），实现分别是本地文件系统与 git 命令行。原语只面对 `Workspace` 只读视图，写盘只经 `Committer`——它们连 `Storage` 都拿不到。由此推出三点：
 
 1. **分发形态降级为实现细节**——符号扩展随核心同包、独立包，还是跑在独立进程，架构层不感知：接口不变则装配代码不变。
 2. **驱动者无关性落到代码上**——平台驱动与本地驱动**共用同一套装配代码**，差别只在"谁投递 Bounty、谁消费事件流"（§5）。
@@ -136,6 +136,7 @@ Pipeline
 |---|---|
 | 环节必须已定义，且只能出现在其所属区段；区段内不得重复 | 组装正确性 |
 | `git.prepare_baseline` 必须存在且是 `pre` 的第一个环节；`ext.caps` 先于 `session.restore` | **INV-11**（基线先于任何写工作区的动作） |
+| `prompt.build` 必须存在；若 `ext.caps` 存在，它必须在之后 | **FR-7.8**（首轮无人构造 = 模型看不到系统提示词与项目约定；先于工具面定格 = 正文陈述的工具面与实际注册的不一致） |
 | `guard.cancel` 与 `guard.budget` 必须存在 | **INV-3**（无静默挂起）、**FR-9.2**（预算必生效） |
 | `tools.execute` 必须存在且唯一 | **FR-4.4 / INV-10**（唯一写盘入口） |
 | `stream.receive` 必须在 `tools.execute` **之前** | 接收段不得产生写副作用（§6.3） |
@@ -145,7 +146,7 @@ Pipeline
 | `gates.required` 若存在，必须在 `delivery.commit` 之前 | **FR-5.2f**（门禁结论要进入终态） |
 | `event.hunt_end` 必须存在且是 `post` 的最后一个环节 | **FR-10.2**（终态上报） |
 
-**注意最后几条的形态**：它们不是"必须有这个环节"，而是"**若你有，它必须在那个位置**"——这才是可组装的表达方式：**约束位置而非约束存在**，把选择权留给配置，把安全边界留给校验。
+**注意最后几条的形态**：它们不是"必须有这个环节"，而是"**若你有，它必须在那个位置**"——这才是可组装的表达方式：**约束位置而非约束存在**，把选择权留给配置，把安全边界留给校验。与之相对的是**约束存在**：基线、守卫、写盘入口、首轮构造、交付提交、终态上报属于"缺了任务就不该开始"的一类，它们必须存在（两类划分见 `harness/pipeline.go` 的 `Validate`）。
 
 **边界（明确不做）**：不做运行时插件装卸（环节集合编译期固定，配置只能选择与排序，不能引入新环节）；不做多层 patch 叠加；不做字段级合并（给出 `pipeline` 即整体替换，避免"半配置"造成的隐式行为）。
 
@@ -155,9 +156,9 @@ Pipeline
 
 | 区段 | 环节（按序） |
 |---|---|
-| `pre`（L1 初始化） | `git.prepare_baseline` → `workspace.scan` → `gates.load` → `ext.caps` → `session.restore`（条件） → `config.snapshot` |
-| `turn.guards`（L2 轮前守卫） | `guard.cancel` → `guard.channel` → `guard.budget` → `context.compact` |
-| `turn.steps` | `context.assemble` → `provider.infer` → `stream.receive` → `tools.execute` → `checkpoint.commit` |
+| `pre`（L1 初始化） | `git.prepare_baseline` → `gates.load` → `ext.caps` → `prompt.build` → `session.restore`（条件） → `config.snapshot` |
+| `turn.guards`（L2 轮前守卫） | `guard.cancel` → `guard.channel` → `guard.budget` |
+| `turn.steps` | `context.compact` → `context.assemble` → `provider.infer` → `stream.receive` → `tools.execute` → `checkpoint.commit` |
 | `post`（L7 终态收敛） | `session.snapshot` → `gates.required`（补跑） → `delivery.commit` → `deliverable.diff` → `workspace.cleanup` → `ext.close` → `event.hunt_end` |
 
 环节职责与依据见 §6.3（运行段 L1~L7）。
@@ -234,7 +235,7 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 | 环节 | 职责方 | 动作 | 依据 |
 |---|---|---|---|
 | **G1 生成/自举** | 平台 或 本地驱动（`xhunter run --repo --task`） | 探测 remote / HEAD / 分支名候选 / 门禁候选 → 组装 Bounty（ID、Task、Repo{remote,branch,base_commit}、Session、Budget、Policy、Checkpoint、Pipeline）；分配或继承 `trace_id` | FR-1.1、FR-1.10 |
-| **G2 投递/排队** | ◇ 平台 | Bounty 文件 + 命令行准备；队列与调度；**崩溃重派次数上限也在此**（建议 ≤3，超限退化 failed） | FR-1.4、AC-7 |
+| **G2 投递/排队** | ◇ 平台 | 投递准备：**任务正文（命令行）+ 部署事实（环境变量：仓库 / 分支 / 基线 / 模型接入）**；队列与调度；**崩溃重派次数上限也在此**（建议 ≤3，超限退化 failed） | FR-1.1、FR-1.4、AC-7 |
 | **G3 启动契约** | ◇+□ | 进程启动：stdin 关闭、stdout=事件流、stderr=日志、环境变量注入凭据；Xhunter 输出 `hunt_start` 后进入 L1 | 使用手册 §2/§5、FR-8.4、INV-7 |
 
 失败收敛：G1 生成不出合法 Bounty → 不启动（本地驱动报错退出；平台侧标记 failed）。Bounty 校验（含 `Pipeline.Validate()`）是 L1 之前的第一道闸。
@@ -247,10 +248,10 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 |---|---|---|---|
 | 0 | 进程预检（代码级，非环节） | FR-9.5 | Provider 上限类能力校验；缺失→退出 2 |
 | 1 | `git.prepare_baseline` | FR-1.3、INV-11 | 基线→任务分支→checkout；先于一切可能写工作区的动作 |
-| 2 | `workspace.scan` | FR-2.6、FR-15.2/15.3 | AGENTS.md 根级发现 + skill frontmatter 扫描；**从基线读取、启动冻结**；产出工作区素材快照供 L2 拼装 |
-| 3 | `gates.load` | FR-5.2c | 门禁清单来源裁决（Bounty 下发 > 基线 `.xhunter/gates.yml` > 无） |
-| 4 | `ext.caps` | FR-13.4、FR-1.11④ | 能力描述符；不可用→全量文本降级。**模型可见工具面在此定格**（原语名字集合由交付分期决定 + 符号路径可用性由扩展能力决定，两者合并后存为任务状态） |
-| 5 | `session.restore`（条件环节） | FR-12.1、FR-13.7 | session 非空才执行；checkout 分支 tip + 读回材料；指纹不一致拒绝（退出 2） |
+| 2 | `gates.load` | FR-5.2c | 门禁清单来源裁决（Bounty 下发 > 基线 `.xhunter/gates.yml` > 无） |
+| 3 | `ext.caps` | FR-13.4、FR-1.11④ | 能力描述符；不可用→全量文本降级。**模型可见工具面在此定格**（原语名字集合由交付分期决定 + 工具声明〔名字、说明、参数形状〕 + 符号路径可用性由扩展能力决定，合并后存为任务状态；L2 说明层与 L3 请求读同一份，不各自推导） |
+| 4 | `prompt.build` | FR-2.6、FR-7.8、FR-15.2/15.3 | 按**装配顺序**调用两段插件，把产出正文拼成 **system / user 两段**并冻结（此后整任务内不再刷新）。排在 `ext.caps` 之后，正文陈述的工具面才与定格的工具面一致 |
+| 5 | `session.restore`（条件环节） | FR-12.1、FR-13.7 | 投递给出 `XHUNTER_SESSION_ID`（会话 `Session` 非空）才执行；checkout 分支 tip + 读回材料；指纹不一致拒绝（退出 2） |
 | 6 | `config.snapshot` | FR-11.6 | 生效配置快照生成时点显式化（进结果文件） |
 
 事件：`hunt_start`、heartbeat(bootstrap/restore)。失败：环境错误→L7（退出 2）。
@@ -263,13 +264,13 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 | `guard.channel` | FR-10.4 | writeErr→L7（退出 2，AC-19） |
 | `guard.budget` | FR-9.2 | 耗尽→L7（退出 1，含维度） |
 | `context.compact` | FR-14.1 | 三档水位+冷却；硬上限→错误 |
-| `context.assemble` | FR-7.1/7.6、FR-2.6、FR-15.2 | 四层拼装；素材=L1 素材快照 + 动态层 |
+| `context.assemble` | FR-7.1/7.6、FR-7.8 | 两段拼装（system / user）：插件正文取 `prompt.build` 冻结的那一份，内核块（工具面说明、环境事实、门禁清单）就地生成 |
 
 #### L3 请求发送（每轮）
 
 | 切入点 | 依据 | 说明 |
 |---|---|---|
-| `provider.infer` | FR-4.11、FR-9.5 | 请求 = messages + 可见原语（**7 个文件原语 + 1 个控制原语**）；可见原语**读自 L1 `ext.caps` 已定格的工具面**，与 L2 工具说明层同源（单一事实源）；`checkpoint` 控制原语在此注册 |
+| `provider.infer` | FR-4.11、FR-9.5 | 请求 = messages + 工具声明（**7 个文件原语 + 1 个控制原语**）；工具声明**读自 L1 `ext.caps` 已定格的那一份**，与 L2 工具说明层同源（单一事实源）；`checkpoint` 控制原语在此注册 |
 
 失败 `infer_failed`→L7（退出 1）。事件：heartbeat(infer)。
 
@@ -317,7 +318,7 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 | session.snapshot | FR-12.3b | 尽力而为，不阻断 |
 | gates.required 补跑 | FR-5.2f | 在交付提交之前 |
 | delivery.commit | FR-6.1 | 失败路径也尽力提交；成功终态+提交连败→覆盖为失败/退出 2 |
-| deliverable.diff | FR-6.1 | 排除 `.xhunter/**` |
+| deliverable.diff | FR-6.1 | 排除会话材料路径 `.xhunter/<session_id>/**（MaterialDir）；**同目录下的其他路径（如 `.xhunter/skills.draft/**`）不排除**——它们属于交付内容，要进 diff 供人 review（FR-15.3、AC-25） |
 | workspace.cleanup / ext.close | FR-12.4、FR-13.5 | 清理失败不阻断 |
 | hunt_end（必须是最后动作） | FR-10.2 | 终态 + 退出码（使用手册 §7） |
 
@@ -328,7 +329,7 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 | **D1 验收** | ◇ 平台 | 退出码→处置（使用手册 §7 映射表）：0→取 patch 进 MR；1/3→按失败/取消流程；2→重派（回到 G2）。MR 评审证据 = 任务分支提交链 + patch + 结果文件（gates 证据 + `effective_config` 快照） | FR-6、FR-11.6、AC-20 |
 | **D2 合并/放弃** | ◇ 人 | merge 形态（ff/squash/rebase）= 宿主仓库政策，**不在 Xhunter 契约内**；Xhunter 保证的只是：分支 tip 可 fast-forward、patch 可应用（AC-1）、绝不 force push | FR-8.3 |
 | **D3 归档清理** | ◇ 平台 | 事件流脱敏+滚动清理；会话材料 `.xhunter/<id>/` 随分支保留；分支删除属仓库所有者（Xhunter 永不删分支，FR-8.3） | FR-12.3 |
-| **D4 演化回灌** | ◇ 人 + 下一任务 | MR 合并的 AGENTS.md 修改与 `skills.draft/` 成为**下一任务的新基线**——下一任务的 L1 `workspace.scan` 读到的就是它们。单任务是线，跨任务是环 | FR-2.6、FR-15.3 |
+| **D4 演化回灌** | ◇ 人 + 下一任务 | MR 合并的 AGENTS.md 修改与 `skills.draft/` 成为**下一任务的新基线**——下一任务的 L1 `prompt.build` 读到的就是它们。单任务是线，跨任务是环 | FR-2.6、FR-15.3 |
 
 ### 6.5 异常与恢复矩阵
 
@@ -393,32 +394,33 @@ assemble ──► infer ──► dispatch ──► observe ──┬──►
 
 ### 7.2 H2 Context —— 上下文组装
 
-四层拼装，顺序即缓存友好顺序（FR-7.6）：
+首轮固定 **system 与 user 两条消息**，与协议首轮消息一一对应：稳定内容全在 system（前缀缓存靠它命中），每个任务都不同的内容全在 user（FR-7.6）。
 
-> 与 FR-7.1 的"提示词三层"是同一件事的两种切法：FR-7.1 按**职责**分（内置层 / 工作区层 / 任务层），本节按**拼装顺序**分。映射关系：FR-7.1 的"内置层"= 本节 [1]；FR-7.1 的"任务层"= 本节 [2]（工具说明，由 schema 生成）+ [4]（动态层：环境事实 → Bounty 正文）。
+**两段正文都由插件贡献**（FR-7.8）：多个插件按装配顺序拼接，内核只把结果放到固定位置上。于是"约定文件在哪、skill 清单从哪来、正文写什么"属于插件；内核保留的是两段的位置与顺序、取一次冻结、内核条款末尾追加，以及"正文改不了工具面与权限边界"。
 
 ```
-[1] 内置层      角色 · 工具纪律 · 无人类条款 · 止损规则     ← 最稳定
-[2] 工具说明    由工具 schema 自动生成，不手写
-[3] 工作区层    项目约定文件（AGENTS.md）+ skill 发现清单（FR-15.2）
-[4] 动态层      环境事实（cwd / git / shell）→ Bounty 正文  ← 每次不同
+system ─┬─ 插件正文       约定与 skill 清单 · 角色与风格        ← 稳定，可长期复用
+        ├─ 工具面说明层   由定格的工具声明生成，不手写（FR-7.7）
+        └─ 内核条款       工具纪律 · 安全边界 · 无人类条款 · 止损规则   ← 末尾追加，不可覆盖
+user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁清单
+        └─ 插件正文       任务陈述                              ← 每次不同
 ```
 
-**工作区层素材细则**：
+**约定与 skill 的默认口径**（实现见 `prompt/agentsmd/` 与 `prompt/skills/`；插件可替换，内核不规定发现方式）：
 
-- **AGENTS.md**（FR-2.6）：根级全文注入 [3]；monorepo 嵌套采用"**命中附注**"——工具结果携带该文件路径向上链上最近且未注入过的嵌套 AGENTS.md（追加到 [4]，因为它是按操作位置动态出现的）。启动读取一次即固定，运行中不重读。
-- **skill 发现清单**（FR-15.2）：从 `.xhunter/skills/`（基线 commit 读取，冻结语义）扫描 frontmatter，注入 name+description 清单（总量封顶）；SKILL.md 与 references/ 的**全文按需加载**由模型经 `read` 原语完成——渐进披露天然落在 7 原语上，核心零新机制；scripts/ 不可执行（FR-15.4）。
+- **AGENTS.md**（FR-2.6）：根级全文注入 system 段；monorepo 嵌套采用"**命中附注**"——工具结果携带该文件路径向上链上最近且未注入过的嵌套 AGENTS.md（追加到 user 段，因为它是按操作位置动态出现的）。构造一次即冻结，运行中不重读。
+- **skill 发现清单**（FR-15.2）：从 `.xhunter/skills/`（基线 commit 读取，冻结语义）扫描 frontmatter，向 system 段注入 name+description 清单（总量封顶）；SKILL.md 与 references/ 的**全文按需加载**由模型经 `read` 原语完成——渐进披露天然落在 7 原语上，核心零新机制；scripts/ 不可执行（FR-15.4）。
 
 **压缩**（FR-14）：
 
-**水位的定义**：`可用输入预算 = MaxContextTokens（预置配置，FR-9.5） − 固定开销（内置层 + 工具 schema） − 输出预留`。三档水位：预警 70% 触发、目标 50% 压后水位、硬上限 90% 不可继续。
+**水位的定义**：`可用输入预算 = MaxContextTokens（预置配置，FR-9.5） − 固定开销（system 段 + 工具 schema） − 输出预留`。三档水位：预警 70% 触发、目标 50% 压后水位、硬上限 90% 不可继续。
 
 ```
 预警 70% ──► 触发压缩 ──► 压到目标 50% ──► 冷却 N 轮 ──► 再次逼近才压
                                         （不是超限才动手：那时已无余量跑完压缩后的那一轮）
 ```
 
-**为什么是"批量压深"而不是"持续微调"**：四层拼装的前置稳定内容正是为了吃 prompt cache 的红利，而**任何对已缓存前缀的改写都会让其后全部 token 的缓存失效**。低频、一次压到位，两次压缩之间才能持续命中缓存。
+**为什么是"批量压深"而不是"持续微调"**：两段消息里的前置稳定内容正是为了吃 prompt cache 的红利，而**任何对已缓存前缀的改写都会让其后全部 token 的缓存失效**。低频、一次压到位，两次压缩之间才能持续命中缓存。
 
 **分层压缩（按序下压，够用即停）**：
 
@@ -452,6 +454,8 @@ assemble ──► infer ──► dispatch ──► observe ──┬──►
 | 职责 | 要求 |
 |---|---|
 | 注册 | **两个轴分开**：**交付分期**决定是否注册（M1/M2/M3，未实现的工具不注册而非返回空）；**环境能力不决定注册**——扩展不可用、语言未注册、扩展不具备引用解析能力时，工具**仍注册**，调用退回文本路径或返回结构化错误。**模型侧恒定 7 个文件原语 + 1 个控制原语**（`checkpoint`），能力差异不体现为工具名与参数 schema（FR-4.11、AC-26） |
+| **工具集由装配层提供** | 框架只认识 `Tool{名字, 声明, 实现, 寻址性质}`，**不认识任何具体原语**：有哪些、叫什么、什么顺序，全由装配层在构造运行时交进来（`NewRuntime(policy, ext, tools)`）。因此换一套工具集不需要动框架；而"这套工具集恰好是这 7 个、顺序固定"这类**业务约束留在装配层**（`cmd/xhunter/primitives.go`），由那里的测试审查。分发也据寻址性质决定路径，不在框架里按名字分支（FR-4.11） |
+| 实现扩展点 | 原语**实现**可由装配层替换：`NewRuntime(policy, ext, overrides)`（差量替换）或 `NewRuntimeWith`（整体接管，缺已知原语即拒）；overrides 只能替换**已知名字**的实现、不能新增工具名——模型可见面恒为 7+1，扩展改变的是名字背后的行为与路径，不是模型的工具清单（装配期拒绝，退出码 2） |
 | 分发 | 统一原语按**选择器语法 + 语言可用性**选择内部路径；`resolved_mode` 随结果上报；路径不同**不得放宽匹配语义**（FR-4.12、FR-4.13） |
 | 并行 | 同一轮内无依赖的调用并行执行；有依赖的串行（一期默认串行，结构留门） |
 | 配对 | 结果按 `tool_call_id` 严格配对，**禁止按顺序猜测** |
@@ -497,7 +501,7 @@ assemble ──► infer ──► dispatch ──► observe ──┬──►
 **恢复**（session 非空时，在 assemble 之前执行；**不重放写操作**）：
 
 1. 获取基线（按 SHA 浅克隆，不可得则完整克隆）→ **在基线 commit 上创建并推送任务分支**（已存在且 tip 为基线或其后代即幂等）→ **checkout 分支 tip（最后一个检查点）**——该状态即上次工作区，**无需重新执行任何写操作**
-2. 读回**会话材料**（`.xhunter/<bounty_id>/`，随检查点提交进分支，git 保证完整性）→ 台账出已完成轮次与写操作序列
+2. 读回**会话材料**（`.xhunter/<session_id>/`，随检查点提交进分支，git 保证完整性）→ 台账出已完成轮次与写操作序列
 3. **零工具执行**：恢复过程不调用 H3；材料损坏或 `schema_version` 不兼容 → 退出码 2，平台 fallback 重跑（FR-12.6）
 4. 回灌上下文（过 H2 压缩）→ 进入 assemble，从**下一轮**继续——不重做已完成轮次
 
@@ -519,6 +523,7 @@ assemble ──► infer ──► dispatch ──► observe ──┬──►
 | 生命周期 | 懒启动（首次调用符号工具时拉起）、随 Hunt 退出回收（FR-12.4）；**崩溃隔离**——扩展死掉不得使主循环静默挂起（INV-3）；**注册即副作用、卸载即撤销**：扩展注册的工具 schema / 符号能力 / 能力描述符随其卸载全部撤销 |
 | 降级 | 扩展缺失/启动失败/超时 → 符号路径不可用（**工具不撤回**，FR-4.11），能走文本路径的退回文本模式、无降级形态的返回结构化错误，并向模型显式提示，任务继续（FR-13.4、AC-12、AC-26） |
 | 不可信边界 | 仅本地进程；不继承凭据环境变量（FR-8.4）；不得绕过路径校验（FR-3.5、FR-8.2）——扩展没有写权限，写盘只在 Harness |
+| **协议托管 MCP 不采用** | OpenAI Responses 的内置 `type:"mcp"` 工具与 Anthropic Messages 的 `mcp_servers` 连接器把工具执行搬到**供应商侧**——调用不经策略裁决、不经唯一写盘入口（INV-2、INV-10），仅收公网 HTTPS 服务端且凭据须交上游（FR-13.6 禁止）。本项目 MCP 仅限本地 stdio（FR-13.1）；线格式包不发送也不消费这些字段，上游返回此类输出项按未知事件容错处理 |
 | 能力指纹 | 记录扩展标识 + 版本 + 语言清单，写入 session 记录；指纹不一致只记录、不阻断（FR-13.7） |
 
 **与 Provider `Caps` 同构**："能力声明 + 缺失降级"在本设计中第二次出现（第一次是模型能力，见 §8）。这是 Harness 面对任何**不可控外部组件**时的通用模式：**声明能力 → 按能力降级 → 如实上报**。
@@ -582,7 +587,7 @@ assemble ──► infer ──► dispatch ──► observe ──┬──►
 
 **与交付状态的关系**（FR-6.5 的具体化）：**任一 `required` 门禁未通过，或从未运行 → 终态为失败（退出码 1），但改动照常交付**。"从未运行"也计入不通过——否则模型只要不跑门禁就能拿到成功状态。
 
-**上报**：事件 `check_result` 扩展 `gate` / `passed` / `cached` / `duration_ms` / `exit_code` / `stats`；结果文件含 `gates` 汇总**并列出未运行的门禁**。
+**上报**：事件 `check_result` 的字段以**使用手册 §5**（外部事件契约 SSOT）为准，本文不另行定义；结果文件除 `gates` 汇总外，还须**列出未运行的门禁**（`passed: null`）。
 
 **任务本身就是改门禁时（FR-5.2h）**：默认"从基线读取"意味着新清单本次不生效，下次成为新基线后才生效（与 CI 惯例一致）。需要新清单本次生效时，**只能由 Bounty 显式授予**（`gates_source: "working_tree"`），并受三条护栏约束：**元门禁**（schema 合法 + 每个 `argv` 可启动）、**强度不得降低**（同名 `required` 门禁的 `argv`/`expect` 不得改动，只允许新增）、**显式上报**（`gate_config_changed` 事件 + 结果文件标注清单来源）。**模型拿不到豁免**：`gates_source` 只存在于 Bounty。
 
@@ -655,7 +660,7 @@ type Caps struct {
 
 ### 8.1 Provider 配置（供应商是部署期决策，不是编译期决策）
 
-Provider Adapter 是唯一知道供应商的地方（INV-1），但它**不把供应商写进代码**。连接参数与能力上限来自配置（`internal/providerconfig`，形态见 `xhunter-usage.md` §4）：
+Provider Adapter 是唯一知道供应商的地方（INV-1），但它**不把供应商写进代码**。连接参数与能力上限来自配置（公开包 `providerconfig/`，形态见 `xhunter-usage.md` §4）：
 
 ```
 用户配置（覆盖片段） ─┐
@@ -669,6 +674,47 @@ Provider Adapter 是唯一知道供应商的地方（INV-1），但它**不把�
 2. 新增供应商或模型 = 改配置，不改核心——与"扩展把符号能力外挂"是**同一手法**：把编译期决策降级为部署期选择；
 3. 凭据是配置里的 `{env:VAR}` **引用**，值仍在环境变量中（FR-1.2、FR-8.4）；配置结构里没有任何字段承载凭据明文；
 4. 未命中目录且未配置 → 启动期 `EnvError`（退出码 2），与既有的 `MaxContextTokens <= 0` 检查合流。
+
+**分层与落点**（协议实现只管协议，装配归组装层）：
+
+```
+配置（SDK + baseURL + 凭据引用 + 模型上限）
+   │  组装层：按 SDK 取针对性工厂（厂商特有的连线方式在这里落地）
+   ▼
+providerconfig.Resolved ──► provider/<protocol> 的构造函数 ──► 协议客户端
+                                                              │
+                              Harness 侧只看到：InferenceRequest / Session / Event
+```
+
+| 包 | 职责 |
+|---|---|
+| `provider/adapter/` | **共用件**：流式分帧、中立调用词汇、调用按位置拼装、协议侧错误形状、上限契约。不含任何具体协议，也不含装配概念 |
+| `provider/openaichat/` | **一个协议**：OpenAI 兼容对话补全（按角色平铺消息 + 分片流式） |
+| `provider/openairesponses/` | **一个协议**：OpenAI Responses（类型化条目 + 语义事件流，以 `response.completed` 收尾） |
+| `provider/anthropicmessages/` | **一个协议**：Anthropic Messages（顶层系统提示 + 内容块，以 `message_stop` 收尾） |
+| `providerconfig/` | **配置模型与解析**：连接事实（`Resolved`）出自这里，由组装层消费，因此它是公开契约而非内部实现 |
+| 组装层（`cmd/xhunter`） | **厂商表**：SDK 值 → 针对性工厂。唯一知道"有哪些协议、哪个值对应哪一个、针对已知厂商怎么连线（默认端点、凭据头的名称与前缀、必填的协议头）"的地方 |
+
+协议实现都以普通构造函数对外，参数是已经解析好的连接事实；线格式类型一律不导出。
+
+**自持传输层，不引厂商 SDK**：每个协议包自己写请求体、自己解流式分帧（`provider/adapter` 只提供最小 SSE 分帧与调用拼装）。理由不是偏好，而是维护面：**协议实现只应当随协议变，不应当随某家 SDK 的版本变**。代价是这批"各家刚好相同的样板代码"要自己维护，收益是核心二进制保持零第三方运行时依赖（NFR-1）。
+
+**协议版本基线写在包注释里**：每个协议包的包注释都有一段「协议版本基线」，写清**端点**、**版本标识**（如 `anthropic-version: 2023-06-01`；对话补全与 Responses 无版本头，记形状本身）、**形状基线**（具体的字段与事件序列）、**结束语义**（谁容忍缺失、谁严格要求）、**什么情况下才需要动这个包**。改动协议前先读那一段，就不必重新翻协议文档。
+
+**端点不预设、鉴权可配置**：实现里不含任何厂商地址（`baseURL` 一律来自配置）；鉴权形状由配置的请求头决定（值支持 `{env:VAR}` 引用，可带前缀），`apiKey` 只是"补一个标准 Bearer"的便捷形式。因此接一家厂商是写配置，接一种**协议**才是写代码。
+
+| 在边界内（协议实现独占） | 在边界外（中立类型） |
+|---|---|
+| 请求形状与端点路径、流式分帧、增量拼装（工具调用按位置配对）、错误分类与可重试性判定 | `Message`（角色词汇 + 正文 + 调用 + 结果）、`ToolDecl`（名字 + 说明 + 参数形状）、`Event`（文本 / 调用 / 用量 / 错误 / 结束）、`Caps` |
+
+四条结构约束：
+
+1. **上游线格式类型不导出**——请求与分片的结构体只在协议包内可见，于是"顺手引用某个上游字段"这件事在类型层面就不成立，挽具不会随时间被磨掉；
+2. **协议实现不含装配知识**——它不知道配置里的哪个 SDK 值会选中自己，不做注册、也不提供工厂；构造参数是已经解析好的连接事实（端点、模型、鉴权头值、上限）。因此协议包不依赖配置模型，可以脱离本项目的配置体系被独立复用；
+3. **装配归组装层**——"SDK 值 → 协议实现 + 厂商特有的连线方式"集中在组装层的厂商表：通用形态（OpenAI 兼容）与已知厂商（鉴权头的名称与前缀、端点约定、需要补的请求头）各占一个针对性工厂。接一家新厂商 = 加一条，协议实现与 Harness 都不动；空值与 `builtin` 落到通用形态。**协议之间不互相引用**，共享件下沉到 `provider/adapter`——互相引用会构成导入循环，编译期即失败；
+4. **启动期失败**——缺模型上限、缺端点、凭据引用解析为空、SDK 在厂商表里没有对应工厂，都在构造期返回环境错误（退出码 2），不留到运行中途：无人值守时中途失败意味着已消耗的轮次与预算全部作废。最后一类的错误信息要指出答案在组装层（协议实现不做注册），并列出已装配的项——"配置里写错协议名"与"组装层没加这一条"是两种故障，应当能直接区分。
+
+**事件序列即协议状态**：流的结束以通道关闭表达，而"正常结束"与"中断"的区别由最后一条事件表达（`EvError` 带结构化错误与可重试性）。适配器因此不需要另给返回码，调用方也不会漏查——半截响应被静默当成完整回答，是比直接失败危险得多的错误。同理，**形状不成立的调用照常上报**（参数不是合法 JSON、工具名不认识、字段未知），由 Harness 作为失败结果回灌：丢掉它，模型永远不知道自己发错了什么。
 
 **目录快照的来源与边界**：来源①是本地快照 `~/.xhunter/models.json`，**安装时**从 LiteLLM 价格与上下文窗口目录拉取并转换，`xhunter models update` 手动刷新。**运行期只读本地快照、不联网**。快照同时携带每 token 单价，供 H4 的费用预算维度使用（FR-9.1）。
 
@@ -726,7 +772,7 @@ flowchart TD
     end
 
     subgraph P2["② 主循环（每轮）"]
-        B1["H2 组装上下文<br/>四层拼装 · 缓存友好顺序"]
+        B1["H2 组装上下文<br/>system+user 两段 · 缓存友好顺序"]
         B2["Provider.Infer<br/>流式事件"]
         B3["H3 分发（纯函数）<br/>选择器语法 + 语言可用性"]
         B4["H7 只读定位<br/>符号区间 · 引用点 · 影响面"]
@@ -776,7 +822,7 @@ flowchart TD
 ```
 H1.Loop ──请求上下文──► H2.Context
                             │
-                            ▼  messages（四层拼装 + 压缩后历史）
+                            ▼  messages（两段首轮 + 压缩后历史）
                        Provider.Infer
                             │
                             ▼  流式事件
@@ -926,20 +972,21 @@ Bounty(session) ──► H6.Session
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
-| IA-2.1 | 四层拼装顺序稳定：内置层 → 工具说明 → 工作区层 → 动态层（缓存友好） | 单测：断言前缀稳定（FR-7.6） |
+| IA-2.1 | 首轮两段顺序稳定：system 段（插件正文 → 工具面说明 → 内核条款）与 user 段（内核注入 → 插件正文），缓存友好 | 单测：断言前缀稳定（FR-7.6） |
 | IA-2.2 | 当前轮 messages 与 Bounty 正文**永不裁剪** | 压缩后断言仍存在（AC-17） |
 | IA-2.3 | 水位线触发压缩：低于预警不压、达预警才压、压后冷却期内不重复压 | 单测：计数 `Compact` 调用（FR-14.1） |
 | IA-2.4 | 分层下压按 L0→L4，够用即停；默认实现零模型调用 | 单测 + 依赖检查（FR-14.2、FR-14.4） |
 | IA-2.5 | 同一份 session 记录两次投影出的工作日志内容一致 | 单测（AC-18） |
 | IA-2.6 | `Restore` 走与正常运行相同的压缩规则（不特殊处理） | 代码检查（FR-14.8） |
 | IA-2.7 | token 计数用于水位判定；上限来自配置而非估算 | 代码检查（FR-9.6） |
-| IA-2.8 | **AGENTS.md 注入**（FR-2.6 / AC-23）：根级全文进工作区层；嵌套"命中附注"取路径链最近未注入者、追加到动态层；文件名精确匹配（大小写反例不注入）；启动读取一次冻结，运行中改动不影响本次注入 | 单测：嵌套 monorepo 夹具 + 大小写反例 + 冻结断言 |
+| IA-2.8 | **AGENTS.md 注入**（FR-2.6 / AC-23）：根级全文进 system 段；嵌套"命中附注"取路径链最近未注入者、追加到 user 段；文件名精确匹配（大小写反例不注入）；构造一次冻结，运行中改动不影响本次注入 | 单测：嵌套 monorepo 夹具 + 大小写反例 + 冻结断言 |
 | IA-2.9 | **skill 发现清单**（FR-15.2/15.5/15.6 / AC-24）：启动只注入 name+description（总量封顶、溢出上报）；非法 frontmatter 跳过且事件流可见；SKILL.md/references 全文不经 H2 加载——由模型经 `read` 原语按需获取，走正常策略与压缩 | 单测：合法/非法/超限三类夹具 |
 | IA-2.10 | **书写/生效分离**（FR-2.6 / FR-15.3 / AC-25）：`.xhunter/skills/**` 禁写而 `.xhunter/skills.draft/**` 可写且进交付 diff；draft 内容不出现在本次发现清单；运行中改 AGENTS.md 不改变已注入内容 | 单测：draft 可写断言 + 发现清单排除断言 + 注入冻结断言 |
+| IA-2.11 | **两段正文由插件贡献**（FR-7.8/7.9 / AC-29）：同阶段多插件按装配顺序拼接、空正文整段跳过；每段各调用一次（冻结）；任一插件失败即整段作废并按环境错误收敛（退出码 2，原因指明哪一段）；两段都不接只记 warn、不判死 | `TestPromptBuild_ConcatenatesPluginsInAssemblyOrder`、`TestPromptBuild_SamePluginCanServeBothStages`、`TestPromptBuild_PluginFailureIsEnvError`、`TestPromptBuild_WithoutPluginsOnlyWarns`、`TestJoinPromptParts_SkipsEmptyContributions` |
 
 ### 12.3 H3 — `ToolRuntime`
 
-**契约**：`Inspect` / `Dispatch` / `Prepare` / `Execute` / `Commit`。**唯一的写入点是 `Commit`。**
+**契约**：`Inspect` / `Dispatch` / `Prepare` / **`Policy.Decide`（外部裁决）** / `Execute` / `Commit`；步骤顺序见 §6.3 L5。**唯一的写入点在最后一步 `Commit`**，且定位（`Prepare`）必须先于裁决——否则策略看不到影响面。
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
@@ -989,7 +1036,7 @@ Bounty(session) ──► H6.Session
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
 | IA-6.1 | 会话材料自含续跑所需全部信息：对话历史 + 工具名 + 完整参数 + 结果摘要 + turn 序号 + 用量 + 能力指纹 | 结构检查（FR-12.2） |
-| IA-6.1b | **按任务隔离**：材料路径为 `.xhunter/<bounty_id>/session.jsonl`（由 `harness.MaterialDir` 统一给出）；两任务并行同一仓库时互不覆盖 | 单测（FR-12.2b） |
+| IA-6.1b | **按任务隔离**：材料路径为 `.xhunter/<session_id>/session.jsonl`（由统一的材料路径给出，`MaterialDir`）；两任务并行同一仓库时互不覆盖 | 单测（FR-12.2b） |
 | IA-6.1c | **提交强制加入**（`add -f`）：仓库 `.gitignore` 忽略 `.xhunter/` 时材料仍随检查点提交 | 单测：夹具 `.gitignore` 含该路径 |
 | IA-6.2 | **恢复过程零工具执行**：不重放写操作，`ToolRuntime.Execute` 调用次数为 0 | 单测：计数型 ToolRuntime |
 | IA-6.3 | 恢复从**下一轮**继续，不重做已完成轮次 | 单测：断言恢复后首个 turn 序号（FR-12.1） |
@@ -1006,7 +1053,7 @@ Bounty(session) ──► H6.Session
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
-| IA-7.1 | 扩展**不新增模型可见的工具名**，其能力经统一原语内部分发呈现 | 代码检查：可见原语**逐期恒定**（M1/M2 为 6 个文件原语 + 1 控制原语，M3 起 7 + 1），且**不因环境能力变化**（FR-4.11、FR-13.2、AC-26） |
+| IA-7.1 | 扩展**不新增模型可见的工具名**，其能力经统一原语内部分发呈现 | `TestVisibleToolDecls_AreIndependentOfEnvironment`：`VisibleToolDecls` 不因环境能力变化（FR-4.11、FR-13.2、AC-26）；**交付分期导致的差异是另一轴**——M1/M2 无 `rename`（6 + 1），M3 起 7 + 1 |
 | IA-7.2 | 扩展不可用 → 全量降级文本路径，**任务不失败** | `TestRun_ExtUnavailable_DegradesWithoutFailing` |
 | IA-7.3 | 上报能力描述符（能力集 + 精度等级）；核心不感知后端种类 | 代码检查（FR-13.8） |
 | IA-7.4 | 精度如实上报，不得把语法级当语义级 | 代码检查：`Route.Precision` 来自 `Prepared`（FR-4.13） |
@@ -1018,11 +1065,27 @@ Bounty(session) ──► H6.Session
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
-| IA-8.1 | `MaxContextTokens` 缺失 → 启动期环境错误，**不得估算继续** | `TestRun_MissingContextWindow_EnvError` |
+| IA-8.1 | `MaxContextTokens` 缺失 → 启动期环境错误，**不得估算继续** | `TestProviderFor_PropagatesMissingContextWindow`、`TestNew_FailsAtStartupWhenFactsAreMissing` |
 | IA-8.2 | `Events()` 与 `Decide()` 分离（双向通道） | 接口形状 |
-| IA-8.3 | 工具执行不委托 Provider（INV-2） | 代码检查：Provider 无执行方法 |
-| IA-8.4 | Harness 代码不出现供应商名字（INV-1） | 静态扫描（AC-8 同族断言） |
-| IA-8.5 | Adapter 不含供应商硬编码：连接参数与上限全部来自配置 | 代码检查（`internal/providerconfig`） |
+| IA-8.3 | 工具执行不委托 Provider（INV-2） | `TestProviderInterface_DeclaresNoExecution`（接口方法集恒定） |
+| IA-8.4 | Harness 代码不出现供应商名字（INV-1） | `TestHarness_KnowsNoVendor`（源码静态扫描） |
+| IA-8.5 | 协议实现不含供应商硬编码：端点、鉴权头、上限全部来自构造参数 | `TestNew_BuildsEndpointAndDeclaresWindow`、`TestNew_BuildsEndpointAndPassesHeadersThrough`、`TestNew_AppliesProtocolHeadersAndLetsConfigOverride` |
+| IA-8.6 | **协议形状不外泄**：请求组装、流式分帧、增量拼装、错误分类都在协议包内，Harness 侧没有对应类型 | 代码检查：上游线格式类型不导出（IA-8.4 同一次扫描） |
+| IA-8.7 | **流中断不得静默**（→ `EvError` 带可重试性）；**协议层不解释参数**，形状不成立的调用由绑定层拒绝并回灌 | `TestInfer_TruncatedStreamIsExplicit`、`TestInfer_DoesNotInterpretArguments`、`TestBindToolCall_RejectsShapesThatWouldExecuteTheWrongThing` |
+| IA-8.8 | 工具调用按位置配对拼装：参数分片跨块到达、同一响应多个调用都不串台 | `TestInfer_AssemblesRawToolCallsAcrossChunks`、`TestInfer_AssemblesRawFunctionCallFromDeltas`、`TestInfer_AssemblesRawToolUseFromJSONDeltas` |
+| IA-8.9 | 工具有声明才下发参数形状；无声明时不下发空壳（协议要求必填的除外） | `TestInfer_SendsProtocolRequest`、`TestToWireTools_PassesSchemaThrough` |
+| IA-8.10 | **协议实现不含装配知识**：不知道配置里的哪个 SDK 值会选中自己，不做注册、不提供工厂，构造签名不依赖配置模型 | 代码检查：`provider/<protocol>` 不 import `providerconfig` |
+| IA-8.11 | **装配集中在组装层**：SDK 值 → 针对性工厂的映射只出现在 `cmd/xhunter`；未装配的 SDK 在启动期失败，错误指向组装层并列出已装配项 | `TestProviderFor_UnknownSDKTellsWhereToAddAFactory`、`TestProviderFor_BuildsEveryKnownProtocol` |
+| IA-8.12 | **端点与鉴权都由配置决定**：缺 `baseURL` 启动期失败；`headers` 支持 `{env:VAR}` 引用（含带前缀写法），`apiKey` 只是便捷形式 | `TestProviderFor_RequiresEndpointFromConfig`、`TestProviderFor_ResolvesEnvRefInHeaders`、`TestProviderFor_ResolvesAPIKeyIntoBearerHeader`、`TestProviderFor_VendorSpecificFactoryIsJustAnotherEntry` |
+| IA-8.13 | **一个协议一个包**：协议包与共用件包之间互不包含对方的具体协议 | 结构自证：互相引用会构成导入循环，编译即失败 |
+| IA-8.14 | 组装不持有全局状态：厂商表每次新建，可用项不随调用顺序漂移 | 代码检查：`vendorFactories()` 返回新表 |
+| IA-8.15 | **协议版本基线写在包注释里**（端点 / 版本标识 / 形状基线 / 结束语义 / 何时需要动本包） | 代码检查（三个协议包的包注释） |
+| IA-8.16 | **自持传输层**：不使用厂商 SDK，核心二进制保持零第三方运行时依赖（NFR-1） | 代码检查：`go.mod` 无 `require`；协议实现自解分帧 |
+| IA-8.17 | 未知角色显式报错，不得原样透传（拼错的角色名会变成对端的静默行为差异） | `TestInfer_RejectsUnknownRole`、`TestToWireMessages_UnknownRoleIsRejected` |
+| IA-8.15 | **Messages 协议的形状**：系统提示提到顶层字段、工具调用与工具结果都是内容块（结果挂在用户消息下）、请求体带生成上限、工具用 `input_schema` | `TestInfer_SendsProtocolRequest`、`TestProviderFor_AnthropicWiring`（`provider/anthropicmessages`） |
+| IA-8.16 | **Responses 协议的形状**：对话是类型化条目数组（消息 / 函数调用 / 结果各占一条）、工具声明不带"函数"外层包装、用量取自收尾事件 | `TestInfer_SendsProtocolRequest`、`TestInfer_AssemblesFunctionCallFromDeltas`（`provider/openairesponses`） |
+| IA-8.17 | **收尾语义按协议各自定义**：Anthropic 无 `message_stop`、Responses 无 `response.completed` → 显式截断；`response.incomplete`（输出被截断）算正常结束 | `TestInfer_TruncatedWithoutMessageStopIsExplicit`、`TestInfer_TruncatedWithoutCompletedIsExplicit`、`TestInfer_IncompleteIsNormalEnd` |
+| IA-8.18 | 上游错误按协议分类可重试性（限流/过载可重试，请求不合法/鉴权失败不可重试） | `TestInfer_ErrorEventIsClassified`（两个协议各一） |
 
 ### 12.9 `providerconfig`
 
@@ -1067,13 +1130,14 @@ Bounty(session) ──► H6.Session
 | IA-11.3 | 基线不可达 / 无推送权限 / 工作区脏 → 环境错误（退出码 2） | 表驱动单测 |
 | IA-11.4 | `Commit`：提交累积自上一个检查点的全部改动并推送；**只允许 fast-forward**（远端 tip 必须是本地父提交） | 单测：断言提交父提交与远端 tip |
 | IA-11.5 | 远端 tip 不是本地父提交 → 拒绝推送并返回环境错误，**绝不 force push**（FR-8.3、AC-20） | 单测 |
-| IA-11.6 | `Diff` 相对基线产出统一 diff 且**排除 `.xhunter/**`**（FR-6.1、AC-1）；失败不阻断收尾 | 单测：夹具含会话材料路径 |
+| IA-11.6 | `Diff` 相对基线产出统一 diff 且**排除会话材料目录** `.xhunter/<session_id>/**（FR-6.1、AC-1、AC-25）；失败不阻断收尾 | 单测：夹具含会话材料路径与 `skills.draft` 路径 |
 | IA-11.7 | `Clean` 回收子进程、临时目录与文件锁；失败只记录 | 代码检查（FR-12.4、FR-12.5） |
 | IA-11.8 | **调用时机与不可见性（INV-11）**：`PrepareBaseline` 必须是初始化阶段的第一个动作，先于任何工具执行；`Commit` 只在轮边界与收尾被调用；三者**都不作为工具暴露**给模型 | `TestRun_BranchSetupDoesNotInvolveModel`（断言调用顺序 + 工具面不含 git 原语） |
 | IA-11.9 | **检查点自愈与止损（AC-22）**：单次提交失败不中止（下一轮累积重提）；连续失败达上限 → 环境错误 | `TestRun_CheckpointFailure_SelfHeals`、`TestRun_CheckpointFailure_ConsecutiveLimitIsEnvError` |
 | IA-11.10 | **时间语义**：检查点提交的是**本轮已应用的改动**（工具在 L5 执行完毕，提交点在 L6），不含下一轮内容；末轮改动由收尾交付 | `TestRun_CheckpointCommitsCurrentTurn` |
 | IA-11.11 | **密度可配（FR-1.3c、AC-22）**：`interval/interval=3` → 三轮写操作只提交一次；`final_only` → 仅收尾一次；`every_write` → 每次写操作各一次 | `TestRun_CheckpointModes`、`TestRun_CheckpointEveryWrite` |
 | IA-11.12 | **门禁驱动的检查点**：门禁通过后立即提交（提交信息含原因）；门禁未通过则抑制自动检查点 | 单测：提交信息含门禁名 |
+| IA-11.13 | **模型请求的检查点（控制原语的消费端）**：模型经 `checkpoint` 表达意图 → 本轮立即提交，提交信息标明"模型请求"并带上其理由；**理由只作素材**——只取首行、剥控制与格式字符、按上限截断，格式（前缀与分隔符）由引擎固定，不可被素材伪造；**一次请求只兑现一次**（第二轮不复用旧理由）；**无改动则不产生空提交**，但意图照样被消费 | `TestCheckpointCommit_ModelRequested`、`TestCheckpointCommit_IntentIsConsumedOnce`、`TestCheckpointCommit_RequestedWithoutChangesMakesNoEmptyCommit`、`TestSanitizeIntent`、`TestCheckpointMessage_FormatCannotBeForged`、`TestEngineEndToEnd_ModelCheckpointReachesCommitMessage`（端到端：绑定 → 意图登记 → 消费 → 提交信息） |
 
 ### 12.12 `Pipeline`（流程组装，FR-1.8）
 
@@ -1092,14 +1156,15 @@ Bounty(session) ──► H6.Session
 | 接口 | 覆盖的 FR/NFR/AC |
 |---|---|
 | H1 Loop | FR-1.4、FR-1.7、FR-6、FR-9.2、FR-12.4/12.5、INV-3 |
-| H2 Context | FR-7 全部、FR-9.6、FR-14 全部、FR-15.2/15.5/15.6、FR-2.6、AC-17、AC-18、AC-23、AC-24、AC-25 |
+| H2 Context | FR-7 全部（含 7.8/7.9 组装扩展点）、FR-9.6、FR-14 全部、FR-15.2/15.5/15.6、FR-2.6、AC-17、AC-18、AC-23、AC-24、AC-25 |
 | H3 Tools | FR-2、FR-3、FR-4、FR-5、产品设计 §6 工具集规格、AC-1、AC-13、AC-15 |
 | H4 Policy | FR-8 全部、FR-9、FR-15.3/15.4（`.xhunter/skills/**` 禁写、`skills.draft/**` 放行）、AC-5、AC-16、INV-4 |
 | H5 Stream | FR-10、FR-11、FR-14.7、AC-9、INV-6 |
 | H6 Session | FR-12.1~12.3b、FR-12.6、FR-13.7、AC-7、INV-11 |
 | H7 Ext | FR-13 全部、FR-4.9~4.13、AC-11、AC-12、AC-14、INV-10 |
-| Provider | NFR-1、NFR-6、FR-9.5、INV-1、INV-2 |
+| Provider | NFR-1、NFR-6、FR-9.5、FR-16 全部、AC-27、AC-28、INV-1、INV-2 |
 | GitWorktree | FR-1.3、FR-6.1、FR-12.4、AC-1 |
+| PromptPlugin | FR-7.1/7.5/7.8/7.9、FR-2.6、FR-15.2/15.3、AC-23、AC-29 |
 | Pipeline | FR-1.8、FR-1.9、FR-11.6 |
 | 全部组件 | NFR-8（须可脱离模型独立测试） |
 
@@ -1115,3 +1180,4 @@ Bounty(session) ──► H6.Session
 | stdout 纯净性（IA-5.1） | 需要端到端运行断言（AC-9） |
 | 恢复正确性（AC-7） | 需要断言：恢复后工作区 == 最后检查点、**未重做已完成轮次**、恢复过程**零写操作执行**（M1.5 补） |
 | 门禁端到端（IA-12.5） | 控制流由编排驱动 + 非法编排启动期拒绝 |
+| 嵌套约定附注（IA-2.8） | 算出"路径链上最近且未注入过的那份约定"需要一份**约定清单（路径 + 正文）**，而当前插件契约只交正文（`PromptPart.Body`）。补法是给 system 段的结果带上它；等到 L5 结果组装落地、真有消费方时再加，眼下先不摆无人读的契约 |

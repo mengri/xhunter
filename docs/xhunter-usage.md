@@ -34,7 +34,7 @@
 
 | 条件 | 说明 |
 |---|---|
-| **Bounty 三要素** | `repo.remote`（可推送的远端）+ `repo.base_commit` + `repo.branch`（**分支名由驱动者指定，Xhunter 自己创建并推送**） |
+| **投递三要素** | 环境变量 `XHUNTER_REPO_URL`（可推送的远端）+ `XHUNTER_REPO_BASE_COMMIT` + `XHUNTER_REPO_BRANCH`（**分支名由驱动者指定，Xhunter 自己创建并推送**）；任务正文单独放在 `--bounty` 指向的文件里 |
 | **凭据写权限** | 任务分支由 Xhunter 创建并推送，**只读凭据跑不通** |
 | **门禁清单** | 来自 Bounty，或仓库 `.xhunter/gates.yml`（**从基线 commit 读**，FR-5.2g） |
 | **事件消费** | 读 stdout NDJSON |
@@ -42,17 +42,19 @@
 
 **驱动者无关性不放松任何不变量**：编排校验仍共用同一份 `Validate()`、门禁清单来源不变、模型仍无 git 能力、权限仍经策略层。**换驱动者只换"谁投递、谁消费"，不换"什么被允许"。**
 
-为便于本地驱动，Xhunter 提供 **Bounty 生成能力**（`xhunter run`）：给定本地仓库路径 + 任务描述，探测 `remote` / 基线 commit（取 HEAD）/ 任务分支名 / 门禁候选（`.xhunter/gates.yml` 存在性）/ 预算与策略默认值，生成 Bounty 文件（FR-1.10）。
+为便于本地驱动，Xhunter 规划了 **Bounty 生成能力**（`xhunter run`，FR-1.10）：给定本地仓库路径 + 任务描述，探测 `remote` / 基线 commit（取 HEAD）/ 任务分支名 / 门禁候选（`.xhunter/gates.yml` 存在性）/ 预算与策略默认值，生成 Bounty 文件。
+
+> **状态：尚未接线。** 当前 CLI 只实现了 `models` / `version` 子命令与 `--bounty` 入口（且后者为占位实现）。本地驱动者在此之前需自行生成 Bounty 文件——生成器只是便利工具，不进入交付路径（FR-1.10 边界③）。
 
 ---
 
 ## 2. 命令行入参
 
 ```
-xhunter --bounty <path>           # Bounty 文件：任务描述、git 仓库 + 基线 commit、预算、策略、session 信息
+xhunter --bounty <path>           # 任务正文文件（自然语言描述；部署事实走环境变量，见 §3）
         [--log-file <path>]       # 人类可读日志（默认 stderr）
 
-xhunter run --repo <path> --task <text>   # 本地驱动：探测仓库并生成 Bounty
+xhunter run --repo <path> --task <text>   # 本地驱动：探测仓库并生成 Bounty（尚未接线，见 §1.2）
 xhunter models update [--source <url>] [--dir <path>] [--output-reserve <n>]
 xhunter models status [--dir <path>]
 xhunter version
@@ -60,32 +62,35 @@ xhunter version
 
 `models` 子命令是**环境侧动作**：网络或磁盘问题一律以退出码 2 退出（可重试），与任务失败（1）区分。
 
-凭据通过环境变量注入（前缀 `XHUNTER_*`），不通过参数传递。
+凭据通过环境变量注入（前缀 `XHUNTER_*`），不通过参数传递；**仓库与模型接入等部署事实同样走环境变量**（§3）。
 
 ---
 
-## 3. Bounty 结构
+## 3. 投递形态：任务正文 + 环境变量
 
-```json
-{
-  "bounty_id": "...",
-  "task": "...",
-  "repo": {"remote": "...", "branch": "task/<bounty-id>", "base_commit": "..."},
-  "budget": {...},
-  "policy": {...},
-  "checkpoint": {"mode": "on_structure", "interval": null},
-  "pipeline": {"pre": ["..."], "turn": {"guards": ["..."], "steps": ["..."]}, "post": ["..."]},
-  "session": null
-}
-```
+**投递 = 一个任务正文文件 + 一组环境变量。** 分工的依据是"谁最了解什么"：任务正文每个任务都不同，放文件里便于阅读、diff 与存档；仓库地址、分支、基线、模型接入这些是"这次跑在哪儿"的部署事实，同一台机器上往往固定，走环境变量就不必每个任务重复写。
 
-字段约定：
+**任务正文**（`--bounty <path>`）：纯文本 / Markdown 文件，内容就是任务描述，可含验收标准。**不解析任何结构**——正文是自然语言，解析只会逼着写的人去迁就格式。
 
-- `repo.branch` **必填**：本任务要使用的分支名（如 `xhunter/<bounty-id>`）。**该分支由 Xhunter 创建并推送**（FR-1.3）：不存在则从 `base_commit` 创建后推送；已存在且 tip 等于 `base_commit` 则为幂等成功；tip 不同即环境错误（退出码 2）。
-- `repo.base_commit` **必填**：完整哈希，作为 patch 与提交的父提交基准。
-- `checkpoint`（可选）：检查点策略，缺省即 `on_structure`（FR-1.3c）。**由平台按任务类型给**——小任务可 `final_only` 省推送，跨多文件的长任务宜 `every_turn` 或 `every_write`。
-- `pipeline`（可选）：**流程编排**（FR-1.8）。缺省即默认编排，与不配置时行为一致；给出即**整体替换**默认编排（不做字段级合并），且必须通过启动期校验，否则以退出码 2 拒绝。字段形如 `{"pre": [...], "turn": {"guards": [...], "steps": [...]}, "post": [...]}`；环节名、默认编排与校验规则见 `xhunter-architecture.md` §4 与 §6。
-- `session` 为 `null` 表示新任务；非空（或字段存在）时包含上次执行的写操作序列与 turn 序号，触发 FR-12.1 续跑流程。**存储位置在平台侧**。
+**部署事实**（环境变量，前缀 `XHUNTER_`）：
+
+| 变量 | 必填 | 说明 |
+|---|---|---|
+| `XHUNTER_REPO_URL` | ✅ | 可推送的远端地址 |
+| `XHUNTER_REPO_BASE_COMMIT` | ✅ | 完整哈希，作为 patch 与提交的父提交基准 |
+| `XHUNTER_REPO_BRANCH` | — | 任务分支名（缺省 `xhunter/<session_id>`）。**该分支由 Xhunter 创建并推送**（FR-1.3）：不存在则从基线创建后推送；**已存在且 tip 为基线或其后代 → 幂等成功**（续跑时 tip 本来就在基线之后，这不是错误）；tip 与基线**分叉**（非后代）即环境错误（退出码 2） |
+| `XHUNTER_BOUNTY_ID` | — | **本次投递**的标识（缺省取基线前 12 位）。事件流信封与结果文件按它记账 |
+| `XHUNTER_SESSION_ID` | — | **会话**的标识（可选）。同一个会话下的多次投递**共享记忆与分支**；不传时本次投递自成一次新会话（会话标识即本任务的 id） |
+| `XHUNTER_PROVIDER` / `XHUNTER_MODEL` | ✅ | 本次使用哪个供应商与哪个模型 |
+| `XHUNTER_PROVIDER_CONFIG` | ✅ | Provider 配置文件路径（形态见 §4） |
+
+**两个标识的分工**：`bounty_id` 回答"这次谁在跑"（每次投递一个），`session_id` 回答"接的是哪份工作"（可跨多次投递）。**会话记忆的目录与分支名都以会话标识为准**——`.xhunter/<session_id>/`、`xhunter/<session_id>`。因此同一会话的第 N 次投递不必各自指定分支：它天然接在同一份工作与历史上（前几次的提交就在那条分支的分支 tip 上，前几次的对话就在那份记忆里）；反过来，不同会话之间不会互相看到对方的记忆。
+
+**会话记忆可以还没有**：会话标识指向一个尚无历史的会话（它的第一次投递）不是错误——此时工作区起点即分支 tip（首次就是基线），上下文没有可回灌的历史。**"不存在"与"损坏"要分开**：材料不存在 = 该会话暂无历史；材料存在但损坏或版本不兼容 = 环境错误（退出码 2）。
+
+**记账口径**：事件流信封与结果文件里的 `bounty_id` 是本次投递的标识，而分支与记忆路径用会话标识——同一会话的多次投递之间，两者不同，这是刻意的。
+
+**尚未定投递方式**：预算上限、检查点策略、流程编排（`pipeline`）属运行策略，它们的投递形态（环境变量还是配置文件）随策略层实现一起定；当前实现不读取它们。
 
 ---
 
@@ -120,6 +125,36 @@ xhunter version
 | `options.baseURL` + `npm` | 自建网关 / OpenAI 兼容端点 | 使供应商成为**部署期配置**而非编译期决策 |
 | `options.headers` | 自定义请求头 | 企业网关鉴权 |
 
+**协议取值**（`npm` 字段指的是**协议**，不是厂商——同一个协议可以由多家提供）：
+
+| 取值 | 协议 | 协议版本基线 | 端点与协议头 |
+|---|---|---|---|
+| `@ai-sdk/openai-compatible`（以及 `builtin` 或省略） | OpenAI 兼容对话补全：按角色平铺消息 + 分片流式 | 无版本头；形状基线 2026-09 | **必须**由 `baseURL` 给出；`Content-Type` / `Accept` 由实现补 |
+| `@ai-sdk/openai` | OpenAI Responses：类型化条目（消息 / 函数调用 / 结果各占一条）+ 语义事件流 | 无版本头；以 `response.completed` 收尾 | **必须**由 `baseURL` 给出（如 `https://api.openai.com/v1`） |
+| `@ai-sdk/anthropic` | Anthropic Messages：顶层系统提示 + 内容块（工具结果挂在用户消息下） | `anthropic-version: 2023-06-01`（默认发送，可用 `headers` 覆盖） | **必须**由 `baseURL` 给出（如 `https://api.anthropic.com/v1`） |
+
+**端点不预设**：三种协议的 `baseURL` 都必须由配置给出——实现里不带任何厂商地址（换一家官方供应商就是改一行配置）。
+
+**鉴权方式可配置**：请求头怎么写由配置决定，实现只负责原样发出去。
+
+```json
+{
+  "options": {
+    "baseURL": "https://api.anthropic.com/v1",
+    "headers": {"x-api-key": "{env:ANTHROPIC_API_KEY}"}
+  }
+}
+```
+
+| 写法 | 含义 |
+|---|---|
+| `headers.<name>` 的值 | 可以是字面量，也可以含 `{env:VAR}` 引用（**可带前缀**，如 `"Bearer {env:KEY}"`）；引用在启动期展开，变量未设置即显式失败 |
+| `options.apiKey` | 便捷形式：声明了它、且 `headers` 里没有 `Authorization` 时，补一个标准的 `Authorization: Bearer <值>`；想要别的形状就用 `headers` 显式写 |
+
+因此非标准鉴权（`x-api-key` 裸值、网关签名、租户头）不需要改代码。凭据值始终只在环境变量里，配置中只有引用（FR-1.2、FR-8.4）。
+
+注意：Anthropic Messages 的请求体**要求生成上限**，该值取 `limit.output`（即输出预留）——两者口径一致，都是"留给模型生成的空间"。
+
 **三层解析**（对齐 FR-9.5 的来源优先级）：
 
 | 优先级 | 来源 | 说明 |
@@ -152,20 +187,30 @@ xhunter version
 {"type":"hunt_start","bounty_id":"...","trace_id":"...","ts":"..."}
 {"type":"assumption","text":"..."}                    // 代替追问的假设外化
 {"type":"assistant_text","text":"..."}
-{"type":"tool_call","tool":"edit","args":{...}}
-{"type":"tool_result","tool":"edit","ok":true,"resolved_mode":"symbol","precision":"syntactic","summary":"...","duration_ms":12}
-{"type":"check_result","cmd":"...","exit_code":0,"summary":"..."}
+{"type":"tool_call","call_id":"...","tool":"edit","args":{...}}
+{"type":"tool_result","call_id":"...","tool":"edit","ok":true,"resolved_mode":"symbol","precision":"syntactic","degrade":null,"summary":"...","duration_ms":12}
+{"type":"check_result","gate":"unit-test","passed":true,"cached":false,"exit_code":0,"duration_ms":1234,"source":"repo","summary":"..."}
 {"type":"policy_denied","action":"...","reason":"..."}
+{"type":"gate_config_changed","source":"working_tree","gates":["..."]}   // 仅当 Bounty 授予 working_tree 时
+{"type":"config_snapshot","max_denied_streak":5,"max_fail_streak":3,"max_turns_hard":0}
 {"type":"usage","input_tokens":0,"output_tokens":0,"cost":0}
 {"type":"heartbeat","phase":"...","elapsed_ms":0}
 {"type":"context_compacted","level":"L2","released_tokens":0,"watermark":"warn"}
+{"type":"deliverable","files":["..."]}
+{"type":"degraded","scope":"prompt.skills","subject":"...","reason":"..."}   // 非致命降级：跳过/截断了什么
 {"type":"error","kind":"...","retryable":false,"context":"..."}
 {"type":"hunt_end","status":"succeeded|failed|cancelled","reason":"..."}
 ```
 
 > 第二条起为载荷示例，**省略公共字段**（信封四字段每行都有）。
+>
+> `call_id` 是调用与结果配对的唯一标识：一轮内可能出现同一原语的多次调用，外部消费者据此配对（IA-1.5）；`policy_denied` 与 `check_result` 同属 L5 后的时点，故这两类事件也应携带相应 `call_id` 以便回溯到具体调用。
+>
+> `config_snapshot` 与 `gate_config_changed` 的字段仅为当前实现已发出的形状；`effective_config` 的完整语义以结果文件（§6）与 FR-11.6 为准。
 
 **事件顺序**：`tool_result` / `policy_denied` / `check_result` 三类事件**在模型流结束后（运行段 L5 响应处理）发出**，不随流内 `tool_use` 即时产生——接收段零副作用（流内挂起无半写状态）。事件**类型与字段不变**，仅时序后移。`assistant_text` / `usage` / `permission_request` 应答仍为流内实时。
+
+**降级与错误的区别**：`degraded` 表示"照常跑下去了，但少了一部分"——例如某份技能说明格式非法被跳过、约定文件超限被截断。它是**非致命**的，任务继续；`error` 才表示当前动作失败。降级必须可见，因为"少了一部分"若不暴露，产出偏差要到评审时才看得出来。
 
 **约束**：stdout 只允许出现事件行；日志、进度、调试信息一律走 stderr。字段只能追加，不可修改或删除（INV-5）。
 
@@ -178,7 +223,7 @@ xhunter version
   "bounty_id": "...",
   "status": "succeeded",
   "base_commit": "...",
-  "branch": "xhunter/<bounty_id>",
+  "branch": "xhunter/<session_id>",
   "commit_sha": "...",
   "patch_path": "...",
   "files_changed": ["..."],
@@ -217,7 +262,10 @@ xhunter version
 | **基线不可获取 / 工作区脏** | **2** | 环境问题：平台修好即可重派 |
 | **恢复失败（材料损坏/版本不兼容、任务分支不可达、checkout 失败）** | **2** | resume 是优化，重跑是兜底 |
 | **扩展能力上限未配置（FR-9.5）** | **2** | 配置问题，修配置后重派 |
-| 校验未通过（check 失败） | 1 | patch 照常交付、状态为失败（FR-6.5） |
+| 校验未通过（check 判定不通过） | 1 | patch 照常交付、状态为失败（FR-6.5） |
+| **门禁执行失败**（命令不存在 / 无法创建进程 / 超时） | **2** | 不是质量结论，是环境问题（FR-5.2d）——与上一行的"判定不通过"必须分开 |
+| **检查点连续提交失败达上限（默认 3 次）** | **2** | 远端不可用，本轮结束即收敛，不跑完剩余轮次（FR-1.3b、FR-1.11②） |
+| **stdout 写失败（通道断裂）** | **2** | 消费者已不在通道上，写丢弃比继续跑更危险（FR-10.4、AC-19） |
 | SIGTERM / SIGINT | 3 | 平台主动取消 |
 
 判据一句话：**"换个环境或修好配置就能成功"的算 2，其余失败算 1。**

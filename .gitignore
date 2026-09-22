@@ -1,0 +1,8 @@
+# 构建产物与本地缓存
+/bin/
+/build/
+*.exe
+*.test
+build.log
+.gocache/
+/.workbuddy/
