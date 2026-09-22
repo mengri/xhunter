@@ -61,7 +61,7 @@ if err != nil {
     return err                // 缺模型即装配错误，不会跑到一半才炸
 }
 
-out, err := engine.Run(ctx, harness.Input{Meta: map[string]any{"bounty_id": bounty.ID}})
+out := engine.Run(ctx, harness.Input{Meta: map[string]any{"bounty_id": bounty.ID}})
 ```
 
 `harness` 只导出**值类型（`Run`/`Turn`/`Terminal`/`Outcome`）+ 三组 handler 契约 + 一个构造方法 `New`**——其余构造都是包内私有，循环自身不持有任何协作者。因此可以在**无模型、无网络、无仓库**的条件下测试控制流（`go test ./harness/`）。

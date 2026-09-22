@@ -990,7 +990,7 @@ Bounty(session) ──► H6.Session
 ### 12.0 通用约定
 
 - **错误分类决定退出码**（使用手册 §7）：普通失败 → `1`；环境或资源问题 → `2`（可重试，平台可重派）；取消 → `3`；成功 → `0`。实现侧约定：以 `EnvError(err)` 标记环境问题。
-- **终态总是显式**（INV-3）：`Engine.Run` 正常返回时 `Outcome` 一定有效；`error` 只用于无法形成终态的编程错误。任何协作方返回错误都必须被转换为终态，不允许静默挂起。
+- **终态总是显式**（INV-3）：`Engine.Run` **只返回 `Outcome`**——正常路径、panic、初始化失败都收敛到显式终态，因此不存在"有错误却没有终态"的情形。任何协作方返回错误都必须被转换为终态，不允许静默挂起。
 - **事件契约只追加**（INV-5）：外部事件类型与字段一旦发布不可修改；新增字段不算破坏性变更。
 - **判定主体是代码与测试**：接口即契约，测试即判定；所有用例不依赖模型（NFR-8）。
 - 验收项用 `IA-x`（Interface Acceptance）编号，映射到产品文档的 FR/NFR/AC（见 §13）。
@@ -998,7 +998,7 @@ Bounty(session) ──► H6.Session
 
 ### 12.1 H1 — `harness.Engine`
 
-**契约**：`New(provider llm.Provider, prepare []PrepareHandler, onTurn []OnTurnHandler, final []FinalHandler) (*Engine, error)` / `WithConfig(Config) *Engine` / `Run(ctx, Input) (Outcome, error)`。缺 provider 即构造错误；`Outcome` 一定有效（`error` 只留给"无法形成终态"的编程错误）。
+**契约**：`New(provider llm.Provider, prepare []PrepareHandler, onTurn []OnTurnHandler, final []FinalHandler) (*Engine, error)` / `WithConfig(Config) *Engine` / `Run(ctx, Input) Outcome`。缺 provider 即构造错误；`Outcome` 一定有效——循环没有第二个返回值。
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|

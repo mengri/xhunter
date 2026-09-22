@@ -169,14 +169,10 @@ func huntCmd(args []string) int {
 	ctx, stop := signalContext()
 	defer stop()
 
-	outcome, err := engine.Run(ctx, harness.Input{Meta: map[string]any{
+	outcome := engine.Run(ctx, harness.Input{Meta: map[string]any{
 		"bounty_id":  string(bounty.ID),
 		"session_id": SessionID(bounty),
 	}})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "执行失败：%v\n", err)
-		return exitEnv
-	}
 
 	// 交付记录在终态之后写：无论成败都要留档（FR-1.5），写不出来属环境问题。
 	if err := writeRunOutputs(*resultPath, *patchPath, bounty, outcome, session.Delivery()); err != nil {

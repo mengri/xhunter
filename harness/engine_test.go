@@ -81,10 +81,7 @@ func TestEngine_PrepareFailureStopsBeforeInference(t *testing.T) {
 		t.Fatalf("构造失败：%v", err)
 	}
 
-	out, err := eng.Run(context.Background(), Input{})
-	if err != nil {
-		t.Fatalf("Run 不该返回错误（终态走 Outcome）：%v", err)
-	}
+	out := eng.Run(context.Background(), Input{})
 	if out.Status != StatusFailed || out.ExitCode != ExitEnv {
 		t.Errorf("初始化失败应收敛为环境错误：%+v", out)
 	}
@@ -115,7 +112,7 @@ func TestEngine_NoToolCallSucceedsAndCollectsTurn(t *testing.T) {
 		nil,
 	)
 
-	out, _ := eng.Run(context.Background(), Input{})
+	out := eng.Run(context.Background(), Input{})
 	if out.Status != StatusSucceeded || out.ExitCode != ExitOK {
 		t.Fatalf("无工具调用应成功收敛：%+v", out)
 	}
@@ -148,7 +145,7 @@ func TestEngine_TurnLimitIsMechanicalCap(t *testing.T) {
 		[]OnTurnHandler{func(context.Context, *Run, *Turn) (bool, error) { return true, nil }}, nil)
 	eng.WithConfig(Config{MaxTurns: 3, MaxFailStreak: 2})
 
-	out, _ := eng.Run(context.Background(), Input{})
+	out := eng.Run(context.Background(), Input{})
 	if out.Status != StatusFailed || out.ExitCode != ExitFailed {
 		t.Fatalf("达轮数上限应失败：%+v", out)
 	}
@@ -173,7 +170,7 @@ func TestEngine_FailStreakStopsLoss(t *testing.T) {
 	}}, nil)
 	eng.WithConfig(Config{MaxTurns: 10, MaxFailStreak: 2})
 
-	out, _ := eng.Run(context.Background(), Input{})
+	out := eng.Run(context.Background(), Input{})
 	if out.Status != StatusFailed {
 		t.Fatalf("连续失败应止损：%+v", out)
 	}
@@ -193,7 +190,7 @@ func TestEngine_HandlerTerminalWinsOverStop(t *testing.T) {
 		return false, nil
 	}}, nil)
 
-	out, _ := eng.Run(context.Background(), Input{})
+	out := eng.Run(context.Background(), Input{})
 	if out.Status != StatusSucceeded || out.Reason != "业务自己收敛" {
 		t.Errorf("handler 的终态应被保留：%+v", out)
 	}
@@ -206,7 +203,7 @@ func TestEngine_OnTurnErrorIsFailed(t *testing.T) {
 		return false, errors.New("渲染器崩了")
 	}}, nil)
 
-	out, _ := eng.Run(context.Background(), Input{})
+	out := eng.Run(context.Background(), Input{})
 	if out.Status != StatusFailed || out.ExitCode != ExitFailed {
 		t.Fatalf("轮边界报错应失败：%+v", out)
 	}
@@ -222,7 +219,7 @@ func TestEngine_CancelledBeforeFirstTurn(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	out, _ := eng.Run(ctx, Input{})
+	out := eng.Run(ctx, Input{})
 	if out.Status != StatusCancelled || out.ExitCode != ExitCancelled {
 		t.Fatalf("取消应收敛为 cancelled：%+v", out)
 	}
@@ -236,7 +233,7 @@ func TestEngine_InferFailureIsEnvError(t *testing.T) {
 	p := &scriptedProvider{turns: []scriptedTurn{{err: errors.New("连接被重置")}}}
 	eng, _ := New(p, nil, nil, nil)
 
-	out, _ := eng.Run(context.Background(), Input{})
+	out := eng.Run(context.Background(), Input{})
 	if out.Status != StatusFailed || out.ExitCode != ExitEnv {
 		t.Fatalf("推理失败应判环境错误：%+v", out)
 	}
@@ -254,7 +251,7 @@ func TestEngine_StreamErrorIsEnvError(t *testing.T) {
 		return true, nil
 	}}, nil)
 
-	out, _ := eng.Run(context.Background(), Input{})
+	out := eng.Run(context.Background(), Input{})
 	if out.Status != StatusFailed || out.ExitCode != ExitEnv {
 		t.Fatalf("流错误应判环境错误：%+v", out)
 	}
@@ -275,10 +272,7 @@ func TestEngine_CancelDuringInferIsCancelled(t *testing.T) {
 	finals := 0
 	eng, _ := New(p, nil, nil, []FinalHandler{func(context.Context, *Run) error { finals++; return nil }})
 
-	out, err := eng.Run(ctx, Input{})
-	if err != nil {
-		t.Fatalf("终态应走 Outcome：%v", err)
-	}
+	out := eng.Run(ctx, Input{})
 	if out.Status != StatusCancelled || out.ExitCode != ExitCancelled {
 		t.Fatalf("推理途中取消应收敛为 cancelled/3：%+v", out)
 	}
@@ -306,10 +300,7 @@ func TestEngine_PanicBecomesEnvFailureAndFinalStillRuns(t *testing.T) {
 		panic("工具实现炸了")
 	}}, []FinalHandler{func(context.Context, *Run) error { finals++; return nil }})
 
-	out, err := eng.Run(context.Background(), Input{})
-	if err != nil {
-		t.Fatalf("panic 应被收敛而非上抛：%v", err)
-	}
+	out := eng.Run(context.Background(), Input{})
 	if out.Status != StatusFailed || out.ExitCode != ExitEnv {
 		t.Fatalf("panic 应收敛为环境错误：%+v", out)
 	}

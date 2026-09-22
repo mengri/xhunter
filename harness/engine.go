@@ -119,7 +119,7 @@ func (e *Engine) WithConfig(cfg Config) *Engine {
 //
 // 任何分支都收敛到显式终态。失败也照常进入 Final——这是结构保证的，不依赖每个
 // return 处小心处理。
-func (e *Engine) Run(ctx context.Context, in Input) (out Outcome, err error) {
+func (e *Engine) Run(ctx context.Context, in Input) (out Outcome) {
 	run := &Run{Meta: in.Meta}
 	started := time.Now()
 	turns := 0
@@ -137,9 +137,9 @@ func (e *Engine) Run(ctx context.Context, in Input) (out Outcome, err error) {
 		run.Usage.Elapsed = time.Since(started)
 		e.finalize(ctx, run)
 		// 终态在收尾之后再取：收尾可能用 SetTerminal 覆盖它（如"全程无产出 → 失败"）。
-		// 循环本身永不把终态放进 error——终态一律走 Outcome，error 只留给编程错误。
+		// 循环**只有**这一个返回值：每条路径都收敛到显式终态（panic 也收敛），
+		// 因此不存在"有错误没有终态"的情形，也就没有 error 可返回。
 		out = run.Outcome()
-		err = nil
 	}()
 
 	for _, h := range e.prepare {
@@ -246,7 +246,7 @@ func (e *Engine) Run(ctx context.Context, in Input) (out Outcome, err error) {
 		run.terminate(StatusFailed, "turn_limit_exceeded", ExitFailed)
 	}
 
-	return run.Outcome(), nil
+	return run.Outcome()
 }
 
 // finalize 跑收尾 handler。它自己再炸一次也不让进程崩掉——已经走到最后一步了，
