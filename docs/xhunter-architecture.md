@@ -1068,12 +1068,13 @@ Bounty(session) ──► H6.Session
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
 | IA-4.1 | 裁决输入是「原语 ＋ 参数（路径）」；影响面维度待接入（FR-8.7、AC-16） | 代码检查 |
-| IA-4.2 | 拒绝必须携带原因，且原因随结果回灌给模型 | **待补**（需 Session 级用例） |
-| IA-4.3 | 被拒操作**零落盘** | **待补** |
+| IA-4.2 | 拒绝必须携带原因，且原因随结果回灌给模型；同时上报 `policy_denied` | `TestExecuteCall_PolicyDenialIsReported`（hunt） |
+| IA-4.3 | 被拒操作**零落盘** | `TestExecuteCall_PolicyDenialIsReported`、`TestExecuteCall_MissingPolicyFailsClosed`（hunt） |
 | IA-4.4 | 权限询问禁止无条件放行（INV-4） | **待接入**（Provider 侧尚无该事件） |
 | IA-4.5 | 读与门禁放行、写按路径裁决、**未知原语默认拒绝** | `TestDecide_ReadAndGateAllowed`、`TestDecide_WriteAllowed`、`TestDecide_UnknownPrimitiveDenied` |
 | IA-4.6 | 路径边界：绝对路径 / `..` 逃逸 / `.xhunter/**` 拒绝，`skills.draft/**` 放行 | `TestDecide_PathEscapeDenied`、`TestDecide_WriteToControlDirDenied`、`TestDecide_WriteToSkillsDraftAllowed` |
 | IA-4.7 | 三重预算独立判定，耗尽给出维度名；0 = 不限 | `TestChargeAndExhausted_Tokens`、`TestExhausted_Turns`、`TestExhausted_WallClock`、`TestExhausted_ZeroMeansUnlimited` |
+| IA-4.7b | **预算真的从投递走到止损**：环境变量 → Bounty → 策略 → 轮末守卫 → `budget_exhausted:<维度>`（FR-9、AC-5）；写错的取值在启动期失败 | `TestBountyFromEnv_DeliversBudget`、`TestEndToEnd_BudgetExhaustionStopsTheRun`（cmd） |
 | IA-4.8 | 连续拒绝达阈值 → 终止（防止模型反复撞墙） | **待接入**（`DeniedCount`） |
 | IA-4.9 | 止损三态：continue / switch / terminate，阈值与上限分离 | **待接入**（FR-9.4） |
 | IA-4.10 | 用量按**增量**转交：累计值不得被反复当作增量上报（执行体自记水位） | **待补**（`Session.charge` 的增量语义） |

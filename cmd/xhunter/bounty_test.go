@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"xhunter/hunt"
 )
@@ -56,6 +57,53 @@ func TestBountyFromEnv_RequiresRepoFacts(t *testing.T) {
 			}
 		})
 	}
+}
+
+// 三重预算必须真的投递出去：没有它，策略的 Exhausted 永远为假，"预算耗尽立即终止"
+// （FR-9、AC-5）就只是文档里的一句话。
+func TestBountyFromEnv_DeliversBudget(t *testing.T) {
+	base := map[string]string{
+		envRepoURL: "git@example.com:x/y.git", envRepoBase: "0123456789abcdef",
+	}
+	t.Run("未设置即不限", func(t *testing.T) {
+		b, err := bountyFromEnv("任务", fakeEnv(base))
+		if err != nil {
+			t.Fatalf("解析失败：%v", err)
+		}
+		if b.Budget != (hunt.Budget{}) {
+			t.Errorf("未设置预算应保持零值（= 不限）：%+v", b.Budget)
+		}
+	})
+	t.Run("三个维度都投递", func(t *testing.T) {
+		env := map[string]string{envMaxTurns: "7", envMaxTokens: "123456", envMaxWallClock: "90m"}
+		for k, v := range base {
+			env[k] = v
+		}
+		b, err := bountyFromEnv("任务", fakeEnv(env))
+		if err != nil {
+			t.Fatalf("解析失败：%v", err)
+		}
+		if b.Budget.MaxTurns != 7 || b.Budget.MaxTokens != 123456 || b.Budget.MaxWallClock != 90*time.Minute {
+			t.Errorf("预算未正确投递：%+v", b.Budget)
+		}
+	})
+	t.Run("写错即启动期失败", func(t *testing.T) {
+		for name, bad := range map[string]string{
+			envMaxTurns:     "0",
+			envMaxTokens:    "-1",
+			envMaxWallClock: "半小时",
+		} {
+			env := map[string]string{name: bad}
+			for k, v := range base {
+				env[k] = v
+			}
+			if _, err := bountyFromEnv("任务", fakeEnv(env)); err == nil {
+				t.Errorf("%s=%q 必须报错，不能静默当成不限", name, bad)
+			} else if !strings.Contains(err.Error(), name) {
+				t.Errorf("错误信息应指明是哪个变量：%v", err)
+			}
+		}
+	})
 }
 
 func TestBountyFromEnv_DerivesBranchAndID(t *testing.T) {

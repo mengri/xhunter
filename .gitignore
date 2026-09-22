@@ -6,3 +6,6 @@
 build.log
 .gocache/
 /.workbuddy/
+
+# 直接 go build ./cmd/... 会在仓库根落下同名二进制
+/xhunter

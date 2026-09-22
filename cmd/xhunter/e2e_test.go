@@ -291,6 +291,49 @@ func TestEndToEnd_ResultFileWrittenOnFailure(t *testing.T) {
 	}
 }
 
+// 预算耗尽必须立即终止并上报耗尽维度（FR-9、AC-5）：环境变量 → Bounty → 策略 →
+// 轮末守卫 → 终态，整条链一起验。上游每轮都要求工具调用（模型"不打算停"），
+// 因此唯一的收敛点就是预算。
+func TestEndToEnd_BudgetExhaustionStopsTheRun(t *testing.T) {
+	requireGitForE2E(t)
+	fx := newRepoFixture(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", filepath.Join(tmp, "work"))
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		atomic.AddInt32(&calls, 1)
+		// 每轮都读 README.md：调用总能成功，因此不会触发失败止损，
+		// 只有轮数预算能把它停下来。
+		io.WriteString(w, sseWithToolCall("c", "read", `{"path":"README.md"}`))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	taskPath, cfgPath := writeRunInputs(t, tmp, "随便看看", srv.URL+"/v1")
+	setRunEnv(t, taskPath, cfgPath, fx)
+	t.Setenv(envMaxTurns, "2")
+
+	stdout, stderr := swapStdStreams(t)
+	code := run([]string{"--bounty", taskPath})
+	stdoutText, stderrText := drainStdStreams(t, stdout, stderr)
+
+	if code != exitFailed {
+		t.Fatalf("预算耗尽应退出 1，实际 %d\nstdout:\n%s\nstderr:\n%s", code, stdoutText, stderrText)
+	}
+	if !strings.Contains(stdoutText, `"status":"failed"`) || !strings.Contains(stdoutText, "budget_exhausted:turns") {
+		t.Errorf("终态应上报耗尽维度：\n%s", stdoutText)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Errorf("轮数预算为 2，上游应恰好被调用 2 次，实际 %d", got)
+	}
+}
+
 // ============================================================ 夹具
 
 type repoFixture struct {

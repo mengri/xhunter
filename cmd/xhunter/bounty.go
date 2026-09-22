@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"xhunter/git"
 	"xhunter/hunt"
@@ -19,6 +21,12 @@ const (
 	envProvider     = "XHUNTER_PROVIDER"
 	envModel        = "XHUNTER_MODEL"
 	envProviderFile = "XHUNTER_PROVIDER_CONFIG"
+
+	// 预算上限：运行策略，与任务正文分开投递（同一台机器上往往固定）。
+	// 未设置或 0 表示该维度不限（hunt.Budget 的口径）。
+	envMaxTurns     = "XHUNTER_MAX_TURNS"
+	envMaxTokens    = "XHUNTER_MAX_TOKENS"
+	envMaxWallClock = "XHUNTER_MAX_WALL_CLOCK"
 )
 
 // lookupEnv 让组装过程可在测试里替换环境来源。
@@ -64,7 +72,44 @@ func bountyFromEnv(task string, lookup lookupEnv) (hunt.Bounty, error) {
 	}
 
 	bounty.Repo = git.RepoRef{Remote: remote, Branch: branch, BaseCommit: base}
+
+	// 预算是策略层的输入：没有它，Policy.Exhausted 永远为假，任务只能靠引擎的
+	// 轮数硬顶兜底——而"预算耗尽立即终止并上报耗尽维度"是产品需求（FR-9、AC-5）。
+	budget, err := parseBudget(lookup)
+	if err != nil {
+		return hunt.Bounty{}, err
+	}
+	bounty.Budget = budget
 	return bounty, nil
+}
+
+// parseBudget 从环境读三重预算上限。值必须是正数；写错即启动期失败（退出 2），
+// 不静默当成"不限"——一个拼错的变量名会让预算悄悄失效。
+func parseBudget(lookup lookupEnv) (hunt.Budget, error) {
+	var b hunt.Budget
+
+	if v := readEnv(lookup, envMaxTurns); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return hunt.Budget{}, fmt.Errorf("%s 必须是正整数（当前 %q）", envMaxTurns, v)
+		}
+		b.MaxTurns = n
+	}
+	if v := readEnv(lookup, envMaxTokens); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return hunt.Budget{}, fmt.Errorf("%s 必须是正整数（当前 %q）", envMaxTokens, v)
+		}
+		b.MaxTokens = n
+	}
+	if v := readEnv(lookup, envMaxWallClock); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			return hunt.Budget{}, fmt.Errorf("%s 必须是正的时间长度（如 90m、2h；当前 %q）", envMaxWallClock, v)
+		}
+		b.MaxWallClock = d
+	}
+	return b, nil
 }
 
 // SessionID 返回这次执行所属的会话标识。
