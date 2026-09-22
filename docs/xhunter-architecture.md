@@ -1157,7 +1157,7 @@ Bounty(session) ──► H6.Session
 | IA-9.3 | 生效校验在合并之后：上限缺失即报错，目录补齐后通过 | `TestValidateResolved_RejectsMissingLimits` |
 | IA-9.4 | 未知字段被拒——拼错的字段名不得静默忽略 | `TestParse_RejectsUnknownField` |
 | IA-9.5 | OpenAI 兼容适配器必须提供 `baseURL` | `TestParse_RequiresBaseURLForOpenAICompatible` |
-| IA-9.6 | 用户配置覆盖目录、目录兜底，字段级合并 | `TestResolve_UserConfigWinsOverCatalog`、`TestMerge_FieldLevelOverride` |
+| IA-9.6 | 用户配置覆盖目录、目录兜底，**字段级合并**（覆盖片段只给连接参数也可解析；`Resolve` 与 `Merge` 同一套合并逻辑） | `TestResolve_UserConfigWinsOverCatalog`、`TestResolve_OverlayFragmentInheritsCatalogLimits`、`TestResolve_MergesFieldByField`、`TestMerge_FieldLevelOverride` |
 | IA-9.7 | 未命中目录**不采用保守默认**，返回 `ErrNotConfigured` | `TestResolve_NotConfiguredIsExplicit` |
 | IA-9.8 | 可用输入预算 = `context − 固定开销 − output`；非正即显式失败 | `TestInputBudget` |
 | IA-9.9 | 水位线以**可用输入预算**为基数，四舍五入 | `TestWatermarks` |

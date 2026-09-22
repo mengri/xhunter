@@ -161,6 +161,54 @@ func TestResolve_UserConfigWinsOverCatalog(t *testing.T) {
 	}
 }
 
+// 覆盖片段：用户只给连接参数（连模型条目都可能只占个名字），上限由目录补齐——
+// 这是 §4 三层解析明确承诺的用法。旧实现"用户有该 provider 就不再合并"会让它失败。
+func TestResolve_OverlayFragmentInheritsCatalogLimits(t *testing.T) {
+	catalog := mustParse(t, `{"provider":{"gw":{"models":{"m":{"limit":{"context":200000,"output":8192}}}}}}`)
+	user := mustParse(t, `{"provider":{"gw":{"options":{"baseURL":"https://gw.example/v1","apiKey":"{env:GW_KEY}"},"models":{"m":{}}}}}`)
+
+	r, err := user.Resolve(catalog, "gw", "m")
+	if err != nil {
+		t.Fatalf("只给连接参数的覆盖片段应可解析（上限来自目录）：%v", err)
+	}
+	if r.MaxContextTokens != 200000 || r.OutputReserve != 8192 {
+		t.Errorf("上限未从目录补齐：context=%d output=%d", r.MaxContextTokens, r.OutputReserve)
+	}
+	if r.BaseURL != "https://gw.example/v1" || r.APIKeyEnv != "GW_KEY" {
+		t.Errorf("连接参数应取用户覆盖：%+v", r)
+	}
+}
+
+// 字段级合并：用户只覆盖一部分字段时，其余字段沿用目录；用户覆盖输出预留后，
+// "策略默认值"标记必须随事实上走（否则审计会以为那是目录给的默认值）。
+func TestResolve_MergesFieldByField(t *testing.T) {
+	catalog := mustParse(t, `{"provider":{"gw":{"models":{"m":{"cost":{"input_nano_usd_per_token":100},"limit":{"context":200000,"output":8192,"output_policy_default":true}}}}}}`)
+	user := mustParse(t, `{"provider":{"gw":{"models":{"m":{"limit":{"output":4096}}}}}}`)
+
+	r, err := user.Resolve(catalog, "gw", "m")
+	if err != nil {
+		t.Fatalf("解析失败：%v", err)
+	}
+	if r.MaxContextTokens != 200000 {
+		t.Errorf("context 应保留目录值：%d", r.MaxContextTokens)
+	}
+	if r.OutputReserve != 4096 {
+		t.Errorf("output 应取用户覆盖：%d", r.OutputReserve)
+	}
+
+	prov, ok := user.mergedProvider(catalog, "gw")
+	if !ok {
+		t.Fatal("合并后应命中 gw")
+	}
+	m := prov.Models["m"]
+	if m.Limit.OutputIsPolicyDefault {
+		t.Error("用户显式给出的输出预留不该带着目录的『策略默认值』标记")
+	}
+	if m.Cost == nil || m.Cost.InputNanoUSDPerToken != 100 {
+		t.Errorf("目录里的价格应被保留：%+v", m.Cost)
+	}
+}
+
 // FR-9.5：未命中时不采用保守默认，显式失败。
 func TestResolve_NotConfiguredIsExplicit(t *testing.T) {
 	user := mustParse(t, `{"provider":{"p":{"models":{"m":{"limit":{"context":1000,"output":100}}}}}}`)
