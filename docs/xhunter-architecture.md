@@ -1181,6 +1181,7 @@ Bounty(session) ──► H6.Session
 | IA-10.12 | 快照缺省时给出可操作提示（`ErrNoSnapshot`：请执行 `xhunter models update`） | `TestUpdate_FetchesConvertsAndSaves` |
 | IA-10.13 | 元数据完整：来源地址、抓取时间、字节数、sha256、转换统计 | 同上 |
 | IA-10.14 | 目录与用户覆盖片段合并后可直接解析出模型事实（来源①+②） | `TestSnapshot_MergesWithUserConfig` |
+| IA-10.15 | **默认目录口径一致**：`Load` / `Save` 的空目录参数解析为 `~/.xhunter`（与 `Update` 一致），运行期不得去读工作目录下的同名文件；显式目录按原样使用 | `TestLoadAndSave_EmptyDirMeansDefaultDirNotWorkingDir`、`TestLoad_ExplicitDirIsUsedAsGiven` |
 
 ### 12.11 `GitWorktree`
 

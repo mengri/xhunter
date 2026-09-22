@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"xhunter/providerconfig"
@@ -43,11 +44,28 @@ func DefaultDir() (string, error) {
 	return filepath.Join(home, ".xhunter"), nil
 }
 
-// SnapshotPath 返回快照文件的完整路径。
+// resolveDir 把空目录解析成默认目录。
+//
+// 空值不能理解成"当前目录"：安装期（`models update`）写入的是 ~/.xhunter/models.json，
+// 而运行期读的是同一个默认目录。若空值落到 filepath.Join("", name)，运行期读的会是
+// ./models.json——既让已安装的目录快照永不生效，也会让工作目录里一个同名文件决定启动成败。
+func resolveDir(dir string) (string, error) {
+	if strings.TrimSpace(dir) != "" {
+		return dir, nil
+	}
+	return DefaultDir()
+}
+
+// SnapshotPath 返回快照文件的完整路径。dir 须是已解析的目录（见 resolveDir）。
 func SnapshotPath(dir string) string { return filepath.Join(dir, SnapshotName) }
 
 // Load 读取本地快照并做生效校验（上限必须齐备，对齐 FR-9.5）。
+// dir 为空表示默认目录（~/.xhunter），与 Update / Save 口径一致。
 func Load(dir string) (Snapshot, error) {
+	dir, err := resolveDir(dir)
+	if err != nil {
+		return Snapshot{}, err
+	}
 	path := SnapshotPath(dir)
 	f, err := os.Open(path)
 	if err != nil {
@@ -71,7 +89,12 @@ func Load(dir string) (Snapshot, error) {
 }
 
 // Save 原子写入快照：先写临时文件再改名，避免下载/写入中途崩溃留下半个文件。
+// dir 为空表示默认目录（~/.xhunter）。
 func Save(dir string, s Snapshot) error {
+	dir, err := resolveDir(dir)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("创建目录失败（%s）：%w", dir, err)
 	}
