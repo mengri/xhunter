@@ -199,3 +199,40 @@ func TestResultFile_SummaryIsWritten(t *testing.T) {
 		}
 	})
 }
+
+// usage.reported 是"上游是否回报过用量"的事实：不可得时各项为 0（**不代表真的没用**），
+// reported 为 false；有回报时数字照写、reported 为 true。
+func TestResultFile_UsageReportedFalseWhenUpstreamSilent(t *testing.T) {
+	bounty := hunt.Bounty{ID: "b1", Repo: git.RepoRef{Branch: "xhunter/x", BaseCommit: "abc"}}
+	out := harness.Outcome{Status: harness.StatusSucceeded, Reason: "no_tool_call", ExitCode: harness.ExitOK}
+
+	t.Run("上游沉默", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "r.json")
+		// 上游沉默：Delivery.Usage 的 Reported 为 false（判据在 Session.charge）。
+		if err := writeRunOutputs(path, "", bounty, out, hunt.Delivery{}, hunt.Declared{}, hunt.EffectiveConfig{}); err != nil {
+			t.Fatalf("写结果文件失败：%v", err)
+		}
+		got := readResultFile(t, path)
+		if got.Usage.Reported {
+			t.Errorf("上游沉默时 usage.reported 必须为 false：%+v", got.Usage)
+		}
+		if got.Usage.InputTokens != 0 || got.Usage.OutputTokens != 0 || got.Usage.Turns != 0 {
+			t.Errorf("不可得时各项为 0：%+v", got.Usage)
+		}
+	})
+
+	t.Run("有回报", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "r.json")
+		d := hunt.Delivery{Usage: hunt.UsageReport{
+			Reported: true, InputTokens: 42, OutputTokens: 7, CachedInputTokens: 3, Turns: 2, ElapsedMS: 900,
+		}}
+		if err := writeRunOutputs(path, "", bounty, out, d, hunt.Declared{}, hunt.EffectiveConfig{}); err != nil {
+			t.Fatalf("写结果文件失败：%v", err)
+		}
+		got := readResultFile(t, path)
+		if !got.Usage.Reported || got.Usage.InputTokens != 42 || got.Usage.OutputTokens != 7 ||
+			got.Usage.CachedInputTokens != 3 || got.Usage.Turns != 2 || got.Usage.ElapsedMS != 900 {
+			t.Errorf("有回报时用量应照写：%+v", got.Usage)
+		}
+	})
+}

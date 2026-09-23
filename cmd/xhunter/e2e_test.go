@@ -153,6 +153,9 @@ func TestEndToEnd_LocalRunProducesDeliveryCommit(t *testing.T) {
 		t.Errorf("cached_input_tokens = %d，期望 24（两轮 8+16）：缓存读要一路带到结果文件",
 			res.Usage.CachedInputTokens)
 	}
+	if !res.Usage.Reported {
+		t.Error("上游回报过用量，usage.reported 应为 true")
+	}
 	if res.PatchPath != patchPath {
 		t.Errorf("patch_path = %q，期望 %q", res.PatchPath, patchPath)
 	}
@@ -279,7 +282,7 @@ func TestEndToEnd_ResultFileWrittenOnFailure(t *testing.T) {
 	resultPath := filepath.Join(tmp, "result.json")
 	stdout, stderr := swapStdStreams(t)
 	code := run([]string{"--bounty", taskPath, "--result", resultPath})
-	_, stderrText := drainStdStreams(t, stdout, stderr)
+	stdoutText, stderrText := drainStdStreams(t, stdout, stderr)
 
 	if code != exitEnv {
 		t.Fatalf("远端不可达应退出 2，实际 %d\n%s", code, stderrText)
@@ -306,6 +309,19 @@ func TestEndToEnd_ResultFileWrittenOnFailure(t *testing.T) {
 	}
 	if res.Branch != "xhunter/fail" || res.BaseCommit == "" {
 		t.Errorf("结果文件缺少任务事实：%+v", res)
+	}
+
+	// 终态事件带累计用量（与结果文件同源）；失败另发一条结构化 error，与结果文件 error 同源。
+	end := eventPayload(t, stdoutText, "hunt_end")
+	usage, _ := end["usage"].(map[string]any)
+	if usage == nil {
+		t.Errorf("hunt_end 必须带累计用量：%v", end)
+	} else if usage["reported"] != false {
+		t.Errorf("上游不可达时 usage.reported 应为 false：%v", usage)
+	}
+	errEv := eventPayload(t, stdoutText, "error")
+	if errEv["kind"] != res.Error.Kind || errEv["retryable"] != res.Error.Retryable {
+		t.Errorf("error 事件必须与结果文件同源：event=%v file=%+v", errEv, res.Error)
 	}
 }
 
@@ -349,6 +365,15 @@ func TestEndToEnd_BudgetExhaustionStopsTheRun(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&calls); got != 2 {
 		t.Errorf("轮数预算为 2，上游应恰好被调用 2 次，实际 %d", got)
+	}
+
+	// 终态带累计用量；预算耗尽是被引擎中止 → error.retryable 为 false。
+	if _, ok := eventPayload(t, stdoutText, "hunt_end")["usage"].(map[string]any); !ok {
+		t.Errorf("hunt_end 必须带累计用量：\n%s", stdoutText)
+	}
+	errEv := eventPayload(t, stdoutText, "error")
+	if errEv["kind"] != "budget_exhausted" || errEv["retryable"] != false {
+		t.Errorf("预算耗尽应报 budget_exhausted 且不可重试：%v", errEv)
 	}
 }
 
@@ -507,6 +532,22 @@ func assertDirEmpty(t *testing.T, dir string) {
 		}
 		t.Errorf("收尾没有清理干净，残留：%v", names)
 	}
+}
+
+// eventPayload 返回 stdout 事件流里某类型事件的载荷（行已摊平，直接是 map）。缺该类型即失败。
+func eventPayload(t *testing.T, stdoutText, typ string) map[string]any {
+	t.Helper()
+	for _, line := range nonEmptyLines(stdoutText) {
+		var ev map[string]any
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			t.Fatalf("stdout 出现非事件行：%q", line)
+		}
+		if ev["type"] == typ {
+			return ev
+		}
+	}
+	t.Fatalf("事件流缺少 %s：\n%s", typ, stdoutText)
+	return nil
 }
 
 // ============================================================ 假上游的 SSE 形状

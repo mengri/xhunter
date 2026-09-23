@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"xhunter/harness"
 	"xhunter/hunt"
@@ -38,23 +37,15 @@ type resultFile struct {
 	// Needs / Assumptions 是模型在正文固定小节里的自陈（FR-6.3）。用指针不加 omitempty
 	// 是三态要求：「没提供」要写成 null，而不是缺字段、更不是 []——空数组会被读成
 	// "没有需要补全的条件"，那是另一句话（使用手册 §6）。
-	Needs       *[]string  `json:"needs"`
-	Assumptions *[]string  `json:"assumptions"`
-	Usage       usageFile  `json:"usage"`
-	Error       *errorFile `json:"error,omitempty"`
+	Needs       *[]string        `json:"needs"`
+	Assumptions *[]string        `json:"assumptions"`
+	Usage       hunt.UsageReport `json:"usage"`
+	Error       *errorFile       `json:"error,omitempty"`
 
 	// EffectiveConfig 是本次 Hunt 的生效配置快照（FR-11.6）：只读事实，回答"这次用的是
 	// 哪套规则"，服务远程诊断与 MR 评审。Prepare 未成功时没有快照，指针为 nil、字段
 	// 省略——不摆空壳（空快照会被读成"没有原语、没有插件"）。
 	EffectiveConfig *hunt.EffectiveConfig `json:"effective_config,omitempty"`
-}
-
-type usageFile struct {
-	InputTokens       int   `json:"input_tokens"`
-	OutputTokens      int   `json:"output_tokens"`
-	CachedInputTokens int   `json:"cached_input_tokens"`
-	Turns             int   `json:"turns"`
-	ElapsedMS         int64 `json:"elapsed_ms"`
 }
 
 // errorFile 只描述"任务为什么没成"：kind 供程序分支，message 给人看，
@@ -68,8 +59,9 @@ type errorFile struct {
 // writeRunOutputs 写出补丁与结果文件。任一写失败都返回错误——交不出交付记录
 // 属环境问题（退出码 2），不得静默继续（对齐 FR-10.4 的"通道断裂即终止"精神）。
 //
-// effective 是本次 Hunt 的生效配置快照（由装配层从 Session 取）：Prepare 成功才有内容，
-// 否则是零值、字段省略；summary 同理来自交付事实（`Delivery.Summary`）。
+// usage 与 summary 都取自 `Delivery`（收尾定型的交付事实），与终态事件读**同一份**：
+// 结果文件与 `hunt_end` 因此不可能对同一件事给出两个数。effective 是生效配置快照
+// （Prepare 成功才有内容，否则零值、字段省略）。
 func writeRunOutputs(resultPath, patchPath string, bounty hunt.Bounty, out harness.Outcome, d hunt.Delivery, declared hunt.Declared, effective hunt.EffectiveConfig) error {
 	if patchPath != "" {
 		if err := writeFile(patchPath, []byte(d.Patch)); err != nil {
@@ -92,13 +84,7 @@ func writeRunOutputs(resultPath, patchPath string, bounty hunt.Bounty, out harne
 		Summary:      d.Summary,
 		Needs:        optionalList(declared.Needs),
 		Assumptions:  optionalList(declared.Assumptions),
-		Usage: usageFile{
-			InputTokens:       out.Usage.InputTokens,
-			OutputTokens:      out.Usage.OutputTokens,
-			CachedInputTokens: out.Usage.CachedInputTokens,
-			Turns:             out.Usage.Turns,
-			ElapsedMS:         out.Usage.Elapsed.Milliseconds(),
-		},
+		Usage:        d.Usage,
 	}
 	if r.FilesChanged == nil {
 		r.FilesChanged = []string{}
@@ -115,9 +101,9 @@ func writeRunOutputs(resultPath, patchPath string, bounty hunt.Bounty, out harne
 	}
 	if out.Status == harness.StatusFailed {
 		r.Error = &errorFile{
-			Kind:      errorKind(out.Reason),
+			Kind:      hunt.ErrorKind(out.Reason),
 			Message:   out.Reason,
-			Retryable: out.ExitCode == harness.ExitEnv,
+			Retryable: hunt.RetryableForExitCode(out.ExitCode),
 		}
 	}
 
@@ -141,18 +127,6 @@ func optionalList(items []string) *[]string {
 		return nil
 	}
 	return &items
-}
-
-// errorKind 取原因的第一个冒号之前那段（`prepare_failed: …` → `prepare_failed`），
-// 它稳定、可供程序分支；完整原因留在 message 里。
-func errorKind(reason string) string {
-	if i := strings.IndexByte(reason, ':'); i > 0 {
-		return strings.TrimSpace(reason[:i])
-	}
-	if reason == "" {
-		return "unknown"
-	}
-	return reason
 }
 
 // writeFile 写出文件；父目录不存在时创建（平台给的路径可能指向尚未建好的目录）。

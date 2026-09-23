@@ -392,9 +392,12 @@ func (s *Session) charge(total llm.Usage) {
 	}
 
 	// 三个字段全零 = 本轮上游没有回报用量。**不发**：一条全零的 usage 会被读成"这轮不花钱"，
-	// 那是假数字——用量不可得时不得估算、更不得报 0 装作有数。（用量不可得的**如实标注**在
-	// 别处做：`degraded` ＋ 结果文件 `usage.reported`。）
+	// 那是假数字——用量不可得时不得估算、更不得报 0 装作有数。
+	//
+	// 同一判据（有任一非零增量）也决定收尾的 usage.reported：这里一旦见到非零就置真，收尾
+	// 据此决定 reported 与是否发 degraded——**判据只有这一处**，不在收尾另算。
 	if in != 0 || out != 0 || cached != 0 {
+		s.usageReported = true
 		s.emitUsage(in, out, cached)
 	}
 
@@ -419,6 +422,17 @@ func (s *Session) emitUsage(in, out, cached int) {
 
 // Finalize 循环后一次（无论成败）：无产出判失败、交付提交、差异、材料落盘、清理、终态上报。
 func (s *Session) Finalize(ctx context.Context, run *harness.Run) error {
+	// 用量口径冻结一次：终态 hunt_end 事件与结果文件读的是**同一份**（各算一遍迟早会漂）。
+	// Reported 的判据来自 charge（上游回报过用量），这里只搬运、不重算。
+	s.usage = UsageReport{
+		Reported:          s.usageReported,
+		InputTokens:       run.Usage.InputTokens,
+		OutputTokens:      run.Usage.OutputTokens,
+		CachedInputTokens: run.Usage.CachedInputTokens,
+		Turns:             run.Usage.Turns,
+		ElapsedMS:         run.Usage.Elapsed.Milliseconds(),
+	}
+
 	// 模型自陈优先于「无工具调用」的默认推断，但让位于机制性终止。
 	//
 	// 方向是单向的：引擎给的 succeeded 只是「没人声明时的默认值」，不是结论，所以可以被
@@ -473,11 +487,25 @@ func (s *Session) Finalize(ctx context.Context, run *harness.Run) error {
 		s.logf("warn", "工作区清理失败", "err", err.Error())
 	}
 
-	// 终态上报：保证「一定有结论发出」，否则调用方会一直等下去。
+	out := run.Outcome()
+
+	// 用量不可得时如实标注：收尾只跑一次，因此**最多一条**。排在终态之前——平台读到终态前
+	// 就该知道"各项为 0 不代表真的没用"。
+	if !s.usage.Reported {
+		s.emitUsageUnavailable()
+	}
+
+	// 失败才是错误：`error` 供程序按 kind 分流、按 retryable 决定是否重派。取消不算错误；
+	// `blocked` 是模型的正常判断，它"缺什么"已由 needs_input 逐条报出——这两类都不发。
+	if out.Status == harness.StatusFailed {
+		s.emitError(out, run)
+	}
+
+	// 终态上报：保证「一定有结论发出」，否则调用方会一直等下去。**必须是最后一条**——
+	// 它带累计用量（与结果文件同一份），平台读到它即可记账。
 	if s.cfg.Sink != nil {
-		out := run.Outcome()
 		_ = s.cfg.Sink.Emit(ExternalEvent{Type: "hunt_end", Payload: map[string]any{
-			"status": string(out.Status), "reason": out.Reason,
+			"status": string(out.Status), "reason": out.Reason, "usage": s.usage,
 		}})
 	}
 	return nil
@@ -486,6 +514,40 @@ func (s *Session) Finalize(ctx context.Context, run *harness.Run) error {
 // reasonNeedsInput 是「缺条件停下」的固定原因，也是对应的事件名（使用手册 §5/§7 的
 // 契约取值）——两处共用一个常量，避免改一处忘一处。
 const reasonNeedsInput = "needs_input"
+
+// emitUsageUnavailable 发一条 degraded：上游未回报用量。它是**非致命**的——任务照常收敛，
+// 只是"花了多少"不可得。形状与使用手册 §5 的三字段一致（scope / subject / reason）。
+func (s *Session) emitUsageUnavailable() {
+	if s.cfg.Sink == nil {
+		return
+	}
+	_ = s.cfg.Sink.Emit(ExternalEvent{Type: "degraded", Payload: map[string]any{
+		"scope":   "usage",
+		"subject": "upstream",
+		"reason":  "上游未回报用量：各项为 0 不代表真的没用，本次实际用量不可得",
+	}})
+}
+
+// emitError 发一条结构化错误：`kind` 供程序分支，`retryable` 与退出码同源，`context` 给人
+// 定位（阶段由 kind 表达，这里给轮次位置）。只在终态失败时发。
+func (s *Session) emitError(out harness.Outcome, run *harness.Run) {
+	if s.cfg.Sink == nil {
+		return
+	}
+	_ = s.cfg.Sink.Emit(ExternalEvent{Type: "error", Payload: map[string]any{
+		"kind":      ErrorKind(out.Reason),
+		"retryable": RetryableForExitCode(out.ExitCode),
+		"context":   failureContext(run),
+	}})
+}
+
+// failureContext 给失败一个给人看的定位线索：未进入对话时明确说"首轮之前"，否则给出轮次。
+func failureContext(run *harness.Run) string {
+	if run.Usage.Turns > 0 {
+		return "turn " + strconv.Itoa(run.Usage.Turns)
+	}
+	return "首轮之前"
+}
 
 // emitDeclarations 上报模型自陈的两类清单。
 //

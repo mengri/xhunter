@@ -78,24 +78,32 @@ type Session struct {
 	// 增量。
 	charged llm.Usage
 
+	// usage 是收尾定型的用量对外口径（含 reported）：终态 hunt_end 事件与结果文件读的**同一
+	// 份**（见 Finalize 与 Delivery）。
+	usage UsageReport
+	// usageReported 记录"上游回报过用量"这一事实：charge 里一旦见到非零增量即置真，收尾据此
+	// 决定 usage.reported 与是否发 degraded。判据只有这一处。
+	usageReported bool
+
 	// declared 是模型在正文里自陈的两类清单（缺什么条件、采取了哪些默认）：轮边界登记、
 	// 收尾据此收敛终态——见 AppendDeclared 与 Finalize。
 	declared Declared
 }
 
-// Delivery 是收尾后可读的交付事实：主交付是分支 tip（Commit），附带交付是改动
-// 文件清单、补丁与最终答复（FR-6.1）。仓库实现的四个动作只到 Clean 为止，交付物因此在
-// Finalize 里定型，并由装配层拿去写结果文件。
+// Delivery 是收尾后可读的交付事实：主交付是分支 tip（Commit），附带交付是改动文件清单、
+// 补丁、最终答复与累计用量（FR-6.1）。仓库实现的四个动作只到 Clean 为止，交付物因此在
+// Finalize 里定型，并由装配层拿去写结果文件——结果文件与 hunt_end 事件因此读同一份用量。
 type Delivery struct {
 	Commit  *git.Commit
 	Files   []string
 	Patch   string
 	Summary string
+	Usage   UsageReport
 }
 
 // Delivery 返回本次执行的交付事实（Finalize 之后调用才有内容）。
 func (s *Session) Delivery() Delivery {
-	return Delivery{Commit: s.commit, Files: s.files, Patch: s.patch, Summary: s.lastText}
+	return Delivery{Commit: s.commit, Files: s.files, Patch: s.patch, Summary: s.lastText, Usage: s.usage}
 }
 
 // EffectiveConfig 返回本次 Hunt 的生效配置快照（收尾后由装配层读走写结果文件）。
