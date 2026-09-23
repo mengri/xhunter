@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -390,4 +391,148 @@ type recordingCommitGit struct {
 func (g *recordingCommitGit) Commit(context.Context, git.RepoRef, string) (git.Commit, error) {
 	g.calls++
 	return git.Commit{SHA: "sha", Branch: "b", Created: g.created}, nil
+}
+
+// failingCommitGit 的 Commit 恒失败：模拟远端不可达。
+type failingCommitGit struct {
+	stubBaselineGit
+	calls int
+}
+
+func (g *failingCommitGit) Commit(context.Context, git.RepoRef, string) (git.Commit, error) {
+	g.calls++
+	return git.Commit{}, errors.New("远端不可达")
+}
+
+// flakyCommitGit 前 failTimes 次 Commit 失败，之后成功。
+type flakyCommitGit struct {
+	stubBaselineGit
+	failTimes int
+	calls     int
+}
+
+func (g *flakyCommitGit) Commit(context.Context, git.RepoRef, string) (git.Commit, error) {
+	g.calls++
+	if g.calls <= g.failTimes {
+		return git.Commit{}, errors.New("临时失败")
+	}
+	return git.Commit{SHA: "sha", Branch: "b", Created: true}, nil
+}
+
+// scriptedCommitGit 按脚本决定每次 Commit 成败（true = 失败）。
+type scriptedCommitGit struct {
+	stubBaselineGit
+	fail  []bool
+	calls int
+}
+
+func (g *scriptedCommitGit) Commit(context.Context, git.RepoRef, string) (git.Commit, error) {
+	i := g.calls
+	g.calls++
+	if i < len(g.fail) && g.fail[i] {
+		return git.Commit{}, errors.New("失败")
+	}
+	return git.Commit{SHA: "sha", Branch: "b", Created: true}, nil
+}
+
+// writingPrim 每次 Execute 写一个**新文件**并返回一份编辑计划（让 checkpoint 有改动可提交）。
+type writingPrim struct{ n int }
+
+func (p *writingPrim) Decl() llm.ToolDecl { return llm.ToolDecl{Name: "writer"} }
+func (p *writingPrim) Writes() bool       { return true }
+
+func (p *writingPrim) Execute(context.Context, Call, Facts) (Result, []workspace.FileEdit, error) {
+	p.n++
+	return Result{Summary: "写入"}, []workspace.FileEdit{{File: fmt.Sprintf("f%d.txt", p.n), NewContent: "x"}}, nil
+}
+
+// 连败达上限 → 本轮结束即收敛为环境错误（退出 1、原因前缀 checkpoint_failed_streak），
+// 且**不跑完剩余轮次**（假上游的 infer 次数恰好等于上限）。
+func TestCheckpoint_StreakLimitConvergesAsEnvError(t *testing.T) {
+	g := &failingCommitGit{}
+	s := NewSession(Config{
+		Bounty: Bounty{ID: "b1", Task: "t", Repo: gitRepoRef()},
+		Git:    g,
+		Opener: stubOpener{},
+		Policy: allowAll{},
+		Sink:   &captureSink{},
+		Tools:  func(workspace.Workspace) []Primitive { return []Primitive{&writingPrim{}} },
+	})
+	// 判据设为"通过"，让本轮改动真的走到提交（默认不可判定会直接跳过提交）。
+	s.structuralJudge = func() structuralVerdict { return structuralPass }
+
+	provider := &stubProvider{turns: []turnScript{
+		{calls: []llm.ToolCall{call("c1", "writer", `{}`)}},
+		{calls: []llm.ToolCall{call("c2", "writer", `{}`)}},
+		{calls: []llm.ToolCall{call("c3", "writer", `{}`)}},
+		{calls: []llm.ToolCall{call("c4", "writer", `{}`)}}, // 第 4 轮不该发生
+	}}
+	engine, err := harness.New(provider,
+		[]harness.PrepareHandler{s.Prepare},
+		[]harness.OnTurnHandler{s.OnTurn},
+		[]harness.FinalHandler{s.Finalize},
+	)
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+
+	out := engine.Run(context.Background(), harness.Input{})
+	if out.Status != harness.StatusFailed || out.ExitCode != harness.ExitEnv {
+		t.Errorf("终态 = %s/%d，期望 failed/%d", out.Status, out.ExitCode, harness.ExitEnv)
+	}
+	if !strings.HasPrefix(out.Reason, "checkpoint_failed_streak") {
+		t.Errorf("原因应以 checkpoint_failed_streak 开头：%q", out.Reason)
+	}
+	if provider.infers != checkpointFailStreakLimit {
+		t.Errorf("连败达上限应本轮结束即收敛，不跑完剩余轮次：infer 次数 = %d，期望 %d", provider.infers, checkpointFailStreakLimit)
+	}
+	// 连败计数恰为上限：Finalize 的**交付提交**失败不计入（它已到收尾，语义不同）。
+	if s.commitFailStreak != checkpointFailStreakLimit {
+		t.Errorf("连败计数 = %d，期望 %d", s.commitFailStreak, checkpointFailStreakLimit)
+	}
+}
+
+// 单次失败自愈：失败 1 次后下一次成功 → 连败归零、不收敛、仍保留"下一轮重试"的 warn。
+func TestCheckpoint_SingleFailureSelfHeals(t *testing.T) {
+	sink := &captureSink{}
+	g := &flakyCommitGit{failTimes: 1}
+	s := NewSession(Config{
+		Bounty: Bounty{ID: "b", Task: "t", Repo: gitRepoRef()},
+		Git:    g, Policy: allowAll{}, Sink: sink,
+	})
+	s.structuralJudge = func() structuralVerdict { return structuralPass }
+	s.ops = []WriteOp{{File: "a.txt"}}
+
+	s.checkpoint(context.Background(), &harness.Turn{No: 1}) // 失败
+	if s.commitFailStreak != 1 {
+		t.Errorf("失败后连败应为 1：%d", s.commitFailStreak)
+	}
+	if !strings.Contains(strings.Join(sink.logs, "\n"), "将在下一轮重试") {
+		t.Errorf("单次失败应保留重试 warn：%v", sink.logs)
+	}
+
+	s.checkpoint(context.Background(), &harness.Turn{No: 2}) // 成功
+	if s.commitFailStreak != 0 {
+		t.Errorf("一次成功即自愈、连败归零：%d", s.commitFailStreak)
+	}
+	if s.commit == nil {
+		t.Error("成功应记下提交")
+	}
+}
+
+// 连败是**连续**失败数，不是累计失败数：交错序列不该达到上限。
+func TestCheckpoint_SuccessResetsStreak(t *testing.T) {
+	s := NewSession(Config{
+		Bounty: Bounty{ID: "b", Task: "t", Repo: gitRepoRef()},
+		Git:    &scriptedCommitGit{fail: []bool{true, true, false, true, true, false}},
+		Policy: allowAll{}, Sink: &captureSink{},
+	})
+	s.structuralJudge = func() structuralVerdict { return structuralPass }
+	s.ops = []WriteOp{{File: "a.txt"}}
+	for n := 1; n <= 6; n++ {
+		s.checkpoint(context.Background(), &harness.Turn{No: n})
+		if s.commitFailStreak >= checkpointFailStreakLimit {
+			t.Fatalf("交错序列不该达到连败上限（第 %d 轮 streak=%d）：连败是连续失败数，不是累计失败数", n, s.commitFailStreak)
+		}
+	}
 }

@@ -62,7 +62,6 @@
 | 门禁全链 | `hunt/hooks.go:59` — `s.gates = nil`，一期暂空 |
 | 符号能力与扩展宿主 | `ext/ext.go` 只有接口，无实现；`hunt/symbolic` 声明不实现 |
 | 结构检查（自动检查点的判据） | `Session.structuralJudge` 默认返回**不可判定**——判据随符号扩展接入；**接入前不产生自动检查点**（不可判定 → 不提交），跳过原因如实进日志与 `degraded`（`scope: checkpoint`） |
-| 提交连败上限 | `checkpoint` 失败只记 warn，无连败计数 |
 | 流看门狗 | 无（`StreamIdleTimeout` 未接入） |
 | 止损两段式 | `hunt/policy.go` 只有 `Decide`/`Charge`/`Exhausted`，无 `ObserveFailure`/`DeniedCount` |
 | **用量口径（输出明细与缓存写）** | 输入侧已按统一口径落地（见 §2.3）：全部输入含缓存读/写、缓存读为子集。仍未取的：OpenAI 的输出明细（`completion_tokens_details` / `output_tokens_details`：reasoning / audio / accepted·rejected prediction），以及把「缓存写」单列出来（Anthropic 的写溢价 1.25×/2× 目前按普通输入价计） |
@@ -90,7 +89,7 @@
 
 | 编号 | 状态 | 对应 MS-n | 说明 |
 |---|---|---|---|
-| <a id="fr-1-3b"></a>FR-1.3b（提交连败上限） | 待接入 | MS-4 | 检查点连续失败达 3 次 → 本轮结束即收敛（退出 1）；当前只记 warn、无计数 |
+| <a id="fr-1-3b"></a>FR-1.3b（提交连败上限） | 已落地 | MS-4 | 检查点**连续**提交失败达 3 次（包内常量，不留可配字段）→ 本轮结束即收敛 `checkpoint_failed_streak`（退出 1）；成功即归零。用例 `TestCheckpoint_StreakLimitConvergesAsEnvError`、`TestCheckpoint_SuccessResetsStreak` |
 | <a id="fr-1-3d"></a>FR-1.3d（结构检查） | 部分已落地 | MS-4 / MS-9 | 判据三态（`structuralVerdict`）与「不可判定 → 不提交并如实上报」**已落地**（默认 undecidable，发 `degraded` `scope: checkpoint`）；真实判据随符号扩展接入（MS-9）。用例 `TestCheckpoint_NoAutoCheckpointOffStructuralPoint`、`TestCheckpoint_StructuralFailDoesNotCommit`、`TestCheckpoint_StructuralPassCommits` |
 | <a id="fr-1-10"></a>FR-1.10（Bounty 生成器 / 本地驱动） | 待接入 | MS-12 | `xhunter run` 尚未接线 |
 | <a id="fr-1-11"></a>FR-1.11①/②（流看门狗 / 提交连败提前收敛） | 待接入 | MS-12（①）/ MS-4（②） | ①`StreamIdleTimeout` 未接入；②见 FR-1.3b |
@@ -118,7 +117,7 @@
 | <a id="ac-17"></a>AC-17（压缩保真） | 待接入 | MS-11 | 压缩未接入 |
 | <a id="ac-18"></a>AC-18（压缩可观测可复现） | 待接入 | MS-11 | 同上 |
 | <a id="ac-20"></a>AC-20（交付形态 / fast-forward） | 已落地 | — | `TestEndToEnd_LocalRunProducesDeliveryCommit`；`find`/edit 相关注脚见 §2.3 |
-| <a id="ac-22"></a>AC-22（检查点自愈与止损） | 部分待接入 | MS-4 | 自愈已落地；连败上限待接入 |
+| <a id="ac-22"></a>AC-22（检查点自愈与止损） | 已落地 | MS-4 | 自愈（单次失败不中止、下一轮累积重提）＋ 连败上限（连续 3 次 → 退出 1）。用例 `TestCheckpoint_SingleFailureSelfHeals`、`TestCheckpoint_StreakLimitConvergesAsEnvError` |
 | <a id="ac-26"></a>AC-26（工具面恒定） | 已落地 | — | 规则已落地并有用例（`TestDefaultTools_FaceIsFixed` 等）；**尚未实现的原语（符号 3 ＋ `check`）只改调用结果、不改工具面** |
 | <a id="product-6"></a>产品§6（工具集规格的一期实现状态） | 基础 5 已实现 | MS-5 / MS-8 | 基础 5（`read`/`write`/`edit`/`find`/`glob`）**已实现**；符号 3（`symbol_read`/`symbol_edit`/`symbol_rename`）与 `check` **已注册、声明齐备、尚未实现**——调用返回 `not_implemented`（`Retryable: false`） |
 
@@ -253,7 +252,7 @@
 | <a id="ia-11-6"></a>IA-11.6 | 已落地 | `TestDiff_ListsFilesChangedSinceBaseline`、`TestPatch_AppliesCleanlyToBaseline`、`TestEndToEnd_LocalRunProducesDeliveryCommit` | MS-6 | 排除会话材料目录 `.xhunter/<session_id>/**` 待接入 |
 | <a id="ia-11-7"></a>IA-11.7 | 已落地 | `TestClean_RemovesWorktreeAndIsIdempotent` | — | — |
 | <a id="ia-11-8"></a>IA-11.8 | 待补 | — | MS-4 | 调用顺序 ＋ 工具面不含 git 原语的断言 |
-| <a id="ia-11-9"></a>IA-11.9 | 部分待接入 | 代码检查（`checkpoint` 失败只记 warn） | MS-4 | 自愈已落地；**连败上限待接入** |
+| <a id="ia-11-9"></a>IA-11.9 | 已落地 | `TestCheckpoint_SingleFailureSelfHeals`、`TestCheckpoint_StreakLimitConvergesAsEnvError`、`TestCheckpoint_SuccessResetsStreak` | MS-4 | 自愈（单次失败只记 warn、下一轮重提）＋ 连败上限（连续 3 次 → `checkpoint_failed_streak`，退出 1） |
 | <a id="ia-11-10"></a>IA-11.10 | 待补 | — | MS-4 | 时间语义断言（提交的是本轮已应用的改动） |
 | <a id="ia-11-11"></a>IA-11.11 | 已落地 | `TestCheckpoint_NoAutoCheckpointOffStructuralPoint`、`TestCheckpoint_StructuralFailDoesNotCommit`、`TestCheckpoint_StructuralPassCommits`、`TestCheckpoint_UndecidableReportsDegradedOnce`、`TestCheckpoint_LogsNoOpWhenNothingWasCommitted` | MS-4 / MS-9 | 三态（pass/fail/undecidable）与不可判定如实上报已落地；真实判据随符号扩展接入（MS-9） |
 | <a id="ia-11-12"></a>IA-11.12 | 待接入 | — | MS-5 | 门禁驱动的检查点（依赖 `check`） |
@@ -282,7 +281,7 @@
 | <a id="l6-检查点"></a>L6-检查点决策 | 部分待接入 | MS-4 / MS-5 / MS-9 | 模型显式请求 ＋ 收尾已落地；门禁驱动（MS-5）、结构判据（MS-9）待接入 |
 | <a id="l6-结构检查"></a>L6-结构检查 | 待接入 | MS-9 | 判据未接入；「不可判定 → 不提交」已落地 |
 | <a id="l6-事件通道复查"></a>L6-事件通道复查 | 已落地 | MS-2 | 轮末守卫复查（取消之后、预算之前）：本轮发出时断则不再进入下一轮，收敛 `event_channel_failed`（退出 1）。用例 `TestOnTurn_StopsAfterTurnWhenChannelFailsDuringTurn`、`TestOnTurn_ChannelFailureDoesNotOverrideCancellation` |
-| <a id="l6-提交连败"></a>L6-提交连败复查 | 待接入 | MS-4 | 连续 3 次提交失败 → 本轮结束即收敛 未接入 |
+| <a id="l6-提交连败"></a>L6-提交连败复查 | 已落地 | MS-4 | 连续 3 次提交失败 → 本轮结束即收敛为环境错误（退出 1），不跑完剩余轮次。用例 `TestCheckpoint_StreakLimitConvergesAsEnvError` |
 | <a id="l7-gates"></a>L7-gates 补跑 | 待接入 | MS-5 | 门禁清单暂空，收尾补跑未接入 |
 
 **组件级状态（H1~H7）**：
@@ -332,6 +331,7 @@
 | ~~`unverified` 采集（FR-6.4 第三类）~~（MS-2） | **已落地**（2026-09-23）：新增固定小节 `## 未验证`（小节名的唯一来源是常量，解析与内核条款同改）；`Declared` 加 `Unverified`、`sectionTarget` 加第三分支、`AppendDeclared` 一并登记；结果文件加 `unverified`（三态，未提供 → `null`）。**只陈述、不判定**——它不改变终态（只有 `needs` 非空才收敛 `blocked`）。用例 `TestParseDeclared_ThreeSectionsAreSeparated`、`TestParseDeclared_UnverifiedAloneIsNotNeeds`、`TestParseDeclared_UnverifiedThreeState`、`TestFinalize_UnverifiedDoesNotBlock`（`hunt`）、`TestResultFile_UnverifiedIsThreeState`（`cmd/xhunter`） |
 | ~~MS-2 收口验收（纯 NDJSON ＋ 事件序列 ＋ 增量语义 ＋ 插件失败）~~ | **已落地**（2026-09-23）：`TestEventSink_StdoutIsPureNDJSON`（stdout 逐行合法 JSON ＋ 信封四字段 ＋ `ts` RFC3339）、`TestEndToEnd_EventSequenceIsComplete`（首尾、`tool_call`↔`tool_result` 配对、`deliverable` 在 `hunt_end` 前）、`TestPolicy_ChargeReceivesIncrements`（`Policy.Charge` 收增量、非增长轮不上报）、`TestPrepare_PluginFailureConvergesAsEnvError`（插件失败 → `prepare_failed`/退出 1）。MS-2 由此收口 |
 | ~~结构判据三态与"不可判定"如实上报~~（MS-4） | **已落地**（2026-09-23）：`structuralPoint() bool`（恒 false）换成三态 `structuralVerdict`（pass/fail/undecidable）；默认实现是 **undecidable**（符号扩展未接入——我们没**判过**，不是"没通过"），日志如实说「结构判据不可判定」、并发一条 `degraded`（`scope: checkpoint`，每次运行最多一条）；pass 照常提交、fail 说「未落在结构完整点」。判据留了**包内可替换位置**（`Session.structuralJudge`，未加公开配置字段）。用例 `TestCheckpoint_NoAutoCheckpointOffStructuralPoint`、`TestCheckpoint_StructuralFailDoesNotCommit`、`TestCheckpoint_StructuralPassCommits`、`TestCheckpoint_UndecidableReportsDegradedOnce` |
+| ~~检查点连败上限~~（MS-4 / FR-1.3b / IA-11.9 / AC-22） | **已落地**（2026-09-23）：`Session` 记**连续**提交失败数（成功即归零，含 `Created=false` 的空操作；只统计阶段性检查点提交，交付提交不计入）；达包内常量 `checkpointFailStreakLimit=3` 时由 `OnTurn` 守卫统一收敛为 `checkpoint_failed_streak`（退出 1），本轮结束即收敛、不跑完剩余轮次。守卫次序固定为「取消 → 通道 → 提交连败 → 预算」。用例 `TestCheckpoint_StreakLimitConvergesAsEnvError`、`TestCheckpoint_SingleFailureSelfHeals`、`TestCheckpoint_SuccessResetsStreak` |
 
 ---
 
@@ -347,7 +347,7 @@
 | 压缩 | `IA-2.5`、`IA-2.6`、`IA-2.7`、`IA-2.8`、`L2-压缩`、`FR-14.1`、`AC-17`、`AC-18` |
 | 门禁 | `IA-3.16`（`check` 声明不实现）、`IA-11.12`、`L1-4`、`L7-gates`、`FR-5.2b`、`产品§6` |
 | 符号能力 | `IA-3.5`、`IA-7.1`~`IA-7.7`、`L1-5`、`FR-4.1`、`FR-4.3`、`FR-13.1`、`产品§6` |
-| git 剩余语义 | `IA-11.6`（排除材料目录）、`IA-11.8`、`IA-11.9`（连败上限）、`IA-11.10`、`IA-11.12`、`IA-11.13`、`L6-检查点`、`L6-提交连败`、`FR-1.3b` |
+| git 剩余语义 | `IA-11.6`（排除材料目录）、`IA-11.8`、`IA-11.10`、`IA-11.12`、`IA-11.13`、`L6-检查点` |
 | 流看门狗 | `L4-流看门狗`、`FR-1.11`（①） |
 | 结构检查 | `IA-11.11`、`L6-结构检查`、`FR-1.3d` |
 | 止损两段式 | `IA-4.8`、`IA-4.9`、`H4-裁决点`、`FR-9.4` |
@@ -393,7 +393,7 @@
 | **MS-1** | 验收入口与契约对齐 | 一期收口 | — | 小 | FR-2.2、IA-3.16 | **已完成**（2026-09-23；三项全部落地，见 §2.3） |
 | **MS-2** | 运行可观测补齐（事件流 ＋ 生效配置快照） | 一期收口 | MS-1 | 中 | FR-10、FR-11.1/11.6、FR-6.3/6.4、IA-5.2/5.4 | **已完成**（2026-09-23；事件流、生效配置快照、澄清回路三类自陈与收口验收（纯 NDJSON／事件序列／增量语义／插件失败）全部落地，见 §2.3） |
 | **MS-3** | 止损完备（两段式止损） | 一期收口 | MS-2 | 中 | FR-9.1/9.4、IA-4.8/4.9 | 未开始 |
-| **MS-4** | 检查点分档与提交健壮性 | 一期收口 | MS-1 | 中 | FR-1.3b/1.3c/1.11②、IA-11.8/11.10/11.11/11.13 | **进行中**（结构判据三态 ＋ 不可判定如实上报已落地；连败上限（FR-1.3b）与 IA-11.8/11.10/11.13 用例待续） |
+| **MS-4** | 检查点分档与提交健壮性 | 一期收口 | MS-1 | 中 | FR-1.3b/1.3c/1.11②、IA-11.8/11.10/11.11/11.13 | **进行中**（结构判据三态、不可判定如实上报、连败上限（FR-1.3b）已落地；余 IA-11.8/11.10/11.13 用例） |
 | **MS-5** | 门禁落地（`check` 实现 ＋ 全链护栏） | 一期收口 | MS-4 | 大 | FR-5.2b~5.2i、IA-11.12 | 未开始 |
 | **MS-6** | 会话材料落盘 | M1.5 前置 | MS-4 | 中 | FR-12.2/12.2b/12.3、IA-6.1/6.1b/6.1c | 未开始 |
 | **MS-7** | 会话恢复（resume） | M1.5 | MS-6 | 大 | FR-12.1/12.6、AC-7、IA-6.2/6.3/6.4 | 未开始 |
@@ -497,14 +497,14 @@
 
 **范围**
 - **判据接入位**：`Session.structuralJudge`（三态 `structuralVerdict`）默认返回 **undecidable**；保证**不可判定时确实不提交**、且跳过原因如实进日志与事件（`degraded`，`scope: checkpoint`，每次运行最多一条）。符号扩展接入时替换它。
-- **连败上限**：检查点连续提交失败达 3 次 → 本轮结束即收敛（退出 1），不跑完剩余轮次。
+- **连败上限**：检查点连续提交失败达 3 次 → 本轮结束即收敛（`checkpoint_failed_streak`，退出 1），不跑完剩余轮次；守卫次序「取消 → 通道 → 提交连败 → 预算」。（**已落地**）
 - **时间语义与不可见性**：断言 `Commit` 只在轮边界与收尾被调用、`PrepareBaseline` 是 `Prepare` 第一步、工具面不含任何 git 原语（IA-11.8 / IA-11.10）。
 - **意图兑现**：一次请求只兑现一次；无改动不产生空提交但意图照样消费；提交信息由执行体合成。
 
 **独立验收的证据**
 - 结构判据三态：`TestCheckpoint_NoAutoCheckpointOffStructuralPoint`（不可判定）、`TestCheckpoint_StructuralFailDoesNotCommit`（未通过）、`TestCheckpoint_StructuralPassCommits`（通过）、`TestCheckpoint_UndecidableReportsDegradedOnce`（降级每次运行最多一条）。
 - `TestCheckpoint_LogsNoOpWhenNothingWasCommitted`（模型请求路径，已有）。
-- `TestCheckpoint_StreakLimitConvergesAsEnvError`。
+- 连败上限：`TestCheckpoint_StreakLimitConvergesAsEnvError`（真实引擎：连败 3 次即收敛、infer 次数==3）、`TestCheckpoint_SingleFailureSelfHeals`、`TestCheckpoint_SuccessResetsStreak`。
 - `TestCheckpoint_ModelRequestIsConsumedOnceAndSkipsEmptyCommit`（IA-11.13 补全）＋ 提交信息合成断言（`TestSanitizeIntent` 已有）。
 - `TestWiring_PrepareBaselineRunsBeforeAnyTool`、`TestDefaultTools_HasNoGitPrimitive`（IA-11.8）。
 

@@ -330,6 +330,20 @@ func (s *Session) OnTurn(ctx context.Context, run *harness.Run, turn *harness.Tu
 		run.SetTerminal(harness.Terminal{Status: harness.StatusFailed, Reason: eventChannelFailed + ": " + err.Error(), Code: harness.ExitEnv})
 		return false, nil
 	}
+	// 提交连败（环境问题：远端不可达）——排在预算之前：连败是更根因的诊断，不该被"预算也正好
+	// 耗尽"盖掉。达上限即本轮结束收敛，不跑完剩余轮次。
+	if s.commitFailStreak >= checkpointFailStreakLimit {
+		last := ""
+		if s.commitLastErr != nil {
+			last = s.commitLastErr.Error()
+		}
+		run.SetTerminal(harness.Terminal{
+			Status: harness.StatusFailed,
+			Reason: checkpointFailedStreak + ": 连续 " + strconv.Itoa(s.commitFailStreak) + " 次检查点提交失败：" + last,
+			Code:   harness.ExitEnv,
+		})
+		return false, nil
+	}
 	if s.cfg.Policy != nil {
 		if yes, dim := s.cfg.Policy.Exhausted(TurnNo(turn.No)); yes {
 			run.SetTerminal(harness.Terminal{Status: harness.StatusFailed, Reason: "budget_exhausted:" + dim, Code: harness.ExitAborted})
@@ -338,6 +352,14 @@ func (s *Session) OnTurn(ctx context.Context, run *harness.Run, turn *harness.Tu
 	}
 	return true, nil
 }
+
+// checkpointFailStreakLimit 是"连续提交失败"的上限：达上限即收敛为环境错误。用包内常量而不是
+// 可配字段——没有第二个取值就不留旋钮（同 `Session.structuralJudge` 的取舍）。
+const checkpointFailStreakLimit = 3
+
+// checkpointFailedStreak 是「提交连败」的固定原因前缀（使用手册 §7 的"检查点连续提交失败达上限"
+// 一档）；后接连败次数与最后一次失败原因，便于远程定位。
+const checkpointFailedStreak = "checkpoint_failed_streak"
 
 // checkpoint 在本轮已应用的改动上产生检查点。触发条件只有两条：
 //   - **模型显式请求**（`checkpoint` 原语的语义判断——它说「这里自洽」，那是它的判断）；
@@ -377,9 +399,16 @@ func (s *Session) checkpoint(ctx context.Context, turn *harness.Turn) {
 
 	cm, err := s.cfg.Git.Commit(ctx, s.cfg.Bounty.Repo, checkpointMessage(s.cfg.Bounty, TurnNo(turn.No), requested, intent))
 	if err != nil {
-		s.logf("warn", "阶段性提交失败，将在下一轮重试", "turn", turn.No, "err", err.Error())
+		// 单次失败自愈（提交是累积的，下一轮把未提交改动一并带上），但要记连败：连续失败意味着
+		// 远端不可达，那时由 OnTurn 守卫收敛（这里只记事实，不设终态）。
+		s.commitFailStreak++
+		s.commitLastErr = err
+		s.logf("warn", "阶段性提交失败，将在下一轮重试", "turn", turn.No, "err", err.Error(), "streak", s.commitFailStreak)
 		return
 	}
+	// 一次成功的往返即自愈：连败归零（`Created=false` 的空操作也是一次成功往返，同样归零）。
+	s.commitFailStreak = 0
+	s.commitLastErr = nil
 	s.commit = &cm
 	if cm.Created {
 		s.logf("info", "已创建检查点", "turn", turn.No, "model_requested", requested)

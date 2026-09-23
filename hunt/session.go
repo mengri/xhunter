@@ -77,6 +77,13 @@ type Session struct {
 	checkpointRequested bool
 	checkpointSummary   string
 
+	// commitFailStreak 是**连续**检查点提交失败数（成功即归零，含 Created=false 的空操作）；达
+	// checkpointFailStreakLimit 时由 OnTurn 守卫统一收敛——不在这里设终态（SetTerminal 是覆盖式
+	// 的，两处都设会让终态取决于执行顺序而不是事实本身）。commitLastErr 保留最后一次失败原因，
+	// 收敛时带上以便远程定位。
+	commitFailStreak int
+	commitLastErr    error
+
 	// charged 是已转交策略的累计用量水位：run 上的用量是累计值，策略与 usage 事件要的都是
 	// 增量。
 	charged llm.Usage
