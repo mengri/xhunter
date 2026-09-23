@@ -18,8 +18,8 @@ type LineRange struct {
 
 // ByteRange 是半开字节区间 [Start, End)。它是「替换某个区间」的唯一表达。
 type ByteRange struct {
-	Start int
-	End   int
+	Start int `json:"start"`
+	End   int `json:"end"`
 }
 
 // FileEdit 是唯一写入原语的输入：目标文件 + 字节区间 + 新内容。

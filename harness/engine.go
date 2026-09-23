@@ -46,12 +46,12 @@ type Run struct {
 // Turn 是轮级状态：本轮发送的 + 本轮产生的。它只在轮边界存在——OnTurn 拿它处理成
 // 下一轮的输入，然后丢弃。历史只住在业务（handler 的实现）里，不进这里。
 type Turn struct {
-	No       int              // 轮次号（1 起）
-	Messages []llm.Message    // 本轮发送的（= 发送前的 Run.Messages）
-	Text     string           // 本轮模型输出文本
-	Calls    []llm.ToolCall   // 本轮工具调用
-	Results  []llm.ToolResult // 本轮工具结果（业务执行后填）
-	Failed   bool             // 本轮是否有失败结果（业务执行后填）
+	No       int              `json:"no"`       // 轮次号（1 起）
+	Messages []llm.Message    `json:"messages"` // 本轮发送的（= 发送前的 Run.Messages）
+	Text     string           `json:"text"`     // 本轮模型输出文本
+	Calls    []llm.ToolCall   `json:"calls"`    // 本轮工具调用
+	Results  []llm.ToolResult `json:"results"`  // 本轮工具结果（业务执行后填）
+	Failed   bool             `json:"failed"`   // 本轮是否有失败结果（业务执行后填）
 }
 
 // PrepareHandler 在循环前执行一次。

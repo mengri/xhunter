@@ -64,10 +64,10 @@ type Result struct {
 
 // WriteOp 是一次写操作记录：交付物、检查点与恢复都建立在它之上。
 type WriteOp struct {
-	Primitive PrimitiveName
-	File      string
-	ByteRange workspace.ByteRange
-	Before    string
-	After     string
-	Turn      TurnNo
+	Primitive PrimitiveName       `json:"tool"`
+	File      string              `json:"file"`
+	ByteRange workspace.ByteRange `json:"range"`
+	Before    string              `json:"before"`
+	After     string              `json:"after"`
+	Turn      TurnNo              `json:"turn"`
 }

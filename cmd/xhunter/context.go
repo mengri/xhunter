@@ -44,12 +44,3 @@ func produced(t harness.Turn) []llm.Message {
 	}
 	return msgs
 }
-
-// sessionRecorder 记录会话材料，供崩溃后按「tip + 材料」恢复。
-// 一期只存内存，落盘（`.xhunter/**` 会话材料）待补。
-type sessionRecorder struct {
-	turns []harness.Turn
-}
-
-func (r *sessionRecorder) RecordTurn(rec harness.Turn) { r.turns = append(r.turns, rec) }
-func (r *sessionRecorder) Snapshot() error             { return nil }

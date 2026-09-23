@@ -19,8 +19,23 @@ type ContextBuilder interface {
 }
 
 // SessionRecorder 记录会话材料（供崩溃后恢复）。
+//
+// 方法集**一次加齐**（不留二次扩公开接口）：材料是恢复的唯一状态源，而**写操作序列是恢复的唯一
+// 刚需**——它此前没有通道（`Session` 攥着 `ops` 却交不出来），所以这一批一起加。刻意**不加**
+// `Delta` / `Fingerprint` 一类：没有消费方就不加（同 `llm.Caps` 的原则）。
 type SessionRecorder interface {
+	// Open 绑定材料存放位置：工作区根由 PrepareBaseline 在运行期给出，所以在工作区就绪后调用一次。
+	// 失败只降级、不阻断（材料丢了最多是崩溃后从头跑）。
+	Open(root string) error
+	// RecordTurn 记录一轮（供恢复时回灌上下文）。
 	RecordTurn(rec harness.Turn)
+	// RecordOp 记录一次写操作：它是恢复的唯一刚需（读操作与 check 不复放）。
+	RecordOp(op WriteOp)
+	// RecordUsage 记录本轮用量增量（与计费、usage 事件同源）。
+	RecordUsage(u llm.Usage)
+	// Ops 给出已记录的写操作序列。
+	Ops() []WriteOp
+	// Snapshot 把尚未落盘的记录 flush 出去（材料落盘的周期点）。
 	Snapshot() error
 }
 

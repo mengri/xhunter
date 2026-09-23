@@ -338,6 +338,7 @@ func (s *Session) executeCall(ctx context.Context, turn *harness.Turn, tc llm.To
 		}
 		res.Ops = ops
 		s.ops = append(s.ops, ops...)
+		s.recordOps(ops)
 	}
 
 	res.CallID = call.ID

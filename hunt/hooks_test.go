@@ -23,7 +23,11 @@ func (c *recordingContext) Append(rec harness.Turn) { c.appended = append(c.appe
 
 type recordingSession struct{ turns []harness.Turn }
 
+func (r *recordingSession) Open(string) error           { return nil }
 func (r *recordingSession) RecordTurn(rec harness.Turn) { r.turns = append(r.turns, rec) }
+func (r *recordingSession) RecordOp(WriteOp)            {}
+func (r *recordingSession) RecordUsage(llm.Usage)       {}
+func (r *recordingSession) Ops() []WriteOp              { return nil }
 func (r *recordingSession) Snapshot() error             { return nil }
 
 // 加工必须发生在落历史之前：历史与材料都是值拷贝，抢在后面改的过滤器等于白做——

@@ -54,6 +54,9 @@ func (s *Session) Prepare(ctx context.Context, run *harness.Run) error {
 	}
 	s.storage = storage
 
+	// 材料位置随工作区就绪而定：绑定失败只降级、不阻断（IA-6.6）。
+	s.openRecorder(root)
+
 	// 工作区就绪后构造原语并定格工具面：原语读文件需要工作区，声明与执行因此同源。
 	// 工具面自身不成立也算装配缺件——错误在首轮推理之前暴露，而不是等供应商拒收请求。
 	if err := s.buildTools(storage); err != nil {
@@ -486,6 +489,35 @@ func (s *Session) channelFailure() error {
 // 后接出口给出的原因，便于远程定位。
 const eventChannelFailed = "event_channel_failed"
 
+// openRecorder 把材料位置交给记录器。失败只降级、不阻断（IA-6.6）：材料丢了最多是崩溃后从头跑，
+// 不该把一个正在收敛的任务判失败。
+func (s *Session) openRecorder(root string) {
+	if s.cfg.Session == nil {
+		return
+	}
+	if err := s.cfg.Session.Open(root); err != nil {
+		s.logf("warn", "会话材料存放位置不可用，崩溃后将无法恢复", "err", err.Error())
+	}
+}
+
+// recordOps 把本轮产出的写操作交给记录器：与 `s.ops` 的累积同源，不另开一份数据。
+func (s *Session) recordOps(ops []WriteOp) {
+	if s.cfg.Session == nil {
+		return
+	}
+	for _, op := range ops {
+		s.cfg.Session.RecordOp(op)
+	}
+}
+
+// recordUsage 把本轮用量增量交给记录器：与计费、usage 事件同源（同一份增量）。
+func (s *Session) recordUsage(u llm.Usage) {
+	if s.cfg.Session == nil {
+		return
+	}
+	s.cfg.Session.RecordUsage(u)
+}
+
 // charge 把本轮新增用量转交策略，并上报一次**增量** usage 事件。
 //
 // run.Usage 是累计值，而策略与事件要的都是增量，所以自己记水位：没有水位就会把累计值
@@ -516,6 +548,8 @@ func (s *Session) charge(total llm.Usage) {
 	if in != 0 || out != 0 || cached != 0 {
 		s.usageReported = true
 		s.emitUsage(in, out, cached)
+		// 同一份增量也交给记录器：材料含用量、"每轮增量"因此只有一处计算。
+		s.recordUsage(llm.Usage{InputTokens: in, OutputTokens: out, CachedInputTokens: cached})
 	}
 
 	if s.cfg.Policy == nil || (in <= 0 && out <= 0) {

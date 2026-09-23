@@ -37,14 +37,34 @@ type ToolCall struct {
 	Arguments json.RawMessage
 }
 
+// MarshalJSON 让工具调用可安全落盘（会话材料复用它的形状）：参数合法时原样作为 JSON 对象，
+// 非法时退化成字符串——`json.RawMessage` 一旦碰到非法 JSON 就会让 Marshal 报错，那会把整份材料的
+// 一次 flush 带下水（模型给的参数不合法是"这次调用要报的结构化错误"，不是"材料写不出去"）。
+func (c ToolCall) MarshalJSON() ([]byte, error) {
+	type wire struct {
+		ID        string `json:"id"`
+		Name      string `json:"name"`
+		Arguments any    `json:"arguments,omitempty"`
+	}
+	var args any
+	switch {
+	case len(c.Arguments) == 0:
+	case json.Valid(c.Arguments):
+		args = c.Arguments
+	default:
+		args = string(c.Arguments)
+	}
+	return json.Marshal(wire{ID: c.ID, Name: c.Name, Arguments: args})
+}
+
 // ToolResult 是把一次调用的结果送回给模型的形态。
 //
 // Output 是回灌文本（由使用方决定怎么组织，例如带上错误类型与可重试性）；
 // IsError 只有一部分协议有对应字段，支持的协议会如实标注，其余按普通文本发送。
 type ToolResult struct {
-	CallID  string
-	Output  string
-	IsError bool
+	CallID  string `json:"call_id"`
+	Output  string `json:"output"`
+	IsError bool   `json:"is_error,omitempty"`
 }
 
 // ToolDecl 是工具对模型可见的声明。
@@ -61,10 +81,10 @@ type ToolDecl struct {
 
 // Message 是上下文里的一条消息。Role 取 Role* 常量。
 type Message struct {
-	Role    Role
-	Content string
-	Calls   []ToolCall
-	Results []ToolResult
+	Role    Role         `json:"role"`
+	Content string       `json:"content,omitempty"`
+	Calls   []ToolCall   `json:"calls,omitempty"`
+	Results []ToolResult `json:"results,omitempty"`
 }
 
 // Usage 是 token 用量与轮级统计。

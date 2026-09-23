@@ -151,7 +151,7 @@ func huntCmd(args []string) int {
 		Opener:        defaultWorkspaces(),
 		Git:           defaultGit(),
 		Context:       &contextBuilder{},
-		Session:       &sessionRecorder{},
+		Session:       &sessionRecorder{bounty: bounty},
 		Sink:          sink,
 		SystemPlugins: defaultSystemPlugins,
 		UserPlugins:   defaultUserPlugins,

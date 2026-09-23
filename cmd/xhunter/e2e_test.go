@@ -118,10 +118,11 @@ func TestEndToEnd_LocalRunProducesDeliveryCommit(t *testing.T) {
 		t.Errorf("交付提交里的文件内容 = %q，期望 hi", got)
 	}
 
-	// 附带交付：deliverable 列出改动文件。
-	files, _ := types["deliverable"]["files"].([]any)
-	if len(files) != 1 || files[0] != "hello.txt" {
-		t.Errorf("deliverable.files = %v，期望 [hello.txt]", types["deliverable"]["files"])
+	// 附带交付：deliverable 列出改动文件。材料（`.xhunter/**`）本期会落进工作区并随提交带上；
+	// diff 排除材料目录是 MS-6 的后续范围（IA-11.6），本用例只关心交付文件。
+	delivered := nonMaterial(toStrings(types["deliverable"]["files"]))
+	if len(delivered) != 1 || delivered[0] != "hello.txt" {
+		t.Errorf("deliverable.files（去掉材料）= %v，期望 [hello.txt]", delivered)
 	}
 
 	// 结果文件（FR-1.5、使用手册 §6）：交付记录必须能独立读出来。
@@ -142,8 +143,8 @@ func TestEndToEnd_LocalRunProducesDeliveryCommit(t *testing.T) {
 	if res.CommitSHA == "" || res.CommitSHA != tip {
 		t.Errorf("commit_sha = %q，期望交付提交 %q", res.CommitSHA, tip)
 	}
-	if len(res.FilesChanged) != 1 || res.FilesChanged[0] != "hello.txt" {
-		t.Errorf("files_changed = %v", res.FilesChanged)
+	if changed := nonMaterial(res.FilesChanged); len(changed) != 1 || changed[0] != "hello.txt" {
+		t.Errorf("files_changed（去掉材料）= %v", changed)
 	}
 	// 用量口径贯穿全链：上游明细 → 协议翻译 → 循环累加 → 结果文件。
 	if res.Usage.Turns != 2 || res.Usage.InputTokens != 32 || res.Usage.OutputTokens != 10 {
@@ -714,6 +715,30 @@ func TestEndToEnd_EffectiveConfigEmptyCollectionsAreArrays(t *testing.T) {
 	if got := string(res.EC["filters"]); got != "[]" {
 		t.Errorf("结果文件 effective_config.filters = %s，期望 []", got)
 	}
+}
+
+// nonMaterial 去掉会话材料目录（`.xhunter/**`）：它随提交进分支，但 diff/patch 的排除是 MS-6 的
+// 后续范围（IA-11.6），当前 e2e 只关心交付文件。
+func nonMaterial(names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if !strings.HasPrefix(n, ".xhunter/") {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// toStrings 把事件载荷里的数组（JSON 解出来是 []any）收成字符串切片。
+func toStrings(v any) []string {
+	arr, _ := v.([]any)
+	out := make([]string, 0, len(arr))
+	for _, x := range arr {
+		if s, ok := x.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // ============================================================ 夹具

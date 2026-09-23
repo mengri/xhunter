@@ -57,7 +57,7 @@
 
 | 缺口 | 现状证据 |
 |---|---|
-| 会话材料落盘与恢复 | `cmd/xhunter/context.go:55` — `sessionRecorder` 只记内存，`Snapshot()` 直接返回 `nil` |
+| 会话恢复（resume） | 材料已落盘（`.xhunter/<session_id>/session.jsonl`，MS-6）；checkout 分支 tip ＋ 读回材料 ＋ 回灌上下文属 MS-7 |
 | 上下文压缩 | `contextBuilder` 只有组装（`Assemble`），无水位、无下压 |
 | 门禁全链 | `hunt/hooks.go:59` — `s.gates = nil`，一期暂空 |
 | 符号能力与扩展宿主 | `ext/ext.go` 只有接口，无实现；`hunt/symbolic` 声明不实现 |
@@ -106,7 +106,7 @@
 | <a id="fr-11-2"></a>FR-11.2（错误结构化） | 已落地 | MS-2 | 终态 `failed` 发一条 `error`（`kind`＝原因首段 / `retryable`＝与退出码同源 / `context`＝阶段与轮次）；取消与 `blocked` 不发。`kind` / `retryable` 的口径上收为 `hunt.ErrorKind` / `hunt.RetryableForExitCode`，事件与结果文件同源。用例 `TestFinalize_EmitsErrorOnFailureMatchingExitCode`、`TestFinalize_NoErrorEventOnBlockedOrCancelled` |
 | <a id="fr-11-6"></a>FR-11.6（生效配置快照） | 已落地 | MS-2 | 装配完成后冻结一次，进 `hunt_start` 与结果文件 `effective_config`；门禁清单随 MS-5 接入。用例 `TestEffectiveConfig_ListsPrimitivesInToolFaceOrder`、`TestEffectiveConfig_CarriesPluginAndFilterNames`、`TestEffectiveConfig_CarriesAssemblyFacts`、`TestPrepare_EmitsHuntStart`、`TestResultFile_EffectiveConfigIsWritten` |
 | <a id="fr-12-1"></a>FR-12.1（会话恢复 resume） | 待接入 | MS-7 | 恢复未实现 |
-| <a id="fr-12-2"></a>FR-12.2/12.2b/12.2c/12.3（会话材料） | 待接入 | MS-6 | 只记内存，材料未落盘 |
+| <a id="fr-12-2"></a>FR-12.2/12.2b/12.2c/12.3（会话材料） | 部分已落地 | MS-6 | 材料已落盘（`.xhunter/<session_id>/session.jsonl`，meta 带 `schema_version`、按任务隔离、追加写）；**余**：随检查点 `add -f` 提交（IA-6.1c）、diff 排除材料目录（IA-11.6）、恢复（MS-7） |
 | <a id="fr-13-1"></a>FR-13.1~13.9（扩展接入） | 待接入 | MS-8 | `ext.ExtHost` 无实现 |
 | <a id="fr-14-1"></a>FR-14.1~14.8（上下文压缩） | 待接入 | MS-11 | `ContextBuilder` 只有组装 |
 | <a id="fr-15-2"></a>FR-15.2/15.5/15.6（skill 清单注入与解析容错） | 已落地 | — | `prompt/skills`；正文按需读取（FR-15.3） |
@@ -194,15 +194,15 @@
 | <a id="ia-5-6"></a>IA-5.6 | 已落地 | 代码检查（FR-11.5） | — | — |
 | <a id="ia-5-7"></a>IA-5.7 | 已落地 | `TestEventSink_StampsEnvelopeOnEveryEvent`、`TestHuntCmd_EventsGoToStdoutAndLogsGoToStderr`、`TestBountyFromEnv_TraceID` | — | — |
 | <a id="ia-5-8"></a>IA-5.8 | 已落地 | `TestExecuteCall_PolicyDenialIsReported` | — | — |
-| <a id="ia-6-1"></a>IA-6.1 | 待接入 | — | MS-6 | 会话材料自含续跑信息（FR-12.2） |
-| <a id="ia-6-1b"></a>IA-6.1b | 待接入 | — | MS-6 | 按任务隔离 `.xhunter/<session_id>/session.jsonl`（FR-12.2b） |
+| <a id="ia-6-1"></a>IA-6.1 | 已落地 | `TestSave_MaterialLandsUnderSessionDirWithSchemaVersion`、`TestRecorder_RecordsOpsAndUsageFromTheSession`、`TestMaterial_LoadRejectsUnknownSchemaVersion` | MS-6 | 材料自含续跑信息（对话历史 ＋ 写操作序列 ＋ 用量 ＋ 能力指纹位），meta 带 `schema_version`；读取端版本不认识即报错 |
+| <a id="ia-6-1b"></a>IA-6.1b | 已落地 | `TestSave_MaterialLandsUnderSessionDirWithSchemaVersion` | MS-6 | 按任务隔离 `.xhunter/<session_id>/session.jsonl`；不同 session 互不覆盖 |
 | <a id="ia-6-1c"></a>IA-6.1c | 待接入 | — | MS-6 | 提交强制加入（`add -f`） |
 | <a id="ia-6-2"></a>IA-6.2 | 待接入 | — | MS-7 | 恢复过程零工具执行 |
 | <a id="ia-6-3"></a>IA-6.3 | 待接入 | — | MS-7 | 恢复从下一轮继续（FR-12.1） |
 | <a id="ia-6-4"></a>IA-6.4 | 待接入 | — | MS-7 | `schema_version` 不兼容 → 环境错误（FR-12.6） |
 | <a id="ia-6-5"></a>IA-6.5 | 待接入 | — | MS-8 | 材料含扩展能力指纹（FR-13.7） |
 | <a id="ia-6-5b"></a>IA-6.5b | 已落地 | `TestDecide_WriteToControlDirDenied` | — | 策略侧已落地；git 侧靠工具面不含 git 原语 |
-| <a id="ia-6-6"></a>IA-6.6 | 已落地 | 代码检查（`Session.snapshot` 只记 warn） | — | — |
+| <a id="ia-6-6"></a>IA-6.6 | 已落地 | `TestSnapshot_FailureDoesNotBlockTheRun`、`TestRecorder_OpenFailureDegradesWithoutFailingPrepare` | — | 材料绑定/落盘失败只降级（warn），不阻断任务 |
 | <a id="ia-6-7"></a>IA-6.7 | 已落地 | 代码检查；`TestFinalize_TextOnlyDeliverySucceeds` | — | — |
 | <a id="ia-6-8"></a>IA-6.8 | 待补 | — | §5 | 凭据不落材料的断言扫描（FR-8.4、AC-8） |
 | <a id="ia-7-1"></a>IA-7.1 | 待补 | — | MS-8 | 「工具面恒定」对照用例（环境能力/分期都不改工具名与 schema） |
@@ -333,6 +333,7 @@
 | ~~结构判据三态与"不可判定"如实上报~~（MS-4） | **已落地**（2026-09-23）：`structuralPoint() bool`（恒 false）换成三态 `structuralVerdict`（pass/fail/undecidable）；默认实现是 **undecidable**（符号扩展未接入——我们没**判过**，不是"没通过"），日志如实说「结构判据不可判定」、并发一条 `degraded`（`scope: checkpoint`，每次运行最多一条）；pass 照常提交、fail 说「未落在结构完整点」。判据留了**包内可替换位置**（`Session.structuralJudge`，未加公开配置字段）。用例 `TestCheckpoint_NoAutoCheckpointOffStructuralPoint`、`TestCheckpoint_StructuralFailDoesNotCommit`、`TestCheckpoint_StructuralPassCommits`、`TestCheckpoint_UndecidableReportsDegradedOnce` |
 | ~~检查点连败上限~~（MS-4 / FR-1.3b / IA-11.9 / AC-22） | **已落地**（2026-09-23）：`Session` 记**连续**提交失败数（成功即归零，含 `Created=false` 的空操作；只统计阶段性检查点提交，交付提交不计入）；达包内常量 `checkpointFailStreakLimit=3` 时由 `OnTurn` 守卫统一收敛为 `checkpoint_failed_streak`（退出 1），本轮结束即收敛、不跑完剩余轮次。守卫次序固定为「取消 → 通道 → 提交连败 → 预算」。用例 `TestCheckpoint_StreakLimitConvergesAsEnvError`、`TestCheckpoint_SingleFailureSelfHeals`、`TestCheckpoint_SuccessResetsStreak` |
 | ~~检查点时序、不可见性与意图兑现断言~~（MS-4 / IA-11.8 / IA-11.10 / IA-11.13） | **已落地**（2026-09-23）：IA-11.8（`TestWiring_PrepareBaselineRunsBeforeAnyTool`、`TestCheckpoint_CommitOnlyAtTurnBoundaryAndFinalize`、`TestDefaultTools_HasNoGitPrimitive`——git 不可见性用类型级证据）、IA-11.10（`TestCheckpoint_CommitsOnlyThisTurnsChanges`）、IA-11.13（`TestCheckpoint_ModelRequestIsConsumedOnceAndSkipsEmptyCommit`、`TestCheckpointMessage_Composition`）。MS-4 由此收口 |
+| ~~会话材料落盘 ＋ Recorder 接口一次加齐~~（MS-6） | **部分已落地**（2026-09-23）：`hunt.SessionRecorder` 方法集**一次加齐**（`Open` / `RecordTurn` / `RecordOp` / `RecordUsage` / `Ops` / `Snapshot`）；`cmd/xhunter` 把材料落成 JSONL（`.xhunter/<session_id>/session.jsonl`，首行 meta 带 `schema_version`，追加写、周期 flush），中立的 `llm.Message`/`ToolCall`/`ToolResult` 与 `harness.Turn`/`hunt.WriteOp` 直接复用为记录形状（不另写平行 DTO）。用例 `TestSave_MaterialLandsUnderSessionDirWithSchemaVersion`、`TestMaterial_LoadRejectsUnknownSchemaVersion`（`cmd`）、`TestRecorder_RecordsOpsAndUsageFromTheSession`、`TestRecorder_OpenFailureDegradesWithoutFailingPrepare`、`TestSnapshot_FailureDoesNotBlockTheRun`（`hunt`）。**余**：随检查点 `add -f` 提交（IA-6.1c）、diff 排除材料目录（IA-11.6）、恢复（MS-7） |
 
 ---
 
@@ -344,7 +345,7 @@
 
 | 主题 | §2 索引键 |
 |---|---|
-| 会话材料与恢复 | `IA-6.1`、`IA-6.1b`、`IA-6.1c`、`IA-6.2`、`IA-6.3`、`IA-6.4`、`IA-6.5`、`L1-8`、`FR-12.1`、`FR-12.2`、`AC-7` |
+| 会话材料与恢复 | `IA-6.1c`、`IA-6.2`、`IA-6.3`、`IA-6.4`、`IA-6.5`、`L1-8`、`FR-12.1`、`FR-12.2`、`AC-7` |
 | 压缩 | `IA-2.5`、`IA-2.6`、`IA-2.7`、`IA-2.8`、`L2-压缩`、`FR-14.1`、`AC-17`、`AC-18` |
 | 门禁 | `IA-3.16`（`check` 声明不实现）、`IA-11.12`、`L1-4`、`L7-gates`、`FR-5.2b`、`产品§6` |
 | 符号能力 | `IA-3.5`、`IA-7.1`~`IA-7.7`、`L1-5`、`FR-4.1`、`FR-4.3`、`FR-13.1`、`产品§6` |
@@ -393,7 +394,7 @@
 | **MS-3** | 止损完备（两段式止损） | 一期收口 | MS-2 | 中 | FR-9.1/9.4、IA-4.8/4.9 | 未开始 |
 | **MS-4** | 检查点分档与提交健壮性 | 一期收口 | MS-1 | 中 | FR-1.3b/1.3c/1.11②、IA-11.8/11.10/11.11/11.13 | **已完成**（2026-09-23；结构判据三态、连败上限、时序/不可见性/意图兑现断言全部落地，见 §2.3） |
 | **MS-5** | 门禁落地（`check` 实现 ＋ 全链护栏） | 一期收口 | MS-4 | 大 | FR-5.2b~5.2i、IA-11.12 | 未开始 |
-| **MS-6** | 会话材料落盘 | M1.5 前置 | MS-4 | 中 | FR-12.2/12.2b/12.3、IA-6.1/6.1b/6.1c | 未开始 |
+| **MS-6** | 会话材料落盘 | M1.5 前置 | MS-4 | 中 | FR-12.2/12.2b/12.3、IA-6.1/6.1b/6.1c | **部分完成**（材料落盘 ＋ Recorder 接口一次加齐已落地；随检查点 `add -f`、diff 排除材料目录待续） |
 | **MS-7** | 会话恢复（resume） | M1.5 | MS-6 | 大 | FR-12.1/12.6、AC-7、IA-6.2/6.3/6.4 | 未开始 |
 | **MS-8** | 扩展接入与符号读写 | M2 | MS-2 | 大 | FR-13、FR-4.1/4.2/4.4~4.8/4.13、IA-7.1~7.6 | 未开始 |
 | **MS-9** | 结构检查与 `on_structure` 默认档 | M2 收尾 | MS-5、MS-8 | 中 | FR-1.3d、IA-11.12 | 未开始 |
@@ -546,18 +547,17 @@
 **目标**：把会话材料从「内存里的记录」变成「随检查点进分支的文件」，为恢复准备唯一状态源。
 
 **范围**
-- 材料路径 `.xhunter/<session_id>/session.jsonl`（按任务隔离），带 `schema_version`，内容含对话历史、写操作序列、用量、扩展能力指纹字段（MS-8 填充）。
+- 材料路径 `.xhunter/<session_id>/session.jsonl`（按任务隔离），带 `schema_version`，内容含对话历史、写操作序列、用量、扩展能力指纹字段（MS-8 填充）。**（已落地）**
 - **随检查点提交**：`add -f`；周期性落盘（FR-12.3b）。
 - **排除交付 diff**：`Diff`/`Patch` 排除 `.xhunter/<session_id>/**`，不排除该目录之外的路径（如 `skills.draft/**`）。
 - 材料不可篡改：策略已禁写 `.xhunter/**`（已有），git 侧模型无能力（已有）——只补断言。
-- **接口一次加齐**：`hunt.SessionRecorder` 现在只有 `RecordTurn` / `Snapshot`，而**写操作序列（恢复的唯一刚需）没有通道**——`WriteOp` 只被 `Session.ops` 自己攥着，只用来判「有没有改动值得交付提交」。本次一并加 `RecordOp(WriteOp)` / `Ops() []WriteOp`，并在 `Session` 的落盘段调用 `recordOp`。**刻意不加** `Delta` / `Fingerprint`：两者当前都没有消费方，加了就是「没人读的字段」，违反 `llm.Caps` 上定的同一条原则。
+- **接口一次加齐**（**已落地**）：`hunt.SessionRecorder` 方法集一次补齐 `Open(root)` / `RecordTurn` / `RecordOp(WriteOp)` / `RecordUsage(llm.Usage)` / `Ops() []WriteOp` / `Snapshot()`——写操作序列是恢复的唯一刚需，此前 `WriteOp` 只被 `Session.ops` 攥着、没有通道，与落盘实现一次改完、不分两次扩公开接口。`RecordUsage` 是文档之外多出的一项：材料要含用量而 `Snapshot()` 不接受参数，且它让"每轮用量增量"与计费、`usage` 事件同源（只有一处计算）。**刻意不加** `Delta` / `Fingerprint`：没有消费方（同 `llm.Caps` 原则）。
 
 **独立验收的证据**
-- `TestSave_MaterialLandsUnderSessionDirWithSchemaVersion`。
-- `TestDiff_ExcludesMaterialDirButKeepsSkillsDraft`。
-- `TestCommit_ForceAddsMaterialEvenWhenGitignored`。
-- `TestSnapshot_FailureDoesNotBlockTheRun`（IA-6.6）。
-- `TestMaterial_LoadRejectsUnknownSchemaVersion`。
+- 材料落盘：`TestSave_MaterialLandsUnderSessionDirWithSchemaVersion`、`TestMaterial_LoadRejectsUnknownSchemaVersion`（**已有**）。
+- 接口接上（`hunt`）：`TestRecorder_RecordsOpsAndUsageFromTheSession`、`TestRecorder_OpenFailureDegradesWithoutFailingPrepare`、`TestSnapshot_FailureDoesNotBlockTheRun`（IA-6.6）（**已有**）。
+- 随检查点 `add -f`：`TestCommit_ForceAddsMaterialEvenWhenGitignored`（**后续 MS-6 任务**）。
+- diff 排除材料目录：`TestDiff_ExcludesMaterialDirButKeepsSkillsDraft`（**后续 MS-6 任务**）。
 
 **依赖**：MS-4。**不做**：恢复流程（MS-7）。
 

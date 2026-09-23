@@ -531,7 +531,7 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 
 ### 7.6 H6 Session —— 会话材料与检查点恢复（`hunt.SessionRecorder`）
 
-**契约**（`hunt/runtime.go`）：`RecordTurn(rec harness.Turn)` / `Snapshot() error`；设计上还要 `RecordOp(WriteOp)` / `Ops() []WriteOp`——**写操作序列是恢复的唯一刚需，与材料的落盘实现一起加（一次改完，别分两次扩公开接口）**。`Delta` / `Fingerprint` 现在没有消费方，等有消费方再加——同 `llm.Caps` 的原则：只声明真正被用到的能力。（记录项与恢复流程见下；实现状态见 xhunter-status.md 状态索引 · H6）
+**契约**（`hunt/runtime.go`）：`Open(root string) error` / `RecordTurn(rec harness.Turn)` / `RecordOp(op WriteOp)` / `RecordUsage(u llm.Usage)` / `Ops() []WriteOp` / `Snapshot() error`。**方法集一次加齐**——写操作序列是恢复的唯一刚需，此前没有通道（`WriteOp` 只被 `Session.ops` 攥着），与材料的落盘实现一起加、不分两次扩公开接口。`Delta` / `Fingerprint` 仍不加：没有消费方（同 `llm.Caps` 原则：只声明真正被用到的能力）。（记录项与恢复流程见下；实现状态见 xhunter-status.md 状态索引 · H6）
 
 **记录**（全程）：
 

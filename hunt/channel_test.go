@@ -158,10 +158,11 @@ func TestOnTurn_ChannelFailureDoesNotOverrideCancellation(t *testing.T) {
 
 // ============================================================ 假上游
 
-// turnScript 是假上游一轮要产出的东西：正文与工具调用。
+// turnScript 是假上游一轮要产出的东西：正文、工具调用与用量。
 type turnScript struct {
 	text  string
 	calls []llm.ToolCall
+	usage llm.Usage
 }
 
 // stubProvider 按脚本逐轮交出事件序列，记录被调用了几轮。
@@ -184,6 +185,9 @@ func (p *stubProvider) Infer(_ context.Context, _ llm.Request) (llm.Session, err
 	}
 	if s.text != "" {
 		ch <- llm.Event{Kind: llm.EvText, Text: s.text}
+	}
+	if s.usage != (llm.Usage{}) {
+		ch <- llm.Event{Kind: llm.EvUsage, Usage: s.usage}
 	}
 	close(ch)
 	return stubSession{ch: ch}, nil
