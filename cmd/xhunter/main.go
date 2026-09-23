@@ -175,7 +175,7 @@ func huntCmd(args []string) int {
 	}})
 
 	// 交付记录在终态之后写：无论成败都要留档（FR-1.5），写不出来属环境问题。
-	if err := writeRunOutputs(*resultPath, *patchPath, bounty, outcome, session.Delivery()); err != nil {
+	if err := writeRunOutputs(*resultPath, *patchPath, bounty, outcome, session.Delivery(), session.Declared()); err != nil {
 		fmt.Fprintf(os.Stderr, "%v（终态已定：%s/%s）\n", err, outcome.Status, outcome.Reason)
 		return exitEnv
 	}

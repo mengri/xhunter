@@ -113,6 +113,7 @@
 - **符号化与降级是原语自身的性质**：`hunt/symbolic` 先定位到字节区间、再复用 `hunt/basic` 的读写；harness 与 basic 都不感知符号，也没有统一的 Dispatch 层。
 - **能力抽象是独立基础包**：`workspace`/`git`/`ext` 各自定义一套抽象接口，原语与其他插件都是它们的消费者；「写盘唯一入口」（`Committer`）在 hunt 层，最终落在 workspace 的 `WriteRange` 上。
 - **工作区是运行期产物**：装配层交的是工厂（`ToolFactory`、`PromptPluginFactory`），`Session.Prepare` 打开工作区后构造原语与插件、定格工具面——「构造顺序 = 依赖顺序」：后端 → 工作区（运行期）→ 原语/插件 → 执行体。
+- **多 agent 编排不是 harness 的维度，而是原语的内部行为**：harness 只从流里收 `turn.Calls`（不执行），执行落在业务 handler——所以「派子 agent」可以是一个原语的实现细节（原语内部再跑一次循环，把结果当作自己的结果返回），harness 不需要认识它、也不需要为它新增概念。（V 层的路线选择见 §7.8；代价与缺口清单见 `xhunter-memo-multi-agent-route.md`）
 
 由此推出三点：
 
@@ -502,7 +503,7 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 
 | 裁决点 | 输入 | 输出 | **设计口径** |
 |---|---|---|---|
-| 路径边界 | 原语 ＋ 参数（路径） | allow / deny | 绝对路径 / `..` 逃逸 / `.xhunter/**`（`skills.draft/**` 除外）一律拒绝；**未知原语默认拒绝** |
+| 路径边界 | 目标路径 ＋ **该原语是否写盘**（`Call.Writes`，由原语自述） | allow / deny | **只对写操作裁决**：绝对路径 / `..` 逃逸 / `.xhunter/**`（`skills.draft/**` 除外）一律拒绝。只读与门禁**不走路径边界**——越界由工作区层拒绝（它只接受相对路径），而 `.xhunter/**` 的**读必须放行**（skill 正文靠 `read` 按需加载）。未知原语**到不了这里**：执行体查表即挡下（`unknown_tool`） |
 | 破坏性操作 | 原语 ＋ 参数 | allow / deny | 由"原语名 ＋ 路径"表达（如符号重命名的写判定） |
 | **影响面** | 原语 ＋ 寻址方式 ＋ 改动规模 | — | **不做**：无人 review 的终局要求判据来自证据（门禁、读回校验），"改得多就保守拒绝"是偏好而非判据；改动规模只上报，不裁决 |
 | **权限询问应答** | — | — | **不适用**：无人类场景下不存在这条路径，裁决只发生在调用点（§10.3） |
@@ -530,7 +531,7 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 
 ### 7.6 H6 Session —— 会话材料与检查点恢复（`hunt.SessionRecorder`）
 
-**契约**（`hunt/runtime.go`）：`RecordTurn(rec harness.Turn)` / `Snapshot() error`。设计上还要 `RecordOp` / `Ops` / `Delta` / `Fingerprint`（记录项与恢复流程见下；实现状态见 xhunter-status.md 状态索引 · H6）。
+**契约**（`hunt/runtime.go`）：`RecordTurn(rec harness.Turn)` / `Snapshot() error`；设计上还要 `RecordOp(WriteOp)` / `Ops() []WriteOp`——**写操作序列是恢复的唯一刚需，与材料的落盘实现一起加（一次改完，别分两次扩公开接口）**。`Delta` / `Fingerprint` 现在没有消费方，等有消费方再加——同 `llm.Caps` 的原则：只声明真正被用到的能力。（记录项与恢复流程见下；实现状态见 xhunter-status.md 状态索引 · H6）
 
 **记录**（全程）：
 
@@ -577,6 +578,10 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 ### 7.8 质量门禁（`check` 原语的具名条目）
 
 > 实现状态见 xhunter-status.md 状态索引 · L1-4 / IA-11.12（本节是目标规格）。
+>
+> **V 层的路线选择（2026-09-23 定）**：评估接口走**判据路线**——本节的具名门禁 ＋ §6.3 L6 的结构检查，两者都是**可执行的证据**（同一份改动两次跑同一门禁，结论相同）。**不采纳**「派一个专门挑错的 agent 去审核结果」：它给出的是另一个模型的**判断**，既不「可执行」也不「可复现」，与产品设计 §1.2「判据优先于偏好」的定调相反。
+>
+> 但**多 agent 不是禁区，只是它的落点不是 harness**：`harness` 只从流里收 `turn.Calls`、不执行，因此「派子 agent」是一个**操作原语**的内部行为——`harness` 一行不用改。这条边界、它的代价与缺口清单见备忘录 `xhunter-memo-multi-agent-route.md`。
 
 门禁**不是新工具**，而是 `check` 原语的具名条目——原语面是 9 个（5 基础 ＋ 3 符号 ＋ 1 门禁，另有控制原语 `checkpoint`），门禁不占新的工具名。
 
@@ -997,15 +1002,16 @@ Bounty(session) ──► H6.Session
 | IA-1.1 | `Prepare` 失败即终止，**不进入任何一轮推理** | `TestEngine_PrepareFailureStopsBeforeInference`（断言零次推理） |
 | IA-1.2 | `OnTurn` 返回 `false` 即停止；handler 已置的终态不被覆盖 | `TestEngine_HandlerTerminalWinsOverStop` |
 | IA-1.3 | 取消优先级最高：`ctx` 取消即以 `cancelled/3` 收敛，且不再发起推理；**推理在途中被取消也按取消归因**（不得判成推理失败/环境错误） | `TestEngine_CancelledBeforeFirstTurn`、`TestEngine_CancelDuringInferIsCancelled` |
-| IA-1.4 | 轮数达 `Config.MaxTurns` → `failed/1`（`turn_limit_exceeded`） | `TestEngine_TurnLimitIsMechanicalCap`（断言推理次数恰等于上限） |
-| IA-1.5 | 连续失败轮数达 `Config.MaxFailStreak` → `failed/1`（止损） | `TestEngine_FailStreakStopsLoss` |
+| IA-1.4 | 轮数达 `Config.MaxTurns` → `failed/2`（`turn_limit_exceeded`） | `TestEngine_TurnLimitIsMechanicalCap`（断言推理次数恰等于上限） |
+| IA-1.5 | 连续失败轮数达 `Config.MaxFailStreak` → `failed/2`（止损） | `TestEngine_FailStreakStopsLoss` |
 | IA-1.6 | 本轮无工具调用 → 成功路径（`no_tool_call`）；handler 拿到整轮内容与用量 | `TestEngine_NoToolCallSucceedsAndCollectsTurn` |
 | IA-1.7 | panic 收敛为环境错误终态，不让进程带着半截状态崩掉 | `TestEngine_PanicBecomesEnvFailureAndFinalStillRuns` |
 | IA-1.8 | **工具调用不由引擎执行**：引擎只收 `turn.Text` / `turn.Calls`，只读 `turn.Results` / `turn.Failed` | 代码检查：`harness` 里没有任何执行或写盘调用 |
 | IA-1.9 | **收尾在每条退出路径上都跑**（含 panic、初始化失败、轮数上限） | `TestEngine_PanicBecomesEnvFailureAndFinalStillRuns`、`TestEngine_PrepareFailureStopsBeforeInference` |
 | IA-1.10 | 缺 provider → 构造期错误，不是运行期失败 | `TestNew_RequiresProvider` |
 | IA-1.11 | 推理失败 / 流内错误 → 环境错误（退出 1），且流错误不进入轮边界 | `TestEngine_InferFailureIsEnvError`、`TestEngine_StreamErrorIsEnvError` |
-| IA-1.12 | `OnTurn` 报错 → `failed/1`，原因标明阶段与原因 | `TestEngine_OnTurnErrorIsFailed` |
+| IA-1.12 | `OnTurn` 报错 → `failed/2`，原因标明阶段与原因 | `TestEngine_OnTurnErrorIsFailed` |
+| IA-1.13 | **终态可由模型自陈覆盖，但只在引擎给出 `succeeded` 时**：模型在正文固定小节里声明「## 需要补全」即收敛为 `blocked`（退出码 0，改动照常交付）；机制性终止（预算耗尽 / 止损 / 取消 / 引擎侧错误）**不被改写**；未声明时保持 `succeeded`（不得把「没写小节」反推成失败）。声明在**轮边界登记**、收尾收敛 | `TestFinalize_NeedsInputConvergesToBlocked`、`TestFinalize_BlockedDoesNotOverrideMechanicalTerminal`、`TestFinalize_NoDeclarationStaysSucceeded`、`TestOnTurn_DeclaredIsRecordedAtTheTurnItWasSaid`、`TestParseDeclared_*`（hunt） |
 
 ### 12.2 H2 — `hunt.ContextBuilder`
 
@@ -1030,7 +1036,7 @@ Bounty(session) ──► H6.Session
 
 ### 12.3 H3 — 原语与执行流水线（`hunt.Primitive` ＋ `hunt.Session.OnTurn`）
 
-**契约**：`Primitive{Name / Decl() llm.ToolDecl / Execute(ctx, Call, Facts) (Result, []workspace.FileEdit, error)}`。**写盘不在原语里**：原语只产出编辑计划，唯一落盘点在 `Committer.Commit`（→ `workspace.Storage.WriteRange`）。执行顺序见 §6.3 L5。
+**契约**：`Primitive{Decl() llm.ToolDecl / Execute(ctx, Call, Facts) (Result, []workspace.FileEdit, error) / Writes() bool}`。**写盘不在原语里**：原语只产出编辑计划，唯一落盘点在 `Committer.Commit`（→ `workspace.Storage.WriteRange`）。而**「是否会写盘」由原语自己声明**（`Writes()`）：它是策略路径裁决的唯一输入，所以策略不维护原语分类表——表与实现分处两个包，漂开之后不会以编译错误的形式暴露，只会让写原语被当成只读、绕开路径边界。执行顺序见 §6.3 L5。
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
@@ -1061,11 +1067,11 @@ Bounty(session) ──► H6.Session
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
-| IA-4.1 | 裁决输入是「原语 ＋ 参数（路径）」——**没有改动规模维度**（不做影响面阈值；规模只上报） | 代码检查 |
+| IA-4.1 | 裁决输入是「目标路径 ＋ 该原语是否写盘」——**没有改动规模维度**（不做影响面阈值；规模只上报） | 代码检查 |
 | IA-4.2 | 拒绝必须携带原因，且原因随结果回灌给模型；同时上报 `policy_denied` | `TestExecuteCall_PolicyDenialIsReported`（hunt） |
 | IA-4.3 | 被拒操作**零落盘** | `TestExecuteCall_PolicyDenialIsReported`、`TestExecuteCall_MissingPolicyFailsClosed`（hunt） |
 | IA-4.4 | **不存在权限询问路径**：`llm.Session` 只有 `Events` / `Cancel`，`llm.Event` 没有"请求授权"形态；裁决只发生在调用点 | 代码检查（接口面） |
-| IA-4.5 | 读与门禁放行、写按路径裁决、**未知原语默认拒绝** | `TestDecide_ReadAndGateAllowed`、`TestDecide_WriteAllowed`、`TestDecide_UnknownPrimitiveDenied` |
+| IA-4.5 | 读与门禁放行（**不走路径边界**）、写按路径裁决；**是否写盘由原语自述**（`Writes()`）；未知原语在查表处挡下、不进裁决 | `TestDecide_ReadAndGateAllowed`、`TestDecide_WriteAllowed`、`TestDecide_NonWritingCallSkipsPathRules`（policy）、`TestDefaultTools_WritesIsDeclared`（cmd） |
 | IA-4.6 | 路径边界：绝对路径 / `..` 逃逸 / `.xhunter/**` 拒绝，`skills.draft/**` 放行 | `TestDecide_PathEscapeDenied`、`TestDecide_WriteToControlDirDenied`、`TestDecide_WriteToSkillsDraftAllowed` |
 | IA-4.7 | 三重预算独立判定，耗尽给出维度名；0 = 不限 | `TestChargeAndExhausted_Tokens`、`TestExhausted_Turns`、`TestExhausted_WallClock`、`TestExhausted_ZeroMeansUnlimited` |
 | IA-4.7b | **预算真的从投递走到止损**：环境变量 → Bounty → 策略 → 轮末守卫 → `budget_exhausted:<维度>`（FR-9、AC-5）；写错的取值在启动期失败 | `TestBountyFromEnv_DeliversBudget`、`TestEndToEnd_BudgetExhaustionStopsTheRun`（cmd） |
@@ -1090,7 +1096,7 @@ Bounty(session) ──► H6.Session
 
 ### 12.6 H6 — `hunt.SessionRecorder`
 
-**契约**：`RecordTurn(rec harness.Turn)` / `Snapshot() error`（设计还要 `RecordOp` / `Ops` / `Delta` / `Fingerprint`）。实现状态见 xhunter-status.md 状态索引 · H6。
+**契约**：`RecordTurn(rec harness.Turn)` / `Snapshot() error`（设计还要 `RecordOp` / `Ops`——与落盘实现一起加；`Delta` / `Fingerprint` 等有消费方再加）。实现状态见 xhunter-status.md 状态索引 · H6。
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
@@ -1193,7 +1199,7 @@ Bounty(session) ──► H6.Session
 | IA-12.5 | 部署事实缺失 → 启动期退出码 1，并指出缺哪一项 | `TestBountyFromEnv_RequiresRepoFacts`、`TestFromEnv_ReportsAllIssuesAtOnce`（providerconfig）、`TestProviderFor_UnknownProtocolTellsWhereToAddOne` |
 | IA-12.6 | **端到端**：本地驱动跑通一次（基线 → 至少一轮 → 工具落盘 → 轮边界检查点 → 交付 = 分支 tip → `hunt_end`），退出码与事件序列符合契约；事件只走 stdout、收尾清理工作树 | `TestEndToEnd_LocalRunProducesDeliveryCommit`（真 git 夹具 + 本地假上游） |
 | IA-12.7 | 装配结果无运行期注册面：改装配只改装配代码，框架侧无注册 API | 代码检查（`harness` 只有 `New(provider, ...)`；`hunt.Config` 是构造参数） |
-| IA-12.9 | **结果文件**（FR-1.5）：`--result` 指定的文件在**无论成败**时都写出，含终态/退出码/仓库事实/交付提交/改动清单/用量；失败带 `error{kind,message,retryable}`；写失败即环境错误（退出 1） | `TestEndToEnd_LocalRunProducesDeliveryCommit`、`TestEndToEnd_ResultFileWrittenOnFailure`（cmd） |
+| IA-12.9 | **结果文件**（FR-1.5）：`--result` 指定的文件在**无论成败**时都写出，含终态/退出码/仓库事实/交付提交/改动清单/用量；失败带 `error{kind,message,retryable}`；写失败即环境错误（退出 1）。**`needs` / `assumptions` 是三态**：未提供写 `null`（不是 `[]`、也不是缺字段） | `TestEndToEnd_LocalRunProducesDeliveryCommit`、`TestEndToEnd_ResultFileWrittenOnFailure`、`TestResultFile_DeclarationsAreThreeState`（cmd） |
 | IA-12.8 | **信号接线**：SIGINT / SIGTERM 取消运行段的 `ctx`（循环停止发起新的推理与工具调用、`Finalize` 照常收敛、退出码 3）；启动期仍走默认处置 | `TestSignalContext_CancelsOnSignal`、`TestSignalContext_StopCancelsContext`（进程级 AC-6 断言见 xhunter-status.md 状态索引 · IA-12.8） |
 
 ---

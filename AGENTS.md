@@ -19,7 +19,7 @@ Xhunter is a Go 1.26 agent runtime with **no third-party runtime dependencies**.
 - `internal/workspace/osfs/` — the local-filesystem `workspace` implementation: directory-rooted, relative paths only, path-boundary and symlink-escape checks, and root validation at open time (a bad root fails in the prepare phase, before the first inference).
 - `internal/git/cli/` — the command-line `git` implementation.
 - `internal/policy/` — the strategy engine (the default `hunt.Policy`): default-deny, path boundaries (`.xhunter/**` write protection with the `skills.draft` exception), and the token/turn/wall-clock budgets.
-- `docs/` — three governing documents: `docs/xhunter-product-design.md`（产品边界与 FR/NFR/AC）、`docs/xhunter-usage.md`（外部契约与使用方式，含事件流 SSOT）、`docs/xhunter-architecture.md`（分层、组件、控制流时序、不变量 INV、接口验收 IA）。
+- `docs/` — four governing documents plus one memo: `docs/xhunter-product-design.md`（产品边界与 FR/NFR/AC）、`docs/xhunter-usage.md`（外部契约与使用方式，含事件流 SSOT）、`docs/xhunter-architecture.md`（分层、组件、控制流时序、不变量 INV、接口验收 IA）、`docs/xhunter-status.md`（实现现状与排期，状态 SSOT）。`docs/xhunter-memo-multi-agent-route.md` 是**备忘录、非规范**（备查未采纳的路线与缺口清单）；规范一律以那四份为准。
 - `scripts/check.py` — local build, vet, test, and target-platform checks.
 
 ## Build, Test, and Development Commands

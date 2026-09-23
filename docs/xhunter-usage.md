@@ -214,12 +214,15 @@ xhunter version
   "commit_sha": "...",
   "patch_path": "...",
   "files_changed": ["..."],
+  "needs": ["..."],
+  "assumptions": ["..."],
   "usage": {"reported": true, "input_tokens": 0, "output_tokens": 0, "cached_input_tokens": 0, "turns": 0, "elapsed_ms": 0},
   "error": {"kind": "prepare_failed", "message": "...", "retryable": true}
 }
 ```
 
 > `error` 仅失败时出现；`retryable` 与退出码同源（环境问题才为 `true`）。
+> `needs` / `assumptions` 是模型在正文固定小节里的自陈（FR-6.3）：`needs` 非空即表示模型选择停下，`status` 为 `blocked`（退出码 0，改动照常交付）。**未提供写成 `null`，不是 `[]`**——空数组会被读成"没有需要补全的条件"，那是另一句话。
 > `usage.reported: false` 表示**上游未回报用量**——各项为 0 **不代表真的没用**，事件流里有对应的 `degraded` 记录（FR-9.7）。
 > `patch_path` 仅在给了 `--patch` 且补丁产出成功时出现；补丁**排除会话材料目录**
 > （`.xhunter/<session_id>/**`，FR-6.1）——实现状态见 xhunter-status.md 状态索引 · IA-11.6。

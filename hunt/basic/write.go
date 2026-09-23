@@ -18,6 +18,9 @@ func WriteTool(ws workspace.Workspace) hunt.Primitive {
 
 type writePrim struct{ ws workspace.Workspace }
 
+// Writes 报告本原语会写盘：写类原语，策略据此做路径边界裁决。
+func (writePrim) Writes() bool { return true }
+
 func (writePrim) Decl() llm.ToolDecl {
 	return llm.ToolDecl{
 		Name:        string(Write),

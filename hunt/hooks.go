@@ -187,6 +187,9 @@ func (s *Session) OnTurn(ctx context.Context, run *harness.Run, turn *harness.Tu
 		}
 	}
 
+	// 登记自陈清单：它记的是「模型说过什么」，不是历史的副本，所以排在记录之前。
+	s.AppendDeclared(turn.Text)
+
 	// 记录本轮：一份进上下文历史（下一轮组装的依据），一份进会话材料（崩溃后恢复）。
 	if s.cfg.Context != nil {
 		s.cfg.Context.Append(*turn)
@@ -305,6 +308,23 @@ func (s *Session) charge(total llm.Usage) {
 
 // Finalize 循环后一次（无论成败）：无产出判失败、交付提交、差异、材料落盘、清理、终态上报。
 func (s *Session) Finalize(ctx context.Context, run *harness.Run) error {
+	// 模型自陈优先于「无工具调用」的默认推断，但让位于机制性终止。
+	//
+	// 方向是单向的：引擎给的 succeeded 只是「没人声明时的默认值」，不是结论，所以可以被
+	// 自陈改写；而预算耗尽、止损、取消是机制给的结论，不该被一句自陈抹掉。因此只在引擎
+	// 给出 succeeded 时才采纳「## 需要补全」——这正是「机制性终止由引擎强制给出」的落点。
+	//
+	// 这一步必须排在下发 hunt_end 之前：否则事件里带的是覆盖前的 succeeded，与结果文件
+	// 不一致，而平台正是按 status 分类处置的。
+	if out := run.Outcome(); out.Status == harness.StatusSucceeded && len(s.declared.Needs) > 0 {
+		run.SetTerminal(harness.Terminal{
+			Status: harness.StatusBlocked, Reason: reasonNeedsInput, Code: harness.ExitOK,
+		})
+	}
+
+	// 自陈如实上报：终态是 blocked 还是别的，与「说过什么」无关，两类清单都要发出去。
+	s.emitDeclarations()
+
 	// 交付提交：失败也尽力，补丁仍可单独产出。
 	//
 	// 这里刻意**不设"无产出即失败"的闸门**：任务不一定改代码——任务内容本身可能就是
@@ -350,6 +370,26 @@ func (s *Session) Finalize(ctx context.Context, run *harness.Run) error {
 		}})
 	}
 	return nil
+}
+
+// reasonNeedsInput 是「缺条件停下」的固定原因，也是对应的事件名（使用手册 §5/§7 的
+// 契约取值）——两处共用一个常量，避免改一处忘一处。
+const reasonNeedsInput = "needs_input"
+
+// emitDeclarations 上报模型自陈的两类清单。
+//
+// 逐条发而不是打包：`needs_input` / `assumption` 的载荷形状是 `{text}`（使用手册 §5），
+// 平台按条转成待办与风险项。缺出口时是空操作——自陈是诊断，不是装配的必需件。
+func (s *Session) emitDeclarations() {
+	if s.cfg.Sink == nil {
+		return
+	}
+	for _, n := range s.declared.Needs {
+		_ = s.cfg.Sink.Emit(ExternalEvent{Type: reasonNeedsInput, Payload: map[string]any{"text": n}})
+	}
+	for _, a := range s.declared.Assumptions {
+		_ = s.cfg.Sink.Emit(ExternalEvent{Type: "assumption", Payload: map[string]any{"text": a}})
+	}
 }
 
 // ============================================================ 检查点意图与提交信息

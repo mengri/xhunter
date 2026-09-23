@@ -34,6 +34,10 @@ type Call struct {
 	NewName   string
 	Gate      string
 	Summary   string
+
+	// Writes 由执行体在查表之后回填（模型给不出它：它不在参数形状里）。策略据此决定要
+	// 不要做路径裁决；放在 Call 上而不是给 Policy 加参数，是为了让公开接口的签名保持稳定。
+	Writes bool
 }
 
 // Selector 是原语的定位参数：字面量是内容寻址，限定名是符号寻址，行范围是区间读取。

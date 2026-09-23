@@ -14,6 +14,10 @@ type Status string
 
 const (
 	StatusSucceeded Status = "succeeded"
+	// StatusBlocked：模型声明条件不足而停下。改动照常交付（检查点已提交），缺的是任务
+	// 前提——重跑还是缺，所以平台按 status 分类处理，不按重派。引擎自己不产生这个值：
+	// 它只采纳业务收尾时的判断（声明的采集在业务侧）。
+	StatusBlocked   Status = "blocked"
 	StatusFailed    Status = "failed"
 	StatusCancelled Status = "cancelled"
 )

@@ -15,9 +15,6 @@ import (
 	"time"
 
 	"xhunter/hunt"
-	"xhunter/hunt/basic"
-	"xhunter/hunt/gate"
-	"xhunter/hunt/symbolic"
 	"xhunter/llm"
 )
 
@@ -30,23 +27,6 @@ const controlDir = ".xhunter"
 
 // skillsDraftDir 是唯一允许模型写入的控制子目录。
 const skillsDraftDir = ".xhunter/skills.draft"
-
-// passPrimitives 是不写盘、因此无需路径裁决的原语。
-var passPrimitives = map[hunt.PrimitiveName]bool{
-	basic.Read:          true,
-	basic.Find:          true,
-	basic.Glob:          true,
-	symbolic.SymbolRead: true,
-	gate.Check:          true,
-}
-
-// writePrimitives 是会产生写操作、因此要过路径裁决的原语。
-var writePrimitives = map[hunt.PrimitiveName]bool{
-	basic.Write:           true,
-	basic.Edit:            true,
-	symbolic.SymbolEdit:   true,
-	symbolic.SymbolRename: true,
-}
 
 // Config 是策略的装配参数。
 type Config struct {
@@ -72,27 +52,29 @@ func New(cfg Config) hunt.Policy {
 
 var _ hunt.Policy = (*engine)(nil)
 
-// Decide 裁决一次调用能否放行。只对写操作做路径裁决；读与门禁直接放行。
+// Decide 裁决一次调用能否放行。只对写操作做路径裁决。
+//
+// 输入是「目标路径 ＋ 这次调用是否写盘」——**是否写盘由原语自述**（`Call.Writes`，执行体
+// 查表后回填）。策略不自己维护一张原语分类表：那张表与实现分处两个包，漂开之后不会以编译
+// 错误的形式暴露，只会让某个写原语被当成只读、绕开路径边界。
+//
+// 名字不认识的原语到不了这里——执行体在查表处就挡下了（`unknown_tool`）。
 func (e *engine) Decide(_ context.Context, call hunt.Call) (hunt.Decision, error) {
-	switch {
-	case passPrimitives[call.Primitive]:
+	if !call.Writes {
+		// 只读与门禁不走路径边界：越界路径根本表达不出来（工作区层只接受相对路径且拒绝
+		// 逃逸），而 `.xhunter/**` 的**读必须放行**——skill 正文正是靠 read 按需加载的。
 		return allow("只读或门禁，无路径约束"), nil
-
-	case writePrimitives[call.Primitive]:
-		if call.Target == "" {
-			// 符号级写操作（如不指定文件的符号重命名）没有目标路径可查：它的改动面由
-			// 定位结果决定，而定位发生在裁决之后。刻意不按改动规模设阈值——判据来自
-			// 证据（门禁、读回校验），不来自"改得多就保守拒绝"。
-			return allow("符号级写操作"), nil
-		}
-		if reason, blocked := blockPath(call.Target); blocked {
-			return deny(reason), nil
-		}
-		return allow("工作区内写操作"), nil
-
-	default:
-		return deny("未识别的原语 " + string(call.Primitive)), nil
 	}
+	if call.Target == "" {
+		// 符号级写操作（如不指定文件的符号重命名）没有目标路径可查：它的改动面由定位
+		// 结果决定，而定位发生在裁决之后。刻意不按改动规模设阈值——判据来自证据（门禁、
+		// 读回校验），不来自"改得多就保守拒绝"。
+		return allow("符号级写操作"), nil
+	}
+	if reason, blocked := blockPath(call.Target); blocked {
+		return deny(reason), nil
+	}
+	return allow("工作区内写操作"), nil
 }
 
 // Charge 累计 token 用量。

@@ -36,6 +36,9 @@ func FindTool(ws workspace.Workspace) hunt.Primitive {
 
 type findPrim struct{ ws workspace.Workspace }
 
+// Writes 报告本原语不写盘：读类原语，策略因此不必为它查路径边界。
+func (findPrim) Writes() bool { return false }
+
 func (findPrim) Decl() llm.ToolDecl {
 	return llm.ToolDecl{
 		Name:        string(Find),

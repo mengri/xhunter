@@ -25,7 +25,7 @@ func TestDecide_ReadAndGateAllowed(t *testing.T) {
 func TestDecide_WriteAllowed(t *testing.T) {
 	p := New(Config{})
 	for _, name := range []hunt.PrimitiveName{"write", "edit"} {
-		d, _ := p.Decide(context.Background(), hunt.Call{Primitive: name, Target: "src/main.go"})
+		d, _ := p.Decide(context.Background(), hunt.Call{Primitive: name, Writes: true, Target: "src/main.go"})
 		if d.Verdict != hunt.VerdictAllow {
 			t.Errorf("%s 写工作区文件应当放行", name)
 		}
@@ -41,7 +41,7 @@ func TestDecide_WriteToControlDirDenied(t *testing.T) {
 		".xhunter/abc/session.jsonl",
 		".xhunter/skills/release/SKILL.md",
 	} {
-		d, _ := p.Decide(context.Background(), hunt.Call{Primitive: "write", Target: target})
+		d, _ := p.Decide(context.Background(), hunt.Call{Primitive: "write", Writes: true, Target: target})
 		if d.Verdict != hunt.VerdictDeny {
 			t.Errorf("写 %s 应当被拒绝（引擎自有材料不可被模型篡改）", target)
 		}
@@ -54,7 +54,7 @@ func TestDecide_WriteToSkillsDraftAllowed(t *testing.T) {
 		".xhunter/skills.draft/foo/SKILL.md",
 		".xhunter/skills.draft/a.md",
 	} {
-		d, _ := p.Decide(context.Background(), hunt.Call{Primitive: "write", Target: target})
+		d, _ := p.Decide(context.Background(), hunt.Call{Primitive: "write", Writes: true, Target: target})
 		if d.Verdict != hunt.VerdictAllow {
 			t.Errorf("写 %s 应当放行（书写/生效分离的落点）", target)
 		}
@@ -64,24 +64,31 @@ func TestDecide_WriteToSkillsDraftAllowed(t *testing.T) {
 func TestDecide_PathEscapeDenied(t *testing.T) {
 	p := New(Config{})
 	for _, target := range []string{"../etc/passwd", "a/../../outside", "..", "/abs/path", `C:\windows\system32`} {
-		d, _ := p.Decide(context.Background(), hunt.Call{Primitive: "write", Target: target})
+		d, _ := p.Decide(context.Background(), hunt.Call{Primitive: "write", Writes: true, Target: target})
 		if d.Verdict != hunt.VerdictDeny {
 			t.Errorf("写 %s 应当被拒绝（路径越界）", target)
 		}
 	}
 }
 
-func TestDecide_UnknownPrimitiveDenied(t *testing.T) {
+// 只读调用不走路径边界——这不是防线缺口，是分工：
+//   - 越界由机制层（工作区）拒绝：它只接受相对路径，`..` 与绝对路径根本表达不出来；
+//   - 而 `.xhunter/**` 的**读必须放行**：skill 正文正是靠 read 按需加载的（FR-15.3）。
+//
+// 名字不认识的原语也不再由策略兜底：执行体在查表处就挡下了（`unknown_tool`），到不了这里。
+func TestDecide_NonWritingCallSkipsPathRules(t *testing.T) {
 	p := New(Config{})
-	d, _ := p.Decide(context.Background(), hunt.Call{Primitive: "rm", Target: "x"})
-	if d.Verdict != hunt.VerdictDeny {
-		t.Error("未识别的原语应当默认拒绝")
+	for _, target := range []string{"../etc/passwd", ".xhunter/skills/release/SKILL.md"} {
+		d, _ := p.Decide(context.Background(), hunt.Call{Primitive: "read", Target: target})
+		if d.Verdict != hunt.VerdictAllow {
+			t.Errorf("读 %s 不该被策略拦下（越界归工作区层，控制目录的读要放行）", target)
+		}
 	}
 }
 
 func TestDecide_RenameWithoutTargetAllowed(t *testing.T) {
 	p := New(Config{})
-	d, _ := p.Decide(context.Background(), hunt.Call{Primitive: "symbol_rename"})
+	d, _ := p.Decide(context.Background(), hunt.Call{Primitive: "symbol_rename", Writes: true})
 	if d.Verdict != hunt.VerdictAllow {
 		t.Error("symbol_rename 不指定文件是合法的符号级调用，不应被路径规则拦截")
 	}

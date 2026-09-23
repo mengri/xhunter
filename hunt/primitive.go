@@ -20,6 +20,11 @@ type Primitive interface {
 	Decl() llm.ToolDecl
 	// Execute 执行一次调用。Edits 是编辑计划（可空），由执行器统一落盘。
 	Execute(ctx context.Context, call Call, facts Facts) (Result, []workspace.FileEdit, error)
+	// Writes 报告这个原语是否会产生写操作——**由原语自己声明**，而不是由策略侧维护一张
+	// 跨包镜像表。理由与寻址、降级相同：它是原语自身的性质，换一份实现就可能换一个答案；
+	// 镜像表与实现分处两个包，漂开之后不会以编译错误的形式暴露，只会让写原语被当成只读、
+	// 绕开路径边界。
+	Writes() bool
 }
 
 // Facts 是原语执行时能看到的任务级事实，刻意收窄：门禁清单、读台账、检查点意图。

@@ -63,6 +63,10 @@ type Session struct {
 
 	// charged 是已转交策略的累计用量水位：run 上的用量是累计值，策略要的是增量。
 	charged llm.Usage
+
+	// declared 是模型在正文里自陈的两类清单（缺什么条件、采取了哪些默认）：轮边界登记、
+	// 收尾据此收敛终态——见 AppendDeclared 与 Finalize。
+	declared Declared
 }
 
 // Delivery 是收尾后可读的交付事实：主交付是分支 tip（Commit），附带交付是改动
@@ -105,6 +109,20 @@ func (s *Session) RequestCheckpoint(summary string) {
 }
 
 func (s *Session) CheckpointRequested() bool { return s.checkpointRequested }
+
+// AppendDeclared 登记本轮正文里的自陈清单。
+//
+// 为什么在轮边界登记、而不是收尾时再从上下文里捞：压缩一旦接入，被下压掉的轮次里的
+// 自陈就再也取不到（架构 §7.2「在模型说出的当轮就登记」）。现在做这一步零成本，等压缩
+// 落地再补就要返工。
+func (s *Session) AppendDeclared(text string) {
+	d := ParseDeclared(text)
+	s.declared.Needs = append(s.declared.Needs, d.Needs...)
+	s.declared.Assumptions = append(s.declared.Assumptions, d.Assumptions...)
+}
+
+// Declared 给出本次运行累积的自陈清单（收尾后可读，供事件与结果文件使用）。
+func (s *Session) Declared() Declared { return s.declared }
 
 // buildTools 用装配层给的工厂构造原语清单，记录顺序（顺序即工具面顺序），并校验工具面
 // 自身是否成立。
@@ -183,11 +201,14 @@ func (s *Session) executeCall(ctx context.Context, turn *harness.Turn, tc llm.To
 
 	prim, ok := s.tools[call.Primitive]
 	if !ok {
+		// 未知原语在这里就被挡下：策略因此不必再兜一道「名字不认识就拒绝」，它只看写不写盘。
 		f := &llm.Fault{Kind: "unknown_tool",
 			Message: fmt.Sprintf("没有名为 %q 的工具；可用的是：%s", call.Primitive, s.available())}
 		ev.fault = f
 		return llm.ToolResult{CallID: tc.ID, IsError: true, Output: f.Message}
 	}
+	// 写盘性质由原语自述，回填给这一次调用——策略只认这一个事实。
+	call.Writes = prim.Writes()
 
 	if s.cfg.Policy == nil {
 		// 未装配策略 = **默认拒绝**（INV-4、hunt/policy.go 的开篇约定）。这里绝不

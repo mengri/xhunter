@@ -29,6 +29,10 @@ func CheckTool() hunt.Primitive {
 
 type checkPrim struct{}
 
+// Writes 报告 check 不写工作盘：它跑什么由任务侧清单决定、不经模型之手，因此不属于
+// 「模型写工作区」这件事，策略不为它做路径裁决。
+func (checkPrim) Writes() bool { return false }
+
 func (checkPrim) Decl() llm.ToolDecl {
 	return llm.ToolDecl{
 		Name:        string(Check),

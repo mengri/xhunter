@@ -20,18 +20,24 @@ import (
 
 // resultFile 是结果文件的形状（使用手册 §6）。
 type resultFile struct {
-	BountyID     string     `json:"bounty_id"`
-	SessionID    string     `json:"session_id,omitempty"`
-	Status       string     `json:"status"`
-	Reason       string     `json:"reason,omitempty"`
-	ExitCode     int        `json:"exit_code"`
-	BaseCommit   string     `json:"base_commit"`
-	Branch       string     `json:"branch"`
-	CommitSHA    string     `json:"commit_sha,omitempty"`
-	PatchPath    string     `json:"patch_path,omitempty"`
-	FilesChanged []string   `json:"files_changed"`
-	Usage        usageFile  `json:"usage"`
-	Error        *errorFile `json:"error,omitempty"`
+	BountyID     string   `json:"bounty_id"`
+	SessionID    string   `json:"session_id,omitempty"`
+	Status       string   `json:"status"`
+	Reason       string   `json:"reason,omitempty"`
+	ExitCode     int      `json:"exit_code"`
+	BaseCommit   string   `json:"base_commit"`
+	Branch       string   `json:"branch"`
+	CommitSHA    string   `json:"commit_sha,omitempty"`
+	PatchPath    string   `json:"patch_path,omitempty"`
+	FilesChanged []string `json:"files_changed"`
+
+	// Needs / Assumptions 是模型在正文固定小节里的自陈（FR-6.3）。用指针不加 omitempty
+	// 是三态要求：「没提供」要写成 null，而不是缺字段、更不是 []——空数组会被读成
+	// "没有需要补全的条件"，那是另一句话（使用手册 §6）。
+	Needs       *[]string  `json:"needs"`
+	Assumptions *[]string  `json:"assumptions"`
+	Usage       usageFile  `json:"usage"`
+	Error       *errorFile `json:"error,omitempty"`
 }
 
 type usageFile struct {
@@ -52,7 +58,7 @@ type errorFile struct {
 
 // writeRunOutputs 写出补丁与结果文件。任一写失败都返回错误——交不出交付记录
 // 属环境问题（退出码 2），不得静默继续（对齐 FR-10.4 的"通道断裂即终止"精神）。
-func writeRunOutputs(resultPath, patchPath string, bounty hunt.Bounty, out harness.Outcome, d hunt.Delivery) error {
+func writeRunOutputs(resultPath, patchPath string, bounty hunt.Bounty, out harness.Outcome, d hunt.Delivery, declared hunt.Declared) error {
 	if patchPath != "" {
 		if err := writeFile(patchPath, []byte(d.Patch)); err != nil {
 			return fmt.Errorf("写补丁文件失败：%w", err)
@@ -71,6 +77,8 @@ func writeRunOutputs(resultPath, patchPath string, bounty hunt.Bounty, out harne
 		BaseCommit:   bounty.Repo.BaseCommit,
 		Branch:       bounty.Repo.Branch,
 		FilesChanged: d.Files,
+		Needs:        optionalList(declared.Needs),
+		Assumptions:  optionalList(declared.Assumptions),
 		Usage: usageFile{
 			InputTokens:       out.Usage.InputTokens,
 			OutputTokens:      out.Usage.OutputTokens,
@@ -105,6 +113,17 @@ func writeRunOutputs(resultPath, patchPath string, bounty hunt.Bounty, out harne
 		return fmt.Errorf("写结果文件失败：%w", err)
 	}
 	return nil
+}
+
+// optionalList 把空切片收成 nil：三态里 nil 才是「没提供」。
+//
+// 解析器已经保证「小节不存在 → nil」，这里再把「小节在、但一条都没有」也归到没提供——
+// 一个空的「## 需要补全」不构成"缺条件"，不该让平台看到一份空清单。
+func optionalList(items []string) *[]string {
+	if len(items) == 0 {
+		return nil
+	}
+	return &items
 }
 
 // errorKind 取原因的第一个冒号之前那段（`prepare_failed: …` → `prepare_failed`），

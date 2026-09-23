@@ -140,6 +140,31 @@ func TestDefaultTools_FaceIsFixed(t *testing.T) {
 	}
 }
 
+// 「是否写盘」由原语自述（不再由策略侧镜像）：这份自述错了等于权限边界错了——
+// 写原语被当成只读，就会绕开路径裁决。所以逐项钉住，并挡住"新增原语忘了声明性质"。
+func TestDefaultTools_WritesIsDeclared(t *testing.T) {
+	want := map[string]bool{
+		"read": false, "write": true, "edit": true, "find": false, "glob": false,
+		"symbol_read": false, "symbol_edit": true, "symbol_rename": true,
+		"check": false,
+	}
+	for _, prim := range defaultTools(nil, nil) {
+		name := prim.Decl().Name
+		expected, known := want[name]
+		if !known {
+			t.Errorf("工具面多了一个原语 %q：它的写盘性质要先登记在这里", name)
+			continue
+		}
+		if got := prim.Writes(); got != expected {
+			t.Errorf("%s.Writes() = %v，期望 %v", name, got, expected)
+		}
+		delete(want, name)
+	}
+	for name := range want {
+		t.Errorf("工具面少了原语 %q", name)
+	}
+}
+
 var _ = hunt.PrimCheckpoint // 控制原语声明存在，装配工具面时殿后
 
 // 信封四字段由 sink 统一盖章：调用点只交业务载荷，"每个事件都带信封"是结构事实，

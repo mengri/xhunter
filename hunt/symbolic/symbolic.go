@@ -70,6 +70,10 @@ type symbolicPrim struct {
 
 func (p symbolicPrim) Decl() llm.ToolDecl { return p.decl }
 
+// Writes 报告本原语是否写盘：符号读不写，符号编辑与重命名写。
+// 按名字分而不是按某次调用的参数分——写不写盘是原语的性质，不是这一次调用的性质。
+func (p symbolicPrim) Writes() bool { return p.name != SymbolRead }
+
 func (p symbolicPrim) Execute(context.Context, hunt.Call, hunt.Facts) (hunt.Result, []workspace.FileEdit, error) {
 	return hunt.Result{Err: &llm.Fault{
 		Kind:      "not_implemented",

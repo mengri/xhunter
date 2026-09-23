@@ -20,6 +20,9 @@ func GlobTool(ws workspace.Workspace) hunt.Primitive {
 
 type globPrim struct{ ws workspace.Workspace }
 
+// Writes 报告本原语不写盘：读类原语，策略因此不必为它查路径边界。
+func (globPrim) Writes() bool { return false }
+
 func (globPrim) Decl() llm.ToolDecl {
 	return llm.ToolDecl{
 		Name:        string(Glob),

@@ -58,6 +58,9 @@ func (p stubPrim) Execute(context.Context, Call, Facts) (Result, []workspace.Fil
 	return p.res, p.edits, p.err
 }
 
+// Writes 由桩的编辑计划推出：有编辑即写盘，让桩的写盘性质与它在 executeCall 里的行为一致。
+func (p stubPrim) Writes() bool { return len(p.edits) > 0 }
+
 type captureSink struct {
 	events []ExternalEvent
 	logs   []string
