@@ -312,8 +312,11 @@ func (s *Session) OnTurn(ctx context.Context, run *harness.Run, turn *harness.Tu
 	if s.cfg.Session != nil {
 		s.cfg.Session.RecordTurn(*turn)
 	}
-	s.snapshot()
+	// 记账（含 recordUsage）**先于**快照：否则本轮用量要等下一次快照才落盘，末轮的就永远进不了
+	// 交付提交（这正是"写对了但没交上去"的根因）。快照仍排在 checkpoint 之前——检查点的 add -f
+	// 才会把本轮材料一起提交进去。
 	s.charge(run.Usage)
+	s.snapshot()
 
 	s.checkpoint(ctx, turn)
 
@@ -603,6 +606,10 @@ func (s *Session) Finalize(ctx context.Context, run *harness.Run) error {
 	// 自陈如实上报：终态是 blocked 还是别的，与「说过什么」无关，两类清单都要发出去。
 	s.emitDeclarations()
 
+	// 材料在**交付提交之前**落盘：写在工作树里的记录若排在提交之后，就进不了交付提交，随后还会被
+	// Clean 连同工作树一起删掉——末轮的用量/记录会因此"写对了但没交上去"。
+	s.snapshot()
+
 	// 交付提交：失败也尽力，补丁仍可单独产出。
 	//
 	// 这里刻意**不设"无产出即失败"的闸门**：任务不一定改代码——任务内容本身可能就是
@@ -632,9 +639,6 @@ func (s *Session) Finalize(ctx context.Context, run *harness.Run) error {
 	} else {
 		s.patch = patch
 	}
-
-	// 收尾前再落一次材料：交付提交的哈希只在提交之后才知道，早落的那份会缺它。
-	s.snapshot()
 
 	if err := s.cfg.Git.Clean(ctx); err != nil {
 		s.logf("warn", "工作区清理失败", "err", err.Error())

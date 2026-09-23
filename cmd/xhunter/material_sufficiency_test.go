@@ -173,9 +173,10 @@ func TestEndToEnd_MaterialIsSelfSufficientForResume(t *testing.T) {
 		t.Errorf("写操作记录内容不对：%v", ops[0])
 	}
 
-	// usage：每轮用量增量（三项）。
-	if len(usages) == 0 {
-		t.Fatalf("材料应含用量记录：%v", lines)
+	// usage：**每轮各一条**增量（三项）。只断言"至少一条"会让"末轮用量没进提交"这个缺口变绿——
+	// 材料是恢复的唯一状态源，少一条用量 = 恢复后按材料记账会少算末轮（这正是本次修复的根因）。
+	if len(usages) != len(turns) {
+		t.Fatalf("材料应每轮各一条 usage（实际 %d 条，轮数 %d）：%v", len(usages), len(turns), lines)
 	}
 	for _, u := range usages {
 		for _, k := range []string{"input_tokens", "output_tokens", "cached_input_tokens"} {

@@ -1096,11 +1096,11 @@ Bounty(session) ──► H6.Session
 
 ### 12.6 H6 — `hunt.SessionRecorder`
 
-**契约**：`RecordTurn(rec harness.Turn)` / `Snapshot() error`（设计还要 `RecordOp` / `Ops`——与落盘实现一起加；`Delta` / `Fingerprint` 等有消费方再加）。实现状态见 xhunter-status.md 状态索引 · H6。
+**契约**：`Open(root string) error` / `RecordTurn(rec harness.Turn)` / `RecordOp(op WriteOp)` / `RecordUsage(u llm.Usage)` / `Ops() []WriteOp` / `Snapshot() error`——方法集**一次加齐**（写操作序列是恢复的唯一刚需，此前没有通道）；`Delta` / `Fingerprint` 等有消费方再加。实现状态见 xhunter-status.md 状态索引 · H6。
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
-| IA-6.1 | 会话材料自含续跑所需全部信息：对话历史 + 工具名 + 完整参数 + 结果摘要 + turn 序号 + 用量 + 能力指纹 | （实现状态见 xhunter-status.md 状态索引 · IA-6.1） |
+| IA-6.1 | 会话材料自含续跑所需全部信息：对话历史 + 工具名 + 完整参数 + 结果摘要 + turn 序号 + 用量 + 能力指纹 | `TestSave_MaterialLandsUnderSessionDirWithSchemaVersion`、`TestRecorder_RecordsOpsAndUsageFromTheSession`、`TestEndToEnd_MaterialIsSelfSufficientForResume`（`cmd`） |
 | IA-6.1b | **按任务隔离**：材料路径为 `.xhunter/<session_id>/session.jsonl`；两任务并行同一仓库时互不覆盖 | （实现状态见 xhunter-status.md 状态索引 · IA-6.1b） |
 | IA-6.1c | **提交强制加入**（`add -f`）：仓库 `.gitignore` 忽略 `.xhunter/` 时材料仍随检查点提交（`MaterialDir` 非空且存在时才加；目录尚未落盘不判死） | `TestCommit_ForceAddsMaterialEvenWhenGitignored`、`TestCommit_MissingMaterialDirDoesNotFail`、`TestCommit_WithoutMaterialDirIsUnchanged` |
 | IA-6.2 | **恢复过程零工具执行**：不重放写操作 | （实现状态见 xhunter-status.md 状态索引 · IA-6.2） |
@@ -1108,7 +1108,7 @@ Bounty(session) ──► H6.Session
 | IA-6.4 | 材料带 `schema_version`；不兼容 → 环境错误（退出码 1），不自动迁移 | （实现状态见 xhunter-status.md 状态索引 · IA-6.4） |
 | IA-6.5 | 材料含扩展能力指纹；不一致**只记录、不阻断** | （实现状态见 xhunter-status.md 状态索引 · IA-6.5） |
 | IA-6.5b | **材料不可被模型篡改**：写 `.xhunter/**` 被策略拒绝；模型无 git 操作能力 | `TestDecide_WriteToControlDirDenied`（策略侧） |
-| IA-6.6 | `Snapshot` 不阻断主流程；失败只记录 | 代码检查（`Session.snapshot` 只记 warn，FR-12.3b） |
+| IA-6.6 | `Snapshot` 不阻断主流程；失败只记录 | `TestSnapshot_FailureDoesNotBlockTheRun`、`TestRecorder_OpenFailureDegradesWithoutFailingPrepare`（`hunt`） |
 | IA-6.7 | **无"按写操作数量判失败"的闸门**：交付物是否存在，看结果文件里的改动清单与最终答复（`summary`） | 代码检查（`Finalize` 不设该闸门）；用例：`TestFinalize_TextOnlyDeliverySucceeds`（全程零写、只有小结 → 成功） |
 | IA-6.8 | 凭据不得进入材料（与事件流同规则） | （实现状态见 xhunter-status.md 状态索引 · IA-6.8） |
 

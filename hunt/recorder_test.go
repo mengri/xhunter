@@ -21,14 +21,25 @@ type fakeRecorder struct {
 	usages  []llm.Usage
 	turns   int
 	opens   int
+	trace   []string // 调用次序，供"快照排在记账之后"这条回归断言
 }
 
-func (r *fakeRecorder) Open(string) error       { r.opens++; return r.openErr }
-func (r *fakeRecorder) RecordTurn(harness.Turn) { r.turns++ }
-func (r *fakeRecorder) RecordOp(op WriteOp)     { r.ops = append(r.ops, op) }
-func (r *fakeRecorder) RecordUsage(u llm.Usage) { r.usages = append(r.usages, u) }
-func (r *fakeRecorder) Ops() []WriteOp          { return r.ops }
-func (r *fakeRecorder) Snapshot() error         { return r.snapErr }
+func (r *fakeRecorder) Open(string) error {
+	r.opens++
+	r.trace = append(r.trace, "open")
+	return r.openErr
+}
+func (r *fakeRecorder) RecordTurn(harness.Turn) { r.turns++; r.trace = append(r.trace, "record-turn") }
+func (r *fakeRecorder) RecordOp(op WriteOp) {
+	r.ops = append(r.ops, op)
+	r.trace = append(r.trace, "record-op")
+}
+func (r *fakeRecorder) RecordUsage(u llm.Usage) {
+	r.usages = append(r.usages, u)
+	r.trace = append(r.trace, "record-usage")
+}
+func (r *fakeRecorder) Ops() []WriteOp  { return r.ops }
+func (r *fakeRecorder) Snapshot() error { r.trace = append(r.trace, "snapshot"); return r.snapErr }
 
 // 材料位置绑定失败只降级：Prepare 不失败，只留一条 warn。
 func TestRecorder_OpenFailureDegradesWithoutFailingPrepare(t *testing.T) {
@@ -114,5 +125,22 @@ func TestRecorder_RecordsOpsAndUsageFromTheSession(t *testing.T) {
 		rec.usages[0] != (llm.Usage{InputTokens: 10, OutputTokens: 4, CachedInputTokens: 2}) ||
 		rec.usages[1] != (llm.Usage{InputTokens: 5, OutputTokens: 2, CachedInputTokens: 1}) {
 		t.Errorf("usage 记录应是每轮增量：%+v", rec.usages)
+	}
+}
+
+// 回归：快照必须排在记账**之后**——否则本轮的 usage 要等下一次快照才落盘，末轮的就永远进不了
+// 交付提交（写对了但没交上去）。断言调用次序，而不只是最终数量。
+func TestRecorder_SnapshotAfterCharge(t *testing.T) {
+	rec := &fakeRecorder{}
+	s := NewSession(Config{
+		Bounty: Bounty{ID: "b1", Task: "t", Repo: gitRepoRef()},
+		Git:    &stubBaselineGit{}, Opener: stubOpener{}, Policy: allowAll{}, Sink: &captureSink{}, Session: rec,
+	})
+	run := &harness.Run{Usage: llm.Usage{InputTokens: 10, OutputTokens: 4, CachedInputTokens: 2}}
+	if _, err := s.OnTurn(context.Background(), run, &harness.Turn{No: 1, Text: "x"}); err != nil {
+		t.Fatalf("OnTurn 失败：%v", err)
+	}
+	if got, want := strings.Join(rec.trace, ","), "record-turn,record-usage,snapshot"; got != want {
+		t.Errorf("调用次序 = %q，期望 %q（快照排在记账之后，且仍在 checkpoint 之前）", got, want)
 	}
 }
