@@ -541,7 +541,6 @@
 - **随检查点提交**：`add -f`；周期性落盘（FR-12.3b）。
 - **排除交付 diff**：`Diff`/`Patch` 排除 `.xhunter/<session_id>/**`，不排除该目录之外的路径（如 `skills.draft/**`）。
 - 材料不可篡改：策略已禁写 `.xhunter/**`（已有），git 侧模型无能力（已有）——只补断言。
-- **接口一次加齐**：`hunt.SessionRecorder` 现在只有 `RecordTurn` / `Snapshot`，而**写操作序列（恢复的唯一刚需）没有通道**——`WriteOp` 只被 `Session.ops` 自己攥着，只用来判「有没有改动值得交付提交」。本次一并加 `RecordOp(WriteOp)` / `Ops() []WriteOp`，并在 `Session` 的落盘段调用。**刻意不加** `Delta` / `Fingerprint`：两者当前都没有消费方，加了就是「没人读的字段」，违反 `llm.Caps` 上定的同一条原则。
 - **接口一次加齐**：`hunt.SessionRecorder` 现在只有 `RecordTurn` / `Snapshot`，而**写操作序列（恢复的唯一刚需）没有通道**——`WriteOp` 只被 `Session.ops` 自己攥着，只用来判「有没有改动值得交付提交」。本次一并加 `RecordOp(WriteOp)` / `Ops() []WriteOp`，并在 `Session` 的落盘段调用 `recordOp`。**刻意不加** `Delta` / `Fingerprint`：两者当前都没有消费方，加了就是「没人读的字段」，违反 `llm.Caps` 上定的同一条原则。
 
 **独立验收的证据**
