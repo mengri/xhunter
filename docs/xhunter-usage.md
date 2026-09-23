@@ -44,7 +44,7 @@
 
 为便于本地驱动，Xhunter 规划了 **Bounty 生成能力**（`xhunter run`，FR-1.10）：给定本地仓库路径 + 任务描述，探测 `remote` / 基线 commit（取 HEAD）/ 任务分支名 / 门禁候选（仓库根 `gates.yml` 存在性）/ 预算与策略默认值，生成 Bounty 文件。
 
-> **状态：尚未接线。** 当前 CLI 只实现了 `models` / `version` 子命令与 `--bounty` 入口（且后者为占位实现）。本地驱动者在此之前需自行生成 Bounty 文件——生成器只是便利工具，不进入交付路径（FR-1.10 边界③）。
+> 实现状态见 xhunter-status.md 状态索引 · usage§1.2·Bounty生成器。生成器只是便利工具，**不进入交付路径**（FR-1.10 边界③）。
 
 ---
 
@@ -56,7 +56,7 @@ xhunter --bounty <path>           # 任务正文文件（自然语言描述；�
         [--result <path>]         # 结果文件（JSON；无论成败都写，见 §6）
         [--patch <path>]          # 补丁文件（相对基线的统一 diff，git apply 兼容）
 
-xhunter run --repo <path> --task <text>   # 本地驱动：探测仓库并生成 Bounty（尚未接线，见 §1.2）
+xhunter run --repo <path> --task <text>   # 本地驱动：探测仓库并生成 Bounty（见 §1.2）
 xhunter version
 ```
 
@@ -179,7 +179,7 @@ xhunter version
 >
 > `call_id` 是调用与结果配对的唯一标识：一轮内可能出现同一原语的多次调用，外部消费者据此配对（IA-1.5）；`policy_denied` 与 `check_result` 同属 L5 后的时点，故这两类事件也应携带相应 `call_id` 以便回溯到具体调用。
 >
-> **当前实现已发出的事件**（其余为规格先行，见 `xhunter-architecture.md` §14）：`hunt_end`、`tool_result`、`policy_denied`、`deliverable`、`degraded`、`heartbeat`（调用点待接入）。本节其余事件类型与字段是**契约目标**，实现状态以架构文档 §14 为准；`effective_config` 的完整语义以结果文件（§6）与 FR-11.6 为准。
+> **实现状态**见 xhunter-status.md 状态索引 · usage§5·已发出事件；本节事件类型与字段的**契约**以本手册为准，哪些已发出以状态文档为准；`effective_config` 的完整语义以结果文件（§6）与 FR-11.6 为准。
 >
 > **`hunt_end` 带累计用量**：终态事件里附上整次 Hunt 的累计 `usage`（与结果文件同一口径）——平台读到终态即可记账，不必再去读结果文件。每轮的 `usage` 事件仍是**增量**。
 >
@@ -200,7 +200,7 @@ xhunter version
 由 `--result <path>` 指定；**无论成败都写**（FR-1.5）——平台靠它记账、决定是否重派。
 写不出来属环境问题（退出码 1），不会静默继续。
 
-**当前形状**（字段只含实现真能给出的事实）：
+**字段清单**（契约；哪些字段当前会写出见 xhunter-status.md 状态索引 · usage§6·待接入字段）：
 
 ```json
 {
@@ -221,19 +221,10 @@ xhunter version
 
 > `error` 仅失败时出现；`retryable` 与退出码同源（环境问题才为 `true`）。
 > `usage.reported: false` 表示**上游未回报用量**——各项为 0 **不代表真的没用**，事件流里有对应的 `degraded` 记录（FR-9.7）。
-> `patch_path` 仅在给了 `--patch` 且补丁产出成功时出现；补丁**排除会话材料目录**的
-> 语义尚未接入（会话材料尚未落盘）。
+> `patch_path` 仅在给了 `--patch` 且补丁产出成功时出现；补丁**排除会话材料目录**
+> （`.xhunter/<session_id>/**`，FR-6.1）——实现状态见 xhunter-status.md 状态索引 · IA-11.6。
 
-**尚未落地、因而不写空壳的字段**（空数组会被读成"没有门禁、没有假设"，那是另一句话）：
-
-| 字段 | 状态 |
-|---|---|
-| `assumptions` / `unverified` | **待接入**（FR-6.3/6.4 的假设外化） |
-| `needs`（需要补全的清单） | **待接入**（FR-6.3 的澄清回路：缺条件时收敛为 `blocked`，人补齐后带同一 session 重投） |
-| `summary`（最终答复） | **待接入**（模型最后一条答复正文；**任务内容就是"产出一份小结"时，它就是主交付物**） |
-| `gates`（含未运行门禁的 `passed: null`） | **待接入**（门禁清单与 `check` 未实现） |
-| `effective_config`（FR-11.6 的只读快照） | **待接入**（装配快照未落盘）。清单见 FR-11.6：装配清单 ＋ 门禁清单（含来源）＋ 策略/预算/检查点事实 ＋ 扩展能力指纹 ＋ 目标平台 |
-| `session_delta` | **待接入**（会话材料未落盘）。形状：`{turns_from, turns_to, ops_count}` |
+**尚未接线的字段**见 xhunter-status.md 状态索引 · usage§6·待接入字段。（不写空壳——空数组会被读成"没有门禁、没有假设"，那是另一句话；各字段的形状见 FR-6.3/6.4、FR-11.6、FR-1.5。）
 
 > `gates` 必须**列出未运行的门禁**（`passed: null`），`effective_config` 是**只读快照**（FR-11.6）——两者都是 MR 评审的直接证据：前者回答"验收跑没跑、过没过"，后者回答"用的是哪套规则"。
 

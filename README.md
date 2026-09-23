@@ -161,6 +161,7 @@ python scripts/check.py --probe                # 仅探测工具链与平台
 
 | 文档 | 内容 |
 |---|---|
-| `docs/xhunter-product-design.md` | **产品设计**：目标与边界、功能需求（FR）、非功能需求（NFR）、工具集规格、验收标准（AC）、分期计划 |
-| `docs/xhunter-usage.md` | **使用手册**：基本使用模型、CLI 入参、Bounty 结构、Provider 配置、事件流契约（SSOT）、结果文件、退出码、信号 |
+| `docs/xhunter-product-design.md` | **产品设计**：目标与边界、功能需求（FR）、非功能需求（NFR）、工具集规格、验收标准（AC）、分期命名（M1/M1.5/M2/M3） |
+| `docs/xhunter-usage.md` | **使用手册**：基本使用模型、CLI 入参、Bounty 结构、模型接入、事件流契约（SSOT）、结果文件、退出码、信号 |
 | `docs/xhunter-architecture.md` | **架构设计**：分层与职责边界、流程组装、任务生命周期（G/R/D）、组件规格（H1~H7）、Provider 抽象、数据流、不变量（INV）、接口验收标准（IA） |
+| `docs/xhunter-status.md` | **状态（实现现状与排期）**：现状基线、状态索引（FR/AC/IA/L/H）、缺口、分期与里程碑（MS-1~MS-12）、待排期项、待澄清决策 |

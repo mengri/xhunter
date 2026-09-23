@@ -44,7 +44,7 @@
 | 策略裁决 | 路径边界、破坏性拦截、预算、止损 | `hunt.Policy`（接口）＋ `internal/policy`（默认实现）；**机制性**上限（轮数硬顶、连续失败）由 harness 兜 |
 | 事件与持久化 | 事件流与日志分流、心跳、会话材料落盘 | `hunt.EventSink` / `hunt.SessionRecorder`（接口）＋ 装配层实现（`sink.go` / `context.go`） |
 | 会话材料与检查点恢复 | 材料随检查点提交；恢复 = checkout 分支 tip ＋ 读回材料（FR-12.1、FR-12.2） | `hunt.SessionRecorder` ＋ `git.GitWorktree` |
-| 扩展接入 | MCP 客户端、能力描述符与降级、扩展生命周期（FR-13） | `ext.ExtHost`（接口）＋ 装配层注入实现（一期未接入） |
+| 扩展接入 | MCP 客户端、能力描述符与降级、扩展生命周期（FR-13） | `ext.ExtHost`（接口）＋ 装配层注入实现（实现状态见 xhunter-status.md 状态索引 · H7） |
 
 ### 2.2 系统不负责
 
@@ -157,7 +157,7 @@
 | 检查点提交「本轮已应用的改动」 | `OnTurn` 内的固定次序：执行 → 加工 → 记录 → **提交** | **FR-1.3c** |
 | 交付提交与终态上报一定发生 | `Finalize` 无论成败都跑：交付提交 → 差异 → 材料落盘 → 清理 → `hunt_end` | **FR-6.1**、**FR-10.2** |
 
-**生效配置快照**：装配结果（原语清单与顺序、两段插件、过滤器链、循环参数）进 `hunt_start` 事件与结果文件（FR-11.6）——评审者可直接看到"这次用了什么装配"。**（一期：快照字段待补，当前只上报任务与仓库事实）**
+**生效配置快照**：装配结果（原语清单与顺序、两段插件、过滤器链、循环参数）进 `hunt_start` 事件与结果文件（FR-11.6）——评审者可直接看到"这次用了什么装配"。（实现状态见 xhunter-status.md 状态索引 · L1-9）
 
 **边界（明确不做）**：不做运行期装卸（装配是构造期的事，`Config.Filters` 是构造参数而非运行期注册面）；不做多层 patch 叠加；不做字段级合并（改装配就重写装配代码，避免"半配置"造成的隐式行为）。
 
@@ -169,7 +169,7 @@
 | `hunt.Config.Tools` | `defaultTools(ws, ex)`：按产品设计的工具集规格定序（`cmd/xhunter/primitives.go`），`checkpoint` 殿后 |
 | `hunt.Config.SystemPlugins` | `prompt/agentsmd`（项目约定）· `prompt/skills`（技能清单）→ system 段 |
 | `hunt.Config.UserPlugins` | `prompt/task`（任务陈述）→ user 段 |
-| `hunt.Config.Filters` | 一期为空：结果加工链留空即原样透传 |
+| `hunt.Config.Filters` | 为空：结果加工链留空即原样透传 |
 | `hunt.Config.Policy` | `internal/policy`：路径边界 ＋ 三重预算（token / 轮数 / 墙钟）。**三项可选，不配即不限**；这里的 `0 = 不限` 是**字段零值**语义——投递层不配就是不限，显式写 `0` 会被拒（见使用手册 §3） |
 | `harness.Config` | 轮数硬上限、连续失败止损（缺省即可用）；与 `Policy` 的分工见 §7.4 |
 
@@ -262,12 +262,12 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 | 1 | 取基线 → 建/推任务分支 → checkout | `Prepare` → `git.GitWorktree.PrepareBaseline` | FR-1.3、INV-11 | 先于一切可能写工作区的动作 |
 | 2 | 打开工作区 | `Prepare` → `workspace.WorkspaceOpener.Open` | — | 根不存在 / 不是目录在此被拒；失败即终止，循环根本不开始 |
 | 3 | 构造原语并定格工具面 | `Prepare` → `Config.Tools(ws)` → `run.Tools` | FR-4.11、FR-1.11④ | 工作区是运行期产物，所以是"打开之后再构造"；此后整任务读同一份声明 |
-| 4 | 门禁清单来源裁决 | `Prepare`（**一期暂空**） | FR-5.2c | Bounty 下发 > 基线 `gates.yml`（仓库根） > 无 |
-| 5 | 扩展能力描述符 | 组装层注入 `ext.ExtHost`（**一期未接入**） | FR-13.4 | 不可用 → 符号路径不可用，工具名字不变 |
+| 4 | 门禁清单来源裁决 | `Prepare` | FR-5.2c | Bounty 下发 > 基线 `gates.yml`（仓库根） > 无 |
+| 5 | 扩展能力描述符 | 组装层注入 `ext.ExtHost` | FR-13.4 | 不可用 → 符号路径不可用，工具名字不变 |
 | 6 | 构造两段提示词并定格 | `Prepare` → `buildPromptStage` ×2 → `Context.SetPrompt` | FR-2.6、FR-7.8、FR-15.2/15.3 | 按**装配顺序**调用两段插件，产出 **system / user 两段**；取一次、整任务内冻结 |
 | 7 | 组装首轮消息 | `Prepare` → `Context.Assemble()` → `run.Messages` | FR-7.1 | 提示词 ＋ 历史（首轮历史为空） |
-| 8 | 会话恢复（条件） | **一期未接入** | FR-12.1、FR-13.7 | 投递给出 `XHUNTER_SESSION_ID` 才执行：checkout 分支 tip ＋ 读回材料；指纹不一致拒绝（退出 1） |
-| 9 | 生效配置快照 | **一期未接入** | FR-11.6 | 装配清单进结果文件（§4） |
+| 8 | 会话恢复（条件） | `Prepare`（会话非空时） | FR-12.1、FR-13.7 | 投递给出 `XHUNTER_SESSION_ID` 才执行：checkout 分支 tip ＋ 读回材料；指纹不一致拒绝（退出 1） |
+| 9 | 生效配置快照 | `Prepare` / 组装层 | FR-11.6 | 装配清单进结果文件（§4） |
 
 事件：`hunt_start`、heartbeat(bootstrap)。失败：环境错误 → `Finalize`（退出 1）。
 
@@ -276,10 +276,10 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 | 动作 | 落点 | 依据 | 说明 |
 |---|---|---|---|
 | 取消检查 | harness 循环入口 ＋ `OnTurn` 守卫 | FR-1.7、INV-8 | 取消 → `cancelled`（退出 3） |
-| 事件通道健康 | **一期未接入**（sink 写失败目前直接上抛） | FR-10.4 | writeErr → 环境错误（退出 1，AC-19） |
+| 事件通道健康 | 组装层 sink（首次失败记录）＋ `OnTurn` 守卫 | FR-10.4 | writeErr → 环境错误（退出 1，AC-19） |
 | 预算判定 | `OnTurn` → `Policy.Exhausted(turn)` | FR-9.2 | 耗尽 → **被引擎中止**（退出 2，含维度） |
 | 消息组装 | `OnTurn` 末尾 `Context.Assemble()` → `run.Messages`（首轮由 `Prepare` 给） | FR-7.1/7.6 | 提示词取 `Prepare` 冻结的那一份，历史来自 `ContextBuilder` |
-| 压缩 | `ContextBuilder` 内（**一期未接入**） | FR-14.1 | 三档水位 ＋ 冷却；硬上限 → 错误 |
+| 压缩 | `ContextBuilder` 内 | FR-14.1 | 三档水位 ＋ 冷却；硬上限 → 错误 |
 
 #### L3 请求发送（每轮，harness）
 
@@ -299,7 +299,7 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 | usage | 累加到 `run.Usage`（harness）；业务在 `OnTurn` 里把**增量**交给 `Policy.Charge` | FR-9、FR-11 |
 | error | 不可重试 → 终态（环境错误）；可重试记日志后继续 | FR-11.2 |
 | end | 进入轮边界（`OnTurn`） | — |
-| **流看门狗** | **一期未接入**（不活动超时 → `Cancel()` → 环境错误） | FR-1.11①、INV-3 |
+| **流看门狗** | harness 接收段（不活动超时 → `Cancel()` → 环境错误） | FR-1.11①、INV-3 |
 
 约束：收流循环可被 ctx 打断（INV-8），打断时**必须调用 `sess.Cancel()` 并收敛为 cancelled**（退出 3）；取消时已收未执行的调用**不执行**；stdout 写失败记 writeErr，轮末收敛（FR-10.4）。
 
@@ -317,11 +317,11 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 
 | 动作 | 落点 | 依据 | 说明 |
 |---|---|---|---|
-| 检查点决策（**本轮单一提交点**） | `Session.checkpoint` → `git.Commit` | FR-1.3c | 触发条件只有两条：**模型显式请求** 或 **落在结构完整点**（门禁驱动待接入、结构判据随扩展）；都不满足则不提交。**提交的是本轮已应用的改动**；单次失败不终止——下一轮累积重提 |
-| 结构检查 | **一期未接入** | FR-1.3d | 只读定位判断"语法完整 / 区间封闭"，三态判定 |
+| 检查点决策（**本轮单一提交点**） | `Session.checkpoint` → `git.Commit` | FR-1.3c | 触发条件只有两条：**模型显式请求** 或 **落在结构完整点**；都不满足则不提交。**提交的是本轮已应用的改动**；单次失败不终止——下一轮累积重提 |
+| 结构检查 | `Session`（结构判据） | FR-1.3d | 只读定位判断"语法完整 / 区间封闭"，三态判定 |
 | 止损 | harness（`Config.MaxFailStreak`）＋ `Policy` | FR-9.4 | 连续失败达阈值即收敛（退出 2） |
-| 事件通道复查 | **一期未接入** | FR-10.4 | → 环境错误（退出 1） |
-| 提交连败复查 | **一期未接入** | FR-1.3b、FR-1.11② | 连续 3 次提交失败 → 本轮结束即收敛（退出 1），不跑完剩余轮次 |
+| 事件通道复查 | `OnTurn` 守卫 | FR-10.4 | → 环境错误（退出 1） |
+| 提交连败复查 | `OnTurn` 守卫 | FR-1.3b、FR-1.11② | 连续 3 次提交失败 → 本轮结束即收敛（退出 1），不跑完剩余轮次 |
 | 终止判定 | harness | FR-6、使用手册 §7 | 本轮无工具调用 → **模型正常完成对话**（`status` 由模型在最后答复里声明，默认 `succeeded`；退出码 0）；否则回 L2 |
 
 #### L7 终态收敛（任务一次，落在 `hunt.Session.Finalize`；G 后任何阶段的失败/取消全部汇入此处）
@@ -330,12 +330,14 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 |---|---|---|
 | 中途收敛衔接 | INV-3 | harness 把任何终止（取消、推理失败、流错误、止损、轮数上限）都先收敛成显式终态，再照常进入 `Finalize`——这是结构保证，不依赖每个 return 处小心处理 |
 | 终态采纳 | FR-10.2 | **模型声明的 `status` 原样采纳**（引擎不替模型下结论）；有客观证据时按证据覆盖（`required` 门禁未过 → `failed`），机制性终止由引擎强制 |
-| `gates.required` 补跑 | FR-5.2f | **一期未接入**（门禁清单暂空）；时点在交付提交之前 |
+| `gates.required` 补跑 | FR-5.2f | 时点在交付提交之前 |
 | delivery.commit | FR-6.1 | 失败路径也尽力提交；提交失败只降级为"仅产出补丁"，不判死 |
 | deliverable.diff | FR-6.1 | 排除会话材料路径 `.xhunter/<session_id>/**`（MaterialDir）；**同目录下的其他路径（如 `.xhunter/skills.draft/**`）不排除**——它们属于交付内容，要进 diff 供人 review（FR-15.3、AC-25） |
 | session.snapshot | FR-12.3b | 尽力而为，不阻断；收尾这一次排在交付提交之后（那时才有交付提交哈希） |
 | workspace.cleanup / ext.close | FR-12.4、FR-13.5 | 清理失败不阻断 |
 | `hunt_end`（必须是最后动作） | FR-10.2 | 终态 ＋ 原因（退出码见使用手册 §7） |
+
+> 运行段 L1~L7 各步骤的**实现状态**（是否已落地）见 xhunter-status.md 状态索引 · L1-4 … L7。
 
 ### 6.4 处置段 D（终态之后；平台为主，Xhunter 契约到文件为止）
 
@@ -354,7 +356,7 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 | L1 完成后、首个检查点前 | ◇ 流静默 | 重派（session 指向空材料=等价新任务） | 临时工作区丢弃无损；材料为空则从基线重跑 |
 | L2~L6 中途（已有检查点） | ◇ 流静默 | 重派→resume：checkout 分支 tip + 读回材料，**未重做已完成轮次**；在途一轮由模型重做（代价有界） | AC-7；检查点自愈（累积重提） |
 | L7 中途（交付提交后、hunt_end 前） | ◇ 流静默 | 重派→resume：tip 已含交付提交，材料完整；模型复查后无新调用→再收敛（`ErrNoChanges` 不重复提交） | 交付幂等：diff 可再生、提交幂等 |
-| L4 流内挂起（Provider 断流） | □ 流看门狗（一期未接入） | Cancel→收敛退出 1→◇ 可重派 | 流内无副作用（工具在 `OnTurn` 才执行），无半写状态 |
+| L4 流内挂起（Provider 断流） | □ 流看门狗 | Cancel→收敛退出 1→◇ 可重派 | 流内无副作用（工具在 `OnTurn` 才执行），无半写状态 |
 | 用户取消（SIGTERM） | □ 取消检查（`ctx`） | 优雅退出：材料落盘→cleanup→exit 3；检查点保留 | AC-6；◇ 决定重开新任务或废弃 |
 | **退出 2（被引擎中止：预算 / 止损 / 轮数硬顶）** | ◇ | **不重派**——重跑同样会停在这里 | 结果文件含耗尽维度与未验证项 |
 | 退出 1（环境） | ◇ | 重派（≤N 次，建议 3，超限退化 failed） | 环境修复后可续（resume）或重来（无材料时） |
@@ -408,10 +410,12 @@ Prepare ──► ┌──  infer ──► receive ──► OnTurn  ──┐
 | 取消（`ctx` 结束） | 取消 | 退出 3 |
 | panic | 环境错误 | 收敛为终态，不让进程带着半截状态崩掉 |
 | 预算耗尽（业务口径） | 失败 | 维度名由 `Policy.Exhausted` 给出（tokens / turns / wall_clock） |
-| 连续同类失败**达阈值** | 继续（**切换策略**） | FR-9.4 第一段：换策略而不终止（一期：`Policy.ObserveFailure` 待接入） |
-| 策略连续拒绝累积 | 失败 | 模型在撞不该撞的墙（一期：`DeniedCount` 待接入） |
+| 连续同类失败**达阈值** | 继续（**切换策略**） | FR-9.4 第一段：换策略而不终止（`Policy.ObserveFailure`） |
+| 策略连续拒绝累积 | 失败 | 模型在撞不该撞的墙（`DeniedCount`） |
 | 外部信号 | 取消 | SIGTERM / SIGINT |
 
+> 上述机制判定与止损各段的**实现状态**见 xhunter-status.md 状态索引 · H1 / IA-4.8 / IA-4.9。
+>
 > 止损是**两段式**（FR-9.4）：达到阈值先换策略，超过上限才失败——若把它压成一行"达阈值即失败"，就丢掉了模型自我纠错的机会。**机制止损**（harness：连续失败轮数）与**业务止损**（`Policy`：连续同类失败、连续拒绝）分工不同：前者不认识原因，后者认得。
 
 **不变量**：任何异常（工具 panic、Provider 返回畸形数据）都必须收敛到终态并带原因，**不允许静默挂起**。
@@ -432,14 +436,14 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
         └─ 插件正文       任务陈述                              ← 每次不同
 ```
 
-> **一期现状**：system 段 = 插件正文（`prompt/agentsmd` + `prompt/skills`）＋ **内核条款**（末尾追加：无人类条款、止损规则、工具纪律、安全边界）；user 段 = **环境事实**（内核注入：平台、基线、路径规则、能力边界）＋ 插件正文（`prompt/task`）。图中的**门禁清单注入待接入**（门禁未实现）；**工具面说明层不做**——FR-7.7 要求能在工具 schema 里表达的不得在提示词里重复，工具声明随每次请求下发，另写一层只会漂移。
+> **默认装配**：system 段 = 插件正文（`prompt/agentsmd` + `prompt/skills`）＋ **内核条款**（末尾追加：无人类条款、止损规则、工具纪律、安全边界）；user 段 = **内核注入**（环境事实：平台、基线、路径规则、能力边界；门禁清单）＋ 插件正文（`prompt/task`）。**工具面说明层不做**——FR-7.7 要求能在工具 schema 里表达的不得在提示词里重复，工具声明随每次请求下发，另写一层只会漂移。
 
 **约定与 skill 的默认口径**（实现见 `prompt/agentsmd/` 与 `prompt/skills/`；插件可替换，内核不规定发现方式）：
 
 - **AGENTS.md**（FR-2.6）：根级全文注入 system 段；monorepo 嵌套采用"**命中附注**"——工具结果携带该文件路径向上链上最近且未注入过的嵌套 AGENTS.md（追加到 user 段，因为它是按操作位置动态出现的）。构造一次即冻结，运行中不重读。
 - **skill 发现清单**（FR-15.2）：从 `.xhunter/skills/`（基线 commit 读取，冻结语义）扫描 frontmatter，向 system 段注入 name+description 清单（总量封顶）；SKILL.md 与 references/ 的**全文按需加载**由模型经 `read` 原语完成——渐进披露天然落在已有原语上，核心零新机制、零新工具名；scripts/ 不可执行（FR-15.4）。
 
-**压缩**（FR-14）——**一期未接入**（`ContextBuilder` 目前只有「组装」没有「下压」；下面几节是目标规格）：
+**压缩**（FR-14）——下面几节是目标规格（实现状态见 xhunter-status.md 状态索引 · IA-2.5~2.8）：
 
 **水位的定义**：`可用输入预算 = MaxContextTokens（预置配置，FR-9.5） − 固定开销（system 段 + 工具 schema） − 输出预留`。三档水位：预警 70% 触发、目标 50% 压后水位、硬上限 90% 不可继续。
 
@@ -481,7 +485,7 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 
 | 职责 | 要求 |
 |---|---|
-| 注册 | **工具面恒定（9 + 1）**：基础 5（`read`/`write`/`edit`/`find`/`glob`）＋ 符号 3（`symbol_read`/`symbol_edit`/`symbol_rename`）＋ `check` ＋ 控制原语 `checkpoint`（殿后）。**两个轴都不改变工具名与参数 schema**：**交付分期**不裁剪工具面（一期未实现的符号原语与 `check` 照常注册，调用返回 `not_implemented`）；**环境能力**不决定注册（扩展不可用、语言未注册时符号原语仍注册，调用返回结构化错误）。能力差异只改"调用时会发生什么"（FR-4.11、AC-26） |
+| 注册 | **工具面恒定（9 + 1）**：基础 5（`read`/`write`/`edit`/`find`/`glob`）＋ 符号 3（`symbol_read`/`symbol_edit`/`symbol_rename`）＋ `check` ＋ 控制原语 `checkpoint`（殿后）。**两个轴都不改变工具名与参数 schema**：**交付分期**不裁剪工具面（尚未实现的符号原语与 `check` 照常注册，调用返回 `not_implemented`）；**环境能力**不决定注册（扩展不可用、语言未注册时符号原语仍注册，调用返回结构化错误）。能力差异只改"调用时会发生什么"（FR-4.11、AC-26） |
 | **工具集由装配层提供** | `harness` 与 `hunt` 都不认识具体原语：有哪些、叫什么、什么顺序，全由装配层以**工厂**形式交给 `hunt.Session`（`Config.Tools = func(Workspace) []Primitive`）。原语的实现需要工作区，而工作区是基线就绪后的运行期产物，所以交的是工厂：`Session.Prepare` 打开工作区后调用它，把工作区**显式传给每个原语**再定格工具面（`run.Tools`）。因此换一套工具集不需要动框架；而"这套工具集恰好是这些、顺序固定"这类**业务约束留在装配层**（`cmd/xhunter/primitives.go`），由那里的测试审查（FR-4.11） |
 | 实现扩展点 | **三段，全在业务侧**：① **原语实现可替换**——工厂返回同一个已知名字但换一份实现的 `Primitive`（差量替换），或返回整张清单（整体接管）；只能替换已知名字、不能新增工具名——模型可见面恒定，扩展改变的是名字背后的行为与路径，不是模型的工具清单。② **调用级装饰器**：包一层 `Primitive`，可拦截（不转交 inner 直接给结果）、改语义（改 `Call` 再转交）、美化结果（改 `Result.Summary`），但写盘仍只走 `Committer`（"未读即写"与指纹校验不被绕开）。③ **轮级结果加工**：`Config.Filters` 里的有序 `ResultFilter` 链，跑在工具执行之后、落历史之前——位置即保证，加工后的文本一定会进下一轮上下文；排在其后的任何加工只会改到副本。加工失败即上抛：脱敏、截断一类过滤器静默放行，等于把自己要防的内容原样送进上下文。**框架侧只校验结构自洽**（名字非空、实现齐备、声明名一致、不重复），不校验业务名字（那是业务知识） |
 | 执行位置 | 一轮的调用由 `hunt.Session.OnTurn` 按到达序执行（一期串行）；harness 只从流里收 `turn.Calls`，**不执行** |
@@ -496,14 +500,16 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 
 **这是无人类场景下唯一顶替人类的位置**，因此它是最不可省的一块。默认实现 `internal/policy`：**默认拒绝**——放行需要一条明确的理由，而不是反过来。
 
-| 裁决点 | 输入 | 输出 | 一期状态 |
+| 裁决点 | 输入 | 输出 | **设计口径** |
 |---|---|---|---|
-| 路径边界 | 原语 ＋ 参数（路径） | allow / deny | 已实现：绝对路径 / `..` 逃逸 / `.xhunter/**`（`skills.draft/**` 除外）一律拒绝；**未知原语默认拒绝** |
+| 路径边界 | 原语 ＋ 参数（路径） | allow / deny | 绝对路径 / `..` 逃逸 / `.xhunter/**`（`skills.draft/**` 除外）一律拒绝；**未知原语默认拒绝** |
 | 破坏性操作 | 原语 ＋ 参数 | allow / deny | 由"原语名 ＋ 路径"表达（如符号重命名的写判定） |
 | **影响面** | 原语 ＋ 寻址方式 ＋ 改动规模 | — | **不做**：无人 review 的终局要求判据来自证据（门禁、读回校验），"改得多就保守拒绝"是偏好而非判据；改动规模只上报，不裁决 |
 | **权限询问应答** | — | — | **不适用**：无人类场景下不存在这条路径，裁决只发生在调用点（§10.3） |
-| 预算 | 累计用量（增量由执行体转交） | continue / terminate | 已实现：三档独立判定（token / 轮数 / 墙钟），0 = 不限 |
-| 止损 | 失败序列 | continue / switch / terminate | **待接入**：`ObserveFailure` / `DeniedCount` |
+| 预算 | 累计用量（增量由执行体转交） | continue / terminate | 三档独立判定（token / 轮数 / 墙钟），0 = 不限 |
+| 止损 | 失败序列 | continue / switch / terminate | 两段式：连续同类失败达阈值先**切换策略**、超上限即终止（`ObserveFailure`）；连续拒绝累积即终止（`DeniedCount`） |
+
+> 各裁决点的**实现状态**（已落地 / 待接入）见 xhunter-status.md 状态索引 · H4-裁决点。
 
 **接口形状**（`hunt/policy.go`）：`Decide(ctx, Call) (Decision, error)` / `Charge(llm.Usage)` / `Exhausted(TurnNo) (bool, string)`。`Decision` **必须携带原因**——拒绝时原因会回灌给模型，让它换个做法，而不是对着同一堵墙反复尝试。
 
@@ -517,14 +523,14 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 
 - **事件行是外部契约**：`{"type": "<事件名>", ...payload}`——载荷**摊平到顶层**、键名小写，与使用手册 §5 一一对应。**事件类型只增不改**（INV-5）。
 - **内部事件 → 外部协议映射**（见 §9）：内部可细、外部须稳。
-- **落盘**：周期性写入当前状态与 session 增量，应对不可捕获的强杀信号（FR-12.3b）——**一期未接入**（`SessionRecorder` 目前只记内存）。
-- **心跳**：任务级，与 runtime 心跳解耦（FR-10.1）；间隔默认 30s、`XHUNTER_HEARTBEAT_INTERVAL` 可覆盖；`Heartbeat(phase)` 已能发事件，但**调用点一期未接入**。
+- **落盘**：周期性写入当前状态与 session 增量，应对不可捕获的强杀信号（FR-12.3b）（实现状态见 xhunter-status.md 状态索引 · IA-6.1）。
+- **心跳**：任务级，与 runtime 心跳解耦（FR-10.1）；间隔默认 30s、`XHUNTER_HEARTBEAT_INTERVAL` 可覆盖；运行期由 `Heartbeat(phase)` 按间隔发出（实现状态见 xhunter-status.md 状态索引 · IA-5.4）。
 - **通道隔离**：事件流走 stdout，人类日志走 stderr，绝不混用（FR-11.4）。
 - **通道断裂即终止**（FR-10.4）：写 stdout 失败（EPIPE / 磁盘满）意味着消费者已不在或无法接收，此时**记录原因并终止**（环境错误，退出码 1）。
 
 ### 7.6 H6 Session —— 会话材料与检查点恢复（`hunt.SessionRecorder`）
 
-**契约**（`hunt/runtime.go`）：`RecordTurn(rec harness.Turn)` / `Snapshot() error`。设计上还要 `RecordOp` / `Ops` / `Delta` / `Fingerprint`——**一期未接入**（记录项与恢复流程见下，当前只记内存、恢复未实现）。
+**契约**（`hunt/runtime.go`）：`RecordTurn(rec harness.Turn)` / `Snapshot() error`。设计上还要 `RecordOp` / `Ops` / `Delta` / `Fingerprint`（记录项与恢复流程见下；实现状态见 xhunter-status.md 状态索引 · H6）。
 
 **记录**（全程）：
 
@@ -549,7 +555,7 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 
 ### 7.7 H7 Ext —— 扩展接入（`ext.ExtHost`，MCP）
 
-符号级能力不在核心里，由本地 MCP 扩展提供。`ext.ExtHost` 是核心侧的客户端与治理契约（实现由装配层注入，一期未接入）。
+符号级能力不在核心里，由本地 MCP 扩展提供。`ext.ExtHost` 是核心侧的客户端与治理契约（实现由装配层注入；实现状态见 xhunter-status.md 状态索引 · H7）。
 
 | 职责 | 要求 |
 |---|---|
@@ -570,7 +576,7 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 
 ### 7.8 质量门禁（`check` 原语的具名条目）
 
-> **一期状态**：门禁清单暂空（`Prepare` 里 `s.gates = nil`），`check` 原语**声明但不实现**，收尾补跑与检查点联动均未接入——本节是目标规格。
+> 实现状态见 xhunter-status.md 状态索引 · L1-4 / IA-11.12（本节是目标规格）。
 
 门禁**不是新工具**，而是 `check` 原语的具名条目——原语面是 9 个（5 基础 ＋ 3 符号 ＋ 1 门禁，另有控制原语 `checkpoint`），门禁不占新的工具名。
 
@@ -681,10 +687,10 @@ type Caps struct {
 
 **只声明用到的能力，不预埋降级逻辑**：
 
-| 类别 | 现状 |
+| 类别 | 口径 |
 |---|---|
 | **上限类** | `MaxContextTokens`：**不得估算**——必须来自 `XHUNTER_MODEL_CONTEXT_TOKENS`，缺失则启动期显式失败（FR-9.5） |
-| 行为类（并行工具调用 / 结构化输出 / 思考块） | **代码里没有这些字段**，因为**没有消费方**：引擎一期串行执行工具、工具调用本身就是结构化的、中立事件没有思考块槽位（协议包刻意不接收）。等到有消费方再加，**加的时候连降级规则一起写**——预埋没人读的字段，读者会以为那条降级路径存在 |
+| 行为类（并行工具调用 / 结构化输出 / 思考块） | **不预埋这些字段**（没有消费方）：引擎串行执行工具、工具调用本身就是结构化的、中立事件没有思考块槽位（协议包刻意不接收）。等到有消费方再加，**加的时候连降级规则一起写**——预埋没人读的字段，读者会以为那条降级路径存在 |
 | 用量类（「上游不回用量」） | **不估算、如实上报**（FR-9.7）：上游未回报用量时，事件流发 `degraded`（`scope: "usage"`）、结果文件标 `usage.reported: false`。**不得用拍出来的数字去触发或不触发 token 预算** |
 
 **不允许"缺了就静默不工作"**；也确实不允许"缺了就静默猜一个"。上限猜错的两个方向都有代价：偏高在任务中途硬失败，偏低静默拉低所有同类任务的效率。
@@ -778,15 +784,17 @@ providerconfig.Resolved ──► provider/<protocol> 的构造函数 ──► 
 | `tool_call` | `OnTurn` 执行前 | |
 | `tool_result` | `OnTurn` 执行后（`emitToolResult`） | 载荷含 `tool` / `ok` / `summary`（失败再加 `error` / `message`） |
 | `policy_denied` | `Policy.Decide` 拒绝分支 | 必须上报，不得静默 |
-| `assumption` | 业务（暂未产出） | 替代追问的假设外化 |
-| `check_result` | `check` 原语（一期未接入） | 具名门禁结果 |
+| `assumption` | 业务 | 替代追问的假设外化 |
+| `check_result` | `check` 原语 | 具名门禁结果 |
 | `usage` | `OnTurn`（每轮末，**增量**）／`hunt_end`（收尾，**累计**） | 用量 |
-| `heartbeat` | `EventSink.Heartbeat`（调用点一期未接入） | 阶段 ＋ 已用时 |
-| `context_compacted` | `ContextBuilder`（一期未接入） | 命中层级 + 释放 token 量（FR-14.7） |
+| `heartbeat` | `EventSink.Heartbeat` | 阶段 ＋ 已用时 |
+| `context_compacted` | `ContextBuilder` | 命中层级 + 释放 token 量（FR-14.7） |
 | `degraded` | 提示词插件 / 符号降级 | 非致命降级：跳过了什么、为什么 |
 | `deliverable` | `Finalize` | 交付文件清单 |
 | `error` | 各阶段 | 结构化，含可重试性 |
 | `hunt_end` | `Finalize`（必须是最后一条） | 终态 + 原因 |
+
+> 事件是否已发出见 xhunter-status.md 状态索引 · usage§5·已发出事件。
 
 **稳定性靠两件事，而不是一张映射表**：**类型只增不改**（INV-5），以及 **sink 只做序列化、不做业务解释**（`cmd/xhunter/sink.go`）。跳过这层纪律、让 sink 参与解释业务，才会让每次内部重构都变成破坏性变更。
 
@@ -978,7 +986,7 @@ Bounty(session) ──► H6.Session
 - **事件契约只追加**（INV-5）：外部事件类型与字段一旦发布不可修改；新增字段不算破坏性变更。
 - **判定主体是代码与测试**：接口即契约，测试即判定；所有用例不依赖模型（NFR-8）。
 - 验收项用 `IA-x`（Interface Acceptance）编号，映射到产品文档的 FR/NFR/AC（见 §13）。
-- **判定方式里的用例名以当前测试套件为准**：写「**待补**」的验收项没有对应用例（实现未落地或测试未随包搬过来都算），一并记在 §14。
+- **判定方式里的用例名以当前测试套件为准**：写「**待补**」的验收项没有对应用例（实现未落地或测试未随包搬过来都算），一并记在 `xhunter-status.md` §3。
 
 ### 12.1 H1 — `harness.Engine`
 
@@ -1001,7 +1009,7 @@ Bounty(session) ──► H6.Session
 
 ### 12.2 H2 — `hunt.ContextBuilder`
 
-**契约**（`hunt/runtime.go`）：`SetPrompt(msgs []llm.Message)` / `Assemble() []llm.Message` / `Append(rec harness.Turn)`。压缩与恢复所需的 `Compact` / `Restore` / `TokenCount` **待接入**。
+**契约**（`hunt/runtime.go`）：`SetPrompt(msgs []llm.Message)` / `Assemble() []llm.Message` / `Append(rec harness.Turn)`。压缩与恢复所需的 `Compact` / `Restore` / `TokenCount`（实现状态见 xhunter-status.md 状态索引 · H2）。
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
@@ -1010,15 +1018,15 @@ Bounty(session) ──► H6.Session
 | IA-2.2 | 历史按轮追加、每轮各成消息（模型说了什么 ＋ 调用结果），下一轮即可见 | `TestContextBuilder_AssemblesPromptThenHistory`（cmd） |
 | IA-2.3 | 结果加工的改动**必须先于落历史**——否则历史里是旧副本，模型看不到 | `TestOnTurn_FiltersRunBeforeRecording`（hunt） |
 | IA-2.4 | 落历史与会话材料是**值拷贝**：此后对 `Turn` 的改动不影响已记内容 | 同上（同一条用例的断言之一） |
-| IA-2.5 | 当前轮 messages 与 Bounty 正文**永不裁剪** | **待补**（压缩未接入，AC-17） |
-| IA-2.6 | 水位线触发压缩：低于预警不压、达预警才压、压后冷却期内不重复压 | **待补**（FR-14.1） |
-| IA-2.7 | 分层下压按 L0→L4，够用即停；默认实现零模型调用 | **待补**（FR-14.2、FR-14.4） |
-| IA-2.8 | 同一份 session 记录两次投影出的工作日志内容一致 | **待补**（AC-18） |
+| IA-2.5 | 当前轮 messages 与 Bounty 正文**永不裁剪** | （实现状态见 xhunter-status.md 状态索引 · IA-2.5） |
+| IA-2.6 | 水位线触发压缩：低于预警不压、达预警才压、压后冷却期内不重复压 | （实现状态见 xhunter-status.md 状态索引 · IA-2.6） |
+| IA-2.7 | 分层下压按 L0→L4，够用即停；默认实现零模型调用 | （实现状态见 xhunter-status.md 状态索引 · IA-2.7） |
+| IA-2.8 | 同一份 session 记录两次投影出的工作日志内容一致 | （实现状态见 xhunter-status.md 状态索引 · IA-2.8） |
 | IA-2.9 | 可用输入预算与水位的算法口径：上限来自配置而非估算 | `TestInputBudget`、`TestWatermarks`（providerconfig） |
 | IA-2.10 | **AGENTS.md 注入**（FR-2.6 / AC-23）：根级全文进 system 段；文件名精确匹配（大小写反例不注入）；空白视同不存在；超限在行边界收刀并留下降级记录；构造一次冻结 | `TestBuild_InjectsRootConventions`、`TestBuild_CaseVariantIsNotRecognized`、`TestBuild_BlankContentIsTreatedAsAbsent`、`TestBuild_OversizeTruncatesWithNotice`、`TestBuild_WithoutBaseCommitFallsBackToWorktree` |
 | IA-2.11 | **skill 发现清单**（FR-15.2/15.5/15.6 / AC-24）：只注入 name+description 与入口路径（正文绝不进清单，总量封顶、溢出上报）；非法 frontmatter / 名字与目录名不符者跳过且事件流可见；SKILL.md 全文由模型经 `read` 按需获取 | `TestBuild_ListsNameDescriptionAndPath`、`TestBuild_InvalidEntryIsSkippedWithNotice`、`TestBuild_NameMustMatchDirectory`、`TestBuild_IgnoresSkillFilesOutsideDirectory`、`TestBuild_TruncatesBeyondLimit`、`TestBuild_NoSkillsYieldsEmptyPart`、`TestParseFrontmatter`、`TestParseFrontmatter_LengthLimitsComeFromSpec` |
-| IA-2.12 | **书写/生效分离**（FR-15.3 / AC-25）：`.xhunter/skills/**` 禁写、`.xhunter/skills.draft/**` 放行 | `TestDecide_WriteToControlDirDenied`、`TestDecide_WriteToSkillsDraftAllowed`（策略侧）；**diff 排除规则待补** |
-| IA-2.13 | **两段正文由插件贡献**（FR-7.8/7.9 / AC-29）：同段多插件按装配顺序拼接、空正文整段跳过、不重复；两段都不接只记 warn、不判死 | `TestDefaultPromptPlugins_OrderIsThePromptOrder`、`TestDefaultPromptPlugins_NoDuplicate`（cmd）、`TestFirstPrompt_KeepsOrderAndAppendsKernelBlocks`（hunt）；**插件失败按环境错误收敛的用例待补** |
+| IA-2.12 | **书写/生效分离**（FR-15.3 / AC-25）：`.xhunter/skills/**` 禁写、`.xhunter/skills.draft/**` 放行 | `TestDecide_WriteToControlDirDenied`、`TestDecide_WriteToSkillsDraftAllowed`（策略侧） |
+| IA-2.13 | **两段正文由插件贡献**（FR-7.8/7.9 / AC-29）：同段多插件按装配顺序拼接、空正文整段跳过、不重复；两段都不接只记 warn、不判死 | `TestDefaultPromptPlugins_OrderIsThePromptOrder`、`TestDefaultPromptPlugins_NoDuplicate`（cmd）、`TestFirstPrompt_KeepsOrderAndAppendsKernelBlocks`（hunt）（插件失败按环境错误收敛的用例见 xhunter-status.md 状态索引 · IA-2.13） |
 
 ### 12.3 H3 — 原语与执行流水线（`hunt.Primitive` ＋ `hunt.Session.OnTurn`）
 
@@ -1030,7 +1038,7 @@ Bounty(session) ──► H6.Session
 | IA-3.2 | 每个原语的声明是「已知形状」：名字、说明、合法 JSON Schema、`additionalProperties: false`；schema 片段**压掉排版空白但保留字符串内容**，片段不合法即当场失败（编程错误，不把坏 schema 发出去） | `TestDefaultTools_ShapeIsDeclared` ＋ 每个原语的 `*_DeclShape`、`TestObjectSchema_CompactsSyntaxButKeepsStringContent`、`TestObjectSchema_InvalidFragmentPanics`（llm） |
 | IA-3.3 | 未读即写被拒：改已存在的文件必须先读过，且读后未被外部改动（指纹校验）；重读后可自愈 | `TestCommitter_RejectsWriteWithoutPriorRead`、`TestCommitter_RejectsStaleRead`（hunt） |
 | IA-3.4 | 内容寻址不放宽匹配语义：未找到 → `not_found`（可重试）；多处匹配 → `ambiguous` ＋ 数量 | `TestEdit_NoMatchReportsNotFound`、`TestEdit_AmbiguousReportsCount` |
-| IA-3.5 | 符号寻址只接受 `Prepared` 的定位结果，落盘仍走 `Committer` | **待接入**（符号原语声明不实现） |
+| IA-3.5 | 符号寻址只接受 `Prepared` 的定位结果，落盘仍走 `Committer` | （实现状态见 xhunter-status.md 状态索引 · IA-3.5） |
 | IA-3.6 | 落盘只改写目标字节区间（其余字节原样保留），越界区间在落盘前被拒；**批量编辑先全部校验再依次落盘**（校验失败即零落盘） | `TestCommitter_OnlyReplacesTargetRange`、`TestCommitter_RejectsOutOfRange`、`TestCommitter_BatchIsAllOrNothingOnValidation`、`TestCommitter_NewFileRules`、`TestCommitter_MarksNewFingerprintAfterWrite`（hunt） |
 | IA-3.7 | 路径解析与工作区根校验：`../` 与符号链接逃逸一律拒绝；**新建文件（叶子尚不存在）与深层路径同样要拦**，且指向工作区内部的软链不误伤 | `TestResolve_RejectsPathsOutsideWorkspace`、`TestResolve_RejectsSymlinkEscape`、`TestResolve_RejectsSymlinkEscapeForNewFile`、`TestResolve_AllowsSymlinkInsideWorkspace`（osfs） |
 | IA-3.8 | 枚举跳过噪音但保留控制目录（`.xhunter`）；顺序稳定；**模式语义**：不含 `/` 按文件名（任意深度）、含 `/` 按路径、`**` 表示零到多层、空模式是显式错误 | `TestList_SkipsNoiseButKeepsControlDir`、`TestList_OrderIsStable`、`TestList_PatternSemantics`（osfs）、`TestGlob_DirectoryAndDeepPatterns`（basic） |
@@ -1048,7 +1056,7 @@ Bounty(session) ──► H6.Session
 
 ### 12.4 H4 — `hunt.Policy`
 
-**契约**：`Decide(ctx, Call) (Decision, error)` / `Charge(llm.Usage)` / `Exhausted(TurnNo) (bool, string)`（`ObserveFailure` / `DeniedCount` 待接入）。无人类场景下它是唯一顶替人的位置，默认拒绝。
+**契约**：`Decide(ctx, Call) (Decision, error)` / `Charge(llm.Usage)` / `Exhausted(TurnNo) (bool, string)`（设计还要 `ObserveFailure` / `DeniedCount`，见 xhunter-status.md 状态索引 · IA-4.8/4.9）。无人类场景下它是唯一顶替人的位置，默认拒绝。
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
@@ -1060,9 +1068,9 @@ Bounty(session) ──► H6.Session
 | IA-4.6 | 路径边界：绝对路径 / `..` 逃逸 / `.xhunter/**` 拒绝，`skills.draft/**` 放行 | `TestDecide_PathEscapeDenied`、`TestDecide_WriteToControlDirDenied`、`TestDecide_WriteToSkillsDraftAllowed` |
 | IA-4.7 | 三重预算独立判定，耗尽给出维度名；0 = 不限 | `TestChargeAndExhausted_Tokens`、`TestExhausted_Turns`、`TestExhausted_WallClock`、`TestExhausted_ZeroMeansUnlimited` |
 | IA-4.7b | **预算真的从投递走到止损**：环境变量 → Bounty → 策略 → 轮末守卫 → `budget_exhausted:<维度>`（FR-9、AC-5）；写错的取值在启动期失败 | `TestBountyFromEnv_DeliversBudget`、`TestEndToEnd_BudgetExhaustionStopsTheRun`（cmd） |
-| IA-4.8 | 连续拒绝达阈值 → 终止（防止模型反复撞墙） | **待接入**（`DeniedCount`） |
-| IA-4.9 | 止损三态：continue / switch / terminate，阈值与上限分离 | **待接入**（FR-9.4） |
-| IA-4.10 | 用量按**增量**转交：累计值不得被反复当作增量上报（执行体自记水位） | **待补**（`Session.charge` 的增量语义） |
+| IA-4.8 | 连续拒绝达阈值 → 终止（防止模型反复撞墙） | （实现状态见 xhunter-status.md 状态索引 · IA-4.8） |
+| IA-4.9 | 止损三态：continue / switch / terminate，阈值与上限分离 | （实现状态见 xhunter-status.md 状态索引 · IA-4.9） |
+| IA-4.10 | 用量按**增量**转交：累计值不得被反复当作增量上报（执行体自记水位） | （实现状态见 xhunter-status.md 状态索引 · IA-4.10） |
 
 ### 12.5 H5 — `hunt.EventSink`
 
@@ -1071,9 +1079,9 @@ Bounty(session) ──► H6.Session
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
 | IA-5.1 | 事件行形状：一行一条 JSON、`type` 在顶层、载荷**摊平**（与使用手册 §5 一一对应） | `TestEventSink_EmitsFlatJSONLine` |
-| IA-5.2 | stdout 只有外部事件行，合法 NDJSON；日志一律 stderr | **待补**（端到端断言，AC-9） |
+| IA-5.2 | stdout 只有外部事件行，合法 NDJSON；日志一律 stderr | （实现状态见 xhunter-status.md 状态索引 · IA-5.2） |
 | IA-5.3 | **事件写入失败 → 上抛**，不得静默继续（FR-10.4、AC-19）：出口记住第一次失败，装配层据此以退出码 1 收敛并记原因 | `TestEventSink_RemembersFirstWriteFailure`、`TestEndToEnd_BrokenEventChannelIsEnvError`（cmd，读端已关的管道） |
-| IA-5.4 | 心跳按任务输出（非 runtime），携带阶段与已用时 | **待接入**（`Heartbeat` 已实现，调用点未接入） |
+| IA-5.4 | 心跳按任务输出（非 runtime），携带阶段与已用时 | （实现状态见 xhunter-status.md 状态索引 · IA-5.4） |
 | IA-5.5 | **每次工具调用恰好一条 `tool_result`**（成功、原语报错、执行失败、落盘失败、名字不认识、参数绑定失败、检查点都有），且必带 `call_id` / `tool` / `ok` / `summary` / `duration_ms`，失败再加 `error` / `message` | `TestExecuteCall_EveryOutcomeEmitsOneToolResult`、`TestExecuteCall_SuccessRecordsOpsAndSummary`（hunt） |
 | IA-5.6 | 失败信息自含足以远程定位的上下文 | 代码检查（FR-11.5） |
 | IA-5.7 | 每个事件携带信封四字段：`type` / `bounty_id` / `trace_id` / `ts`——由出口**统一盖章**，业务载荷覆盖不了；`ts` 为 RFC3339 UTC（契约权威在使用手册 §5） | `TestEventSink_StampsEnvelopeOnEveryEvent`、`TestHuntCmd_EventsGoToStdoutAndLogsGoToStderr`、`TestBountyFromEnv_TraceID`（cmd） |
@@ -1081,21 +1089,21 @@ Bounty(session) ──► H6.Session
 
 ### 12.6 H6 — `hunt.SessionRecorder`
 
-**契约**：`RecordTurn(rec harness.Turn)` / `Snapshot() error`（`RecordOp` / `Ops` / `Delta` / `Fingerprint` 待接入）。**一期只记内存**，恢复未实现——下列验收项是目标。
+**契约**：`RecordTurn(rec harness.Turn)` / `Snapshot() error`（设计还要 `RecordOp` / `Ops` / `Delta` / `Fingerprint`）。实现状态见 xhunter-status.md 状态索引 · H6。
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
-| IA-6.1 | 会话材料自含续跑所需全部信息：对话历史 + 工具名 + 完整参数 + 结果摘要 + turn 序号 + 用量 + 能力指纹 | **待接入**（FR-12.2） |
-| IA-6.1b | **按任务隔离**：材料路径为 `.xhunter/<session_id>/session.jsonl`；两任务并行同一仓库时互不覆盖 | **待接入**（FR-12.2b） |
-| IA-6.1c | **提交强制加入**（`add -f`）：仓库 `.gitignore` 忽略 `.xhunter/` 时材料仍随检查点提交 | **待接入** |
-| IA-6.2 | **恢复过程零工具执行**：不重放写操作 | **待接入**（恢复未实现） |
-| IA-6.3 | 恢复从**下一轮**继续，不重做已完成轮次 | **待接入**（FR-12.1） |
-| IA-6.4 | 材料带 `schema_version`；不兼容 → 环境错误（退出码 1），不自动迁移 | **待接入**（FR-12.6） |
-| IA-6.5 | 材料含扩展能力指纹；不一致**只记录、不阻断** | **待接入**（FR-13.7） |
-| IA-6.5b | **材料不可被模型篡改**：写 `.xhunter/**` 被策略拒绝；模型无 git 操作能力 | `TestDecide_WriteToControlDirDenied`（策略侧）；git 侧靠工具面不含 git 原语 |
+| IA-6.1 | 会话材料自含续跑所需全部信息：对话历史 + 工具名 + 完整参数 + 结果摘要 + turn 序号 + 用量 + 能力指纹 | （实现状态见 xhunter-status.md 状态索引 · IA-6.1） |
+| IA-6.1b | **按任务隔离**：材料路径为 `.xhunter/<session_id>/session.jsonl`；两任务并行同一仓库时互不覆盖 | （实现状态见 xhunter-status.md 状态索引 · IA-6.1b） |
+| IA-6.1c | **提交强制加入**（`add -f`）：仓库 `.gitignore` 忽略 `.xhunter/` 时材料仍随检查点提交 | （实现状态见 xhunter-status.md 状态索引 · IA-6.1c） |
+| IA-6.2 | **恢复过程零工具执行**：不重放写操作 | （实现状态见 xhunter-status.md 状态索引 · IA-6.2） |
+| IA-6.3 | 恢复从**下一轮**继续，不重做已完成轮次 | （实现状态见 xhunter-status.md 状态索引 · IA-6.3） |
+| IA-6.4 | 材料带 `schema_version`；不兼容 → 环境错误（退出码 1），不自动迁移 | （实现状态见 xhunter-status.md 状态索引 · IA-6.4） |
+| IA-6.5 | 材料含扩展能力指纹；不一致**只记录、不阻断** | （实现状态见 xhunter-status.md 状态索引 · IA-6.5） |
+| IA-6.5b | **材料不可被模型篡改**：写 `.xhunter/**` 被策略拒绝；模型无 git 操作能力 | `TestDecide_WriteToControlDirDenied`（策略侧） |
 | IA-6.6 | `Snapshot` 不阻断主流程；失败只记录 | 代码检查（`Session.snapshot` 只记 warn，FR-12.3b） |
 | IA-6.7 | **无"按写操作数量判失败"的闸门**：交付物是否存在，看结果文件里的改动清单与最终答复（`summary`） | 代码检查（`Finalize` 不设该闸门）；用例：`TestFinalize_TextOnlyDeliverySucceeds`（全程零写、只有小结 → 成功） |
-| IA-6.8 | 凭据不得进入材料（与事件流同规则） | **待补**（断言扫描，FR-8.4、AC-8） |
+| IA-6.8 | 凭据不得进入材料（与事件流同规则） | （实现状态见 xhunter-status.md 状态索引 · IA-6.8） |
 
 ### 12.7 H7 — `ext.ExtHost`
 
@@ -1103,13 +1111,13 @@ Bounty(session) ──► H6.Session
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
-| IA-7.1 | 扩展**不新增工具名**：它的能力通向已注册的符号原语 | **待补**（需"工具面恒定"的对照用例：环境能力与分期都不改变工具名与 schema） |
-| IA-7.2 | 扩展不可用 → 全量降级文本路径，**任务不失败** | **待接入**（符号原语声明不实现） |
-| IA-7.3 | 上报能力描述符（能力集 + 精度等级）；核心不感知后端种类 | **待接入** |
-| IA-7.4 | 精度如实上报，不得把语法级当语义级 | **待接入**（`Prepared.Precision`） |
-| IA-7.5 | `CanResolve == false` 时重命名**仍然注册**（工具名与参数 schema 不变），调用返回结构化错误且**不降级为文本路径** | **待接入** |
-| IA-7.6 | 扩展崩溃不使主循环静默挂起；`Close` 随 Hunt 回收 | **待接入**（需真实子进程的扩展宿主测试） |
-| IA-7.7 | 外部后端（LSP）缺失不得使任务失败 | **待接入**（FR-13.9、AC-14） |
+| IA-7.1 | 扩展**不新增工具名**：它的能力通向已注册的符号原语 | （实现状态见 xhunter-status.md 状态索引 · IA-7.1） |
+| IA-7.2 | 扩展不可用 → 全量降级文本路径，**任务不失败** | （实现状态见 xhunter-status.md 状态索引 · IA-7.2） |
+| IA-7.3 | 上报能力描述符（能力集 + 精度等级）；核心不感知后端种类 | （实现状态见 xhunter-status.md 状态索引 · IA-7.3） |
+| IA-7.4 | 精度如实上报，不得把语法级当语义级 | （实现状态见 xhunter-status.md 状态索引 · IA-7.4） |
+| IA-7.5 | `CanResolve == false` 时重命名**仍然注册**（工具名与参数 schema 不变），调用返回结构化错误且**不降级为文本路径** | （实现状态见 xhunter-status.md 状态索引 · IA-7.5） |
+| IA-7.6 | 扩展崩溃不使主循环静默挂起；`Close` 随 Hunt 回收 | （实现状态见 xhunter-status.md 状态索引 · IA-7.6） |
+| IA-7.7 | 外部后端（LSP）缺失不得使任务失败 | （实现状态见 xhunter-status.md 状态索引 · IA-7.7） |
 
 ### 12.8 `Provider`
 
@@ -1117,8 +1125,8 @@ Bounty(session) ──► H6.Session
 |---|---|---|
 | IA-8.1 | 模型上限缺失 → 启动期环境错误，**不得估算继续** | `TestFromEnv_ReportsAllIssuesAtOnce`（providerconfig）、`TestProviderFor_PropagatesMissingContextWindow`、`TestNew_FailsAtStartupWhenFactsAreMissing` |
 | IA-8.2 | `Session` 只有 `Events` / `Cancel`：数据面单向、控制面可从消费之外触达；**不含权限应答通道** | 代码检查：`llm.Session` 的方法集 |
-| IA-8.3 | 工具执行不委托 Provider（INV-2） | 代码检查：`llm.Provider` 的方法集只有 `Infer` / `Capabilities`（**待补**：把方法集断言写成用例） |
-| IA-8.4 | 核心代码不出现供应商名字（INV-1） | **待补**（源码静态扫描，原先在 `harness` 侧，重构后需重建） |
+| IA-8.3 | 工具执行不委托 Provider（INV-2） | 代码检查：`llm.Provider` 的方法集只有 `Infer` / `Capabilities`（方法集断言用例见 xhunter-status.md 状态索引 · IA-8.3） |
+| IA-8.4 | 核心代码不出现供应商名字（INV-1） | （实现状态见 xhunter-status.md 状态索引 · IA-8.4） |
 | IA-8.5 | 协议实现不含供应商硬编码：端点、鉴权头、上限全部来自构造参数 | `TestNew_BuildsEndpointAndDeclaresWindow`、`TestNew_BuildsEndpointAndPassesHeadersThrough`、`TestNew_AppliesProtocolHeadersAndLetsConfigOverride` |
 | IA-8.6 | **协议形状不外泄**：请求组装、流式分帧、增量拼装、错误分类都在协议包内，Harness 侧没有对应类型 | 代码检查：上游线格式类型不导出（IA-8.4 同一次扫描） |
 | IA-8.7 | **流中断不得静默**（→ `EvError` 带可重试性）；**协议层不解释参数**，形状不成立的调用由绑定层拒绝并回灌 | `TestInfer_TruncatedStreamIsExplicit`、`TestInfer_DoesNotInterpretArguments`、`TestBindToolCall_RejectsShapesThatWouldExecuteTheWrongThing` |
@@ -1155,7 +1163,7 @@ Bounty(session) ──► H6.Session
 | IA-9.9 | 水位线以**可用输入预算**为基数，四舍五入 | `TestWatermarks` |
 | IA-9.10 | `{env:VAR}` 引用形式与解析规则（含带前缀写法） | `TestEnvRefName`、`TestExpandEnvRef` |
 
-### 12.11 `GitWorktree`
+### 12.10 `GitWorktree`
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
@@ -1164,16 +1172,16 @@ Bounty(session) ──► H6.Session
 | IA-11.3 | 基线不可达 / 远端不可达 / 缺部署事实 → 环境错误（退出码 1），且失败路径不留临时工作树 | `TestPrepareBaseline_FailsAtStartupOnUnusableFacts`（cli） |
 | IA-11.4 | `Commit`：提交累积自上一个检查点的全部改动并推送；**无改动不产生空提交**（FR-1.3c）且结果里如实报告 `Created=false`（日志不得因此假称「已创建检查点」） | `TestCommit_PushesFastForwardAndSkipsEmptyCommit`、`TestCheckpoint_LogsNoOpWhenNothingWasCommitted`（hunt）、`TestEndToEnd_LocalRunProducesDeliveryCommit`（cmd） |
 | IA-11.5 | 远端 tip 不是本地父提交 → 拒绝推送并返回环境错误，**绝不 force push**（FR-8.3、AC-20） | `TestCommit_RejectsNonFastForward`（断言远端 tip 未被改写） |
-| IA-11.6 | `Diff` 产出改动文件清单、`Patch` 产出**可应用到基线的统一 diff**（FR-6.1、AC-1）；失败不阻断收尾（`Finalize` 只记 warn）。**排除会话材料目录 `.xhunter/<session_id>/**` 待接入**（会话材料尚未落盘） | `TestDiff_ListsFilesChangedSinceBaseline`、`TestPatch_AppliesCleanlyToBaseline`（`git apply` 验证）、`TestEndToEnd_LocalRunProducesDeliveryCommit`（deliverable 事件 ＋ 补丁应用到基线） |
+| IA-11.6 | `Diff` 产出改动文件清单、`Patch` 产出**可应用到基线的统一 diff**（FR-6.1、AC-1）；失败不阻断收尾（`Finalize` 只记 warn）。排除会话材料目录 `.xhunter/<session_id>/**`（FR-6.1；实现状态见 xhunter-status.md 状态索引 · IA-11.6） | `TestDiff_ListsFilesChangedSinceBaseline`、`TestPatch_AppliesCleanlyToBaseline`（`git apply` 验证）、`TestEndToEnd_LocalRunProducesDeliveryCommit`（deliverable 事件 ＋ 补丁应用到基线） |
 | IA-11.7 | `Clean` 回收临时工作树，可重复调用；回收后提交显式失败；失败只记录 | `TestClean_RemovesWorktreeAndIsIdempotent`（cli） |
-| IA-11.8 | **调用时机与不可见性（INV-11）**：`PrepareBaseline` 是 `Prepare` 的第一个动作，先于任何工具执行；`Commit` 只在轮边界与收尾被调用；两者**都不作为原语暴露**给模型 | **待补**（断言调用顺序 ＋ 工具面不含 git 原语） |
-| IA-11.9 | **检查点自愈与止损（AC-22）**：单次提交失败不中止（下一轮累积重提）；连续失败达上限 → 环境错误 | 自愈部分：代码检查（`checkpoint` 失败只记 warn）；**连败上限待接入** |
-| IA-11.10 | **时间语义**：检查点提交的是**本轮已应用的改动**（执行在 `OnTurn` 内、提交紧随其后），不含下一轮内容；末轮改动由收尾交付 | **待补** |
+| IA-11.8 | **调用时机与不可见性（INV-11）**：`PrepareBaseline` 是 `Prepare` 的第一个动作，先于任何工具执行；`Commit` 只在轮边界与收尾被调用；两者**都不作为原语暴露**给模型 | （实现状态见 xhunter-status.md 状态索引 · IA-11.8） |
+| IA-11.9 | **检查点自愈与止损（AC-22）**：单次提交失败不中止（下一轮累积重提）；连续失败达上限 → 环境错误 | 自愈部分：代码检查（`checkpoint` 失败只记 warn）；连败上限见 xhunter-status.md 状态索引 · IA-11.9 |
+| IA-11.10 | **时间语义**：检查点提交的是**本轮已应用的改动**（执行在 `OnTurn` 内、提交紧随其后），不含下一轮内容；末轮改动由收尾交付 | （实现状态见 xhunter-status.md 状态索引 · IA-11.10） |
 | IA-11.11 | **自动检查点只落在结构完整点上**（FR-1.3c/1.3d）：无结构判据（扩展未接入）**不提交**，并如实记录跳过原因；**模型显式请求不受此限** | `TestCheckpoint_NoAutoCheckpointOffStructuralPoint`、`TestCheckpoint_LogsNoOpWhenNothingWasCommitted`（hunt） |
-| IA-11.12 | **门禁驱动的检查点**：门禁通过后立即提交（提交信息含原因）；门禁未通过则抑制自动检查点 | **待接入**（依赖 `check`） |
-| IA-11.13 | **模型请求的检查点（控制原语的消费端）**：模型经 `checkpoint` 表达意图 → 本轮提交，提交信息标明"模型请求"并带上理由；**理由只作素材**——只取首行、剥控制与格式字符、按上限截断，前缀与分隔符由执行体固定；**一次请求只兑现一次**；**无改动则不产生空提交**，但意图照样被消费 | 净化：`TestSanitizeIntent`（hunt）；**提交信息合成、一次兑现、空提交抑制的用例待补** |
+| IA-11.12 | **门禁驱动的检查点**：门禁通过后立即提交（提交信息含原因）；门禁未通过则抑制自动检查点 | （实现状态见 xhunter-status.md 状态索引 · IA-11.12） |
+| IA-11.13 | **模型请求的检查点（控制原语的消费端）**：模型经 `checkpoint` 表达意图 → 本轮提交，提交信息标明"模型请求"并带上理由；**理由只作素材**——只取首行、剥控制与格式字符、按上限截断，前缀与分隔符由执行体固定；**一次请求只兑现一次**；**无改动则不产生空提交**，但意图照样被消费 | 净化：`TestSanitizeIntent`（hunt）；提交信息合成/一次兑现/空提交抑制见 xhunter-status.md 状态索引 · IA-11.13 |
 
-### 12.12 装配层（`cmd/xhunter`，对应 FR-1.8 / FR-1.9）
+### 12.11 装配层（`cmd/xhunter`，对应 FR-1.8 / FR-1.9）
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
@@ -1185,7 +1193,7 @@ Bounty(session) ──► H6.Session
 | IA-12.6 | **端到端**：本地驱动跑通一次（基线 → 至少一轮 → 工具落盘 → 轮边界检查点 → 交付 = 分支 tip → `hunt_end`），退出码与事件序列符合契约；事件只走 stdout、收尾清理工作树 | `TestEndToEnd_LocalRunProducesDeliveryCommit`（真 git 夹具 + 本地假上游） |
 | IA-12.7 | 装配结果无运行期注册面：改装配只改装配代码，框架侧无注册 API | 代码检查（`harness` 只有 `New(provider, ...)`；`hunt.Config` 是构造参数） |
 | IA-12.9 | **结果文件**（FR-1.5）：`--result` 指定的文件在**无论成败**时都写出，含终态/退出码/仓库事实/交付提交/改动清单/用量；失败带 `error{kind,message,retryable}`；写失败即环境错误（退出 1） | `TestEndToEnd_LocalRunProducesDeliveryCommit`、`TestEndToEnd_ResultFileWrittenOnFailure`（cmd） |
-| IA-12.8 | **信号接线**：SIGINT / SIGTERM 取消运行段的 `ctx`（循环停止发起新的推理与工具调用、`Finalize` 照常收敛、退出码 3）；启动期仍走默认处置 | `TestSignalContext_CancelsOnSignal`、`TestSignalContext_StopCancelsContext`；进程级 AC-6 断言**待补** |
+| IA-12.8 | **信号接线**：SIGINT / SIGTERM 取消运行段的 `ctx`（循环停止发起新的推理与工具调用、`Finalize` 照常收敛、退出码 3）；启动期仍走默认处置 | `TestSignalContext_CancelsOnSignal`、`TestSignalContext_StopCancelsContext`（进程级 AC-6 断言见 xhunter-status.md 状态索引 · IA-12.8） |
 
 ---
 
@@ -1205,35 +1213,3 @@ Bounty(session) ──► H6.Session
 | `PromptPlugin` | FR-7.1/7.5/7.8/7.9、FR-2.6、FR-15.2/15.3、AC-23、AC-29 |
 | 装配层（`cmd/xhunter`） | FR-1.8、FR-1.9、FR-11.6、INV-11（装配顺序即不变量落点） |
 | 全部组件 | NFR-8（须可脱离模型独立测试） |
-
----
-
-## 14. 尚未覆盖的验收（待补）
-
-### 14.1 实现未落地（设计已在，代码待补）
-
-| 缺口 | 说明 |
-|---|---|
-| 会话材料与恢复（§7.6、IA-6.x） | 目前只记内存：材料落盘、`schema_version`、按任务隔离、恢复 = checkout 分支 tip ＋ 读回材料 |
-| 压缩（§7.2、IA-2.5~2.8） | `ContextBuilder` 只有「组装」没有「下压」：水位、分层下压、结构化工作日志投影 |
-| 门禁（§7.8、IA-11.12） | 清单来源裁决、`check` 实现、收尾补跑、检查点联动、结果缓存 |
-| 符号能力（§7.7） | `ext.ExtHost` 无实现；`hunt/symbolic` 声明不实现 |
-| git 剩余语义（IA-11.8~11.13） | 四个动作已落地；连败上限、门禁驱动检查点与调用顺序断言待补 |
-| 流看门狗（§6.3 L4） | 不活动超时未接入 |
-| 结构检查（IA-11.11、§6.3 L6） | 判据随符号扩展接入；**接入前自动检查点不产生**（判据不可判定 → 不提交）已落地，判据本身待接入 |
-| 生效配置快照（§4、FR-11.6） | 结果文件已落地（IA-12.9），但 `effective_config` 装配快照与 `gates` 未进文件 |
-| ~~事件信封四字段（IA-5.7）~~ | **已落地**：出口统一盖章（`type` / `bounty_id` / `trace_id` / `ts`） |
-
-### 14.2 判定方式缺用例
-
-| 缺口 | 说明 |
-|---|---|
-| ~~写盘与执行器级用例（IA-3.3、IA-3.6）~~ | **已落地**：`hunt/commit_test.go`（未读即写、读后过期、只改目标区间、越界、新建形态、台账更新、批量先校验后写） |
-| ~~绑定层用例（IA-3.9）~~ | **已落地**：`hunt/bind_test.go`（槽位映射、空参数、五类形状不成立、不判断名字、往返、可重试性） |
-| 进程级信号（其余信号形态） | SIGTERM 的进程级断言已落地（`TestEndToEnd_SigtermConvergesToCancelled`，AC-6）；SIGKILL / 中断时机的更多组合仍可补 |
-| 扩展崩溃隔离（IA-7.6） | 需要真实子进程的扩展宿主测试（M2 引入扩展后补） |
-| 凭据静态扫描（IA-6.8、IA-8.4） | 需要 CI 级扫描规则，非单测能覆盖（AC-8） |
-| ~~事件写入失败（IA-5.3 / AC-19）~~ | **已落地**：断管（读端已关的管道）→ 退出 1 并记原因（`TestEndToEnd_BrokenEventChannelIsEnvError`） |
-| 恢复正确性（AC-7） | 需要断言：恢复后工作区 == 最后检查点、**未重做已完成轮次**、恢复过程**零写操作执行** |
-| ~~装配层端到端（IA-12.6）~~ | **已落地**：`TestEndToEnd_LocalRunProducesDeliveryCommit`（真 git 夹具 + 本地假上游，不联网） |
-| 嵌套约定附注（IA-2.10） | 算出"路径链上最近且未注入过的那份约定"需要一份**约定清单（路径 ＋ 正文）**，而当前插件契约只交正文（`PromptPart.Body`）。补法是给 system 段的结果带上它；等真有消费方时再加，眼下先不摆无人读的契约 |
