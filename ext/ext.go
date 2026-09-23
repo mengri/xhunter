@@ -67,5 +67,34 @@ type LocateRequest struct {
 type ExtHost interface {
 	Capabilities(ctx context.Context) ExtCaps
 	Locate(ctx context.Context, req LocateRequest) (Prepared, error)
+	// Fingerprint 给出**扩展能力指纹**：扩展标识 ＋ 版本 ＋ 语言清单（每个元素一个 token）。
+	// 它服务两件事——会话材料（`meta.ext`）与生效配置快照；两侧**不一致只记录、不阻断**
+	// （IA-6.5 / FR-13.7）。返回 `[]string` 是为了直接落进材料里的能力指纹字段位。
+	Fingerprint() []string
 	Close() error
+}
+
+// Unimplemented 是 ExtHost 的 **panic 哨兵**：未冻结期用它把"扩展未接入"显式化——走到即炸、
+// 绝不静默，比传一个 nil 参数在运行期悄悄 nil 解引用要好。由 MS-8 替换为真实实现。
+//
+// 它是 **A 类入口**（不在正常路径上）：只有符号原语会用 `ExtHost`，而符号原语现在"声明不实现"，
+// 所以装上它不会让任何一次运行走到这里。
+type Unimplemented struct{}
+
+var _ ExtHost = Unimplemented{}
+
+func (Unimplemented) Capabilities(context.Context) ExtCaps {
+	panic("ext.ExtHost 未实现：扩展未接入，由 MS-8 实现")
+}
+
+func (Unimplemented) Locate(context.Context, LocateRequest) (Prepared, error) {
+	panic("ext.ExtHost 未实现：扩展未接入，由 MS-8 实现")
+}
+
+func (Unimplemented) Fingerprint() []string {
+	panic("ext.ExtHost 未实现：扩展未接入，由 MS-8 实现")
+}
+
+func (Unimplemented) Close() error {
+	panic("ext.ExtHost 未实现：扩展未接入，由 MS-8 实现")
 }

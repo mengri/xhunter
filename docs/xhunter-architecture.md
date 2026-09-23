@@ -556,7 +556,7 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 
 ### 7.7 H7 Ext —— 扩展接入（`ext.ExtHost`，MCP）
 
-符号级能力不在核心里，由本地 MCP 扩展提供。`ext.ExtHost` 是核心侧的客户端与治理契约（实现由装配层注入；实现状态见 xhunter-status.md 状态索引 · H7）。
+符号级能力不在核心里，由本地 MCP 扩展提供。`ext.ExtHost` 是核心侧的客户端与治理契约（实现由装配层注入；实现状态见 xhunter-status.md 状态索引 · H7）。**契约**：`Capabilities(ctx) ExtCaps` / `Locate(ctx, req) (Prepared, error)` / `Fingerprint() []string` / `Close() error`（`Capabilities` 与 `llm.Provider.Capabilities()` 同词汇）。**接口不含任何写方法**——这是 INV-10 的类型级保证。
 
 | 职责 | 要求 |
 |---|---|
@@ -567,7 +567,7 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 | 降级 | 扩展缺失/启动失败/超时 → **符号原语**不可用（**工具不撤回**，FR-4.11）：调用返回结构化错误并显式提示"改用文本原语"，基础原语不受影响，任务继续（FR-13.4、AC-12、AC-26） |
 | 不可信边界 | 仅本地进程；不继承凭据环境变量（FR-8.4）；不得绕过路径校验（FR-3.5、FR-8.2）——扩展没有写权限，写盘只在 `Committer`（落在 `workspace.Storage.WriteRange`） |
 | **协议托管 MCP 不采用** | OpenAI Responses 的内置 `type:"mcp"` 工具与 Anthropic Messages 的 `mcp_servers` 连接器把工具执行搬到**供应商侧**——调用不经策略裁决、不经唯一写盘入口（INV-2、INV-10），仅收公网 HTTPS 服务端且凭据须交上游（FR-13.6 禁止）。本项目 MCP 仅限本地 stdio（FR-13.1）；线格式包不发送也不消费这些字段，上游返回此类输出项按未知事件容错处理 |
-| 能力指纹 | 记录扩展标识 + 版本 + 语言清单，写入 session 记录；指纹不一致只记录、不阻断（FR-13.7） |
+| 能力指纹 | `ExtHost.Fingerprint()` 记录扩展标识 + 版本 + 语言清单，写入 session 记录（`meta.ext`）；指纹不一致只记录、不阻断（FR-13.7、IA-6.5） |
 
 **与 Provider `Caps` 同构**："能力声明 + 缺失降级"在本设计中第二次出现（第一次是模型能力，见 §8）。这是 Harness 面对任何**不可控外部组件**时的通用模式：**声明能力 → 按能力降级 → 如实上报**。
 
@@ -1116,7 +1116,7 @@ Bounty(session) ──► H6.Session
 
 ### 12.7 H7 — `ext.ExtHost`
 
-**契约**：`Caps` / `Locate` / `Fingerprint` / `Close`。**接口不含任何写方法**——这是 INV-10 的类型级保证。
+**契约**：`Capabilities` / `Locate` / `Fingerprint` / `Close`。**接口不含任何写方法**——这是 INV-10 的类型级保证。
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|

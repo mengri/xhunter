@@ -272,7 +272,7 @@
 | 编号 | 状态 | 对应 MS-n | 缺口说明 |
 |---|---|---|---|
 | <a id="l1-4"></a>L1-4 门禁清单来源裁决 | 待接入 | MS-5 | `Prepare` 里 `s.gates = nil`（一期暂空），来源裁决未接入 |
-| <a id="l1-5"></a>L1-5 扩展能力描述符 | 待接入 | MS-8 | 组装层注入 `ext.ExtHost` 未接入 |
+| <a id="l1-5"></a>L1-5 扩展能力描述符 | 待接入 | MS-8 | 组装层注入 `ext.ExtHost` 未接入；**契约已定义**（D2：`Capabilities` / `Locate` / `Fingerprint` / `Close` ＋ `ext.Unimplemented{}` panic 哨兵装配），实现待 MS-8 |
 | <a id="l1-8"></a>L1-8 会话恢复（条件） | 待接入 | MS-7 | `XHUNTER_SESSION_ID` 非空时的 checkout tip ＋ 读回材料未接入 |
 | <a id="l1-9"></a>L1-9 生效配置快照 | 已落地 | MS-2 | 装配完成后冻结一次，进 `hunt_start` 与结果文件 `effective_config`（含原语顺序与殿后 `checkpoint`）；门禁清单随 MS-5。证据 `TestEffectiveConfig_ListsPrimitivesInToolFaceOrder`、`TestPrepare_EmitsHuntStart` |
 | <a id="l2-事件通道"></a>L2-事件通道健康 | 已落地 | MS-2 | `OnTurn` 入口复查 `Sink.Failed()`：通道已断则本轮零工具执行，收敛 `event_channel_failed`（退出 1）。用例 `TestOnTurn_StopsBeforeWorkWhenChannelAlreadyFailed` |
@@ -336,6 +336,7 @@
 | ~~会话材料落盘 ＋ Recorder 接口一次加齐~~（MS-6） | **部分已落地**（2026-09-23）：`hunt.SessionRecorder` 方法集**一次加齐**（`Open` / `RecordTurn` / `RecordOp` / `RecordUsage` / `Ops` / `Snapshot`）；`cmd/xhunter` 把材料落成 JSONL（`.xhunter/<session_id>/session.jsonl`，首行 meta 带 `schema_version`，追加写、周期 flush），中立的 `llm.Message`/`ToolCall`/`ToolResult` 与 `harness.Turn`/`hunt.WriteOp` 直接复用为记录形状（不另写平行 DTO）。用例 `TestSave_MaterialLandsUnderSessionDirWithSchemaVersion`、`TestMaterial_LoadRejectsUnknownSchemaVersion`（`cmd`）、`TestRecorder_RecordsOpsAndUsageFromTheSession`、`TestRecorder_OpenFailureDegradesWithoutFailingPrepare`、`TestSnapshot_FailureDoesNotBlockTheRun`（`hunt`）。**余**：恢复（MS-7） |
 | ~~会话材料随提交强制加入~~（IA-6.1c） | **已落地**（2026-09-23）：`internal/git/cli` 的 `Commit` 在 `add -A` 之后对本次会话材料目录再 `add -f -- <MaterialDir>`——仓库忽略 `.xhunter/`（常见做法）时 `add -A` 不会加入它，材料会写在工作区却不进任何提交、"唯一状态源"悄悄失效且不报错；材料目录尚未落盘则**跳过**（不因它把整个提交判死）；`MaterialDir` 为空时行为完全不变（"无改动不产生空提交"照旧）。用例 `TestCommit_ForceAddsMaterialEvenWhenGitignored`、`TestCommit_WithoutMaterialDirIsUnchanged`、`TestCommit_MissingMaterialDirDoesNotFail`；`cmd` e2e 补断言"分支 tip 含材料文件、交付清单不含材料"。MS-6 由此收口 |
 | ~~修复：会话材料缺末轮用量~~（快照与记账次序） | **已修复**（2026-09-23）：`OnTurn` 里 `snapshot()` 原排在 `charge()` **之前** → 本轮用量要等下一次快照才落盘；`Finalize` 的最终 `snapshot()` 原排在**交付提交之后** → 那份写在工作树里的记录进不了提交、还被 `Clean` 删掉。两处次序对调后，交付分支上的材料含**每轮各一条** usage。收紧 `TestEndToEnd_MaterialIsSelfSufficientForResume`（改断言"每轮各一条"，修复前实测**红**）、新增 `TestRecorder_SnapshotAfterCharge`（钉调用次序） |
+| ~~契约：扩展接入位与 panic 哨兵~~（H7 / MS-8） | **契约已定义**（2026-09-23，未冻结期：先定契约后填实现）：`ext.ExtHost` 补 `Fingerprint() []string`（服务会话材料 `meta.ext` 与生效快照的能力指纹，IA-6.5）；新增 `ext.Unimplemented{}` **panic 哨兵**；`cmd/xhunter` 把它**显式装上**（不再传 `nil`——A 类入口，符号原语声明不实现，走不到）。**实现待 MS-8** |
 | ~~交付 diff/patch 排除会话材料目录~~（IA-11.6） | **已落地**（2026-09-23）：`git.RepoRef` 加 `MaterialDir`（本次运行的仓库事实）；`GitWorktree.Diff`/`Patch` 改收 `RepoRef`，材料目录非空时加 `:(exclude)` pathspec——**只排本次会话的材料目录**，`.xhunter/` 下其它路径（如 `skills.draft/**`）是交付内容、照进 diff。材料目录路径唯一来源 `materialDirFor`（与落盘同源）；e2e 的临时过滤 `nonMaterial` 撤掉、改成直接断言交付清单不含材料。用例 `TestDiff_ExcludesMaterialDirButKeepsSkillsDraft`、`TestDiff_NoMaterialDirKeepsEverything`、`TestEndToEnd_LocalRunProducesDeliveryCommit` |
 
 ---

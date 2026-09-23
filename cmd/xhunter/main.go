@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"xhunter/ext"
 	"xhunter/harness"
 	"xhunter/hunt"
 	"xhunter/providerconfig"
@@ -145,7 +146,8 @@ func huntCmd(args []string) int {
 	session := hunt.NewSession(hunt.Config{
 		Bounty: bounty,
 		Tools: func(ws workspace.Workspace) []hunt.Primitive {
-			return defaultTools(ws, nil) // 一期符号扩展未接入
+			// 一期符号扩展未接入：装 panic 哨兵（未冻结期口径，走到即炸）；符号原语声明不实现，走不到。
+			return defaultTools(ws, ext.Unimplemented{})
 		},
 		Policy:        defaultPolicy(bounty.Budget),
 		Opener:        defaultWorkspaces(),
