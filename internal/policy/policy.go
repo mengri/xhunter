@@ -140,3 +140,18 @@ func allow(reason string) hunt.Decision {
 func deny(reason string) hunt.Decision {
 	return hunt.Decision{Verdict: hunt.VerdictDeny, Reason: reason}
 }
+
+// ObserveFailure 上报一次工具失败并给出处置（止损两段式的第一段）。
+//
+// **未实现（panic 哨兵）**：判据（"什么叫同类失败""连续怎么算"、阈值与上限）由 MS-3 用测试先定死
+// 后再填。走到这里就炸——绝不静默（未冻结期口径：装配扩展点先定义、未实现以 panic 装配）。
+func (e *engine) ObserveFailure(string) (hunt.StopLoss, string) {
+	panic("internal/policy.ObserveFailure 未实现：止损两段式的判据由 MS-3 填入")
+}
+
+// DeniedCount 报告连续策略拒绝的累积情况（达阈值即终止）。
+//
+// **未实现（panic 哨兵）**：同 ObserveFailure，"连续"的口径与阈值由 MS-3 定。
+func (e *engine) DeniedCount() (int, bool) {
+	panic("internal/policy.DeniedCount 未实现：连续拒绝的判据与阈值由 MS-3 填入")
+}

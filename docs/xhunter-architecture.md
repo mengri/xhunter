@@ -512,7 +512,7 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 
 > 各裁决点的**实现状态**（已落地 / 待接入）见 xhunter-status.md 状态索引 · H4-裁决点。
 
-**接口形状**（`hunt/policy.go`）：`Decide(ctx, Call) (Decision, error)` / `Charge(llm.Usage)` / `Exhausted(TurnNo) (bool, string)`。`Decision` **必须携带原因**——拒绝时原因会回灌给模型，让它换个做法，而不是对着同一堵墙反复尝试。
+**接口形状**（`hunt/policy.go`）：`Decide(ctx, Call) (Decision, error)` / `Charge(llm.Usage)` / `Exhausted(TurnNo) (bool, string)` / `ObserveFailure(failKind string) (StopLoss, string)` / `DeniedCount() (int, bool)`——**止损由后两者承担**（处置三态 `StopContinue` / `StopSwitch` / `StopTerminate`，即上表的 continue / switch / terminate）。`Decision` **必须携带原因**——拒绝时原因会回灌给模型，让它换个做法，而不是对着同一堵墙反复尝试。
 
 **用量为什么由执行体转交、而不是引擎直给**：`run.Usage` 是累计值，而策略要的是增量；执行体在轮边界自己记水位（`Session.charged`），把差值交给 `Charge`。否则累计值会被反复当作增量上报，预算被自己的重报耗尽。
 
@@ -699,6 +699,8 @@ type Caps struct {
 | 用量类（「上游不回用量」） | **不估算、如实上报**（FR-9.7）：上游未回报用量时，事件流发 `degraded`（`scope: "usage"`）、结果文件标 `usage.reported: false`。**不得用拍出来的数字去触发或不触发 token 预算** |
 
 **不允许"缺了就静默不工作"**；也确实不允许"缺了就静默猜一个"。上限猜错的两个方向都有代价：偏高在任务中途硬失败，偏低静默拉低所有同类任务的效率。
+
+**例外：装配扩展点可以先定义后实现（未冻结期口径）**。上面的规则管的是**能力声明**（面向供应商/后端，如 `llm.Caps`、`ext.ExtCaps`）——那类仍然"只声明用到的、不预埋行为类字段"。但**装配扩展点**（装配层能塞东西的空位，如 `hunt.Policy` 的止损入口 `ObserveFailure` / `DeniedCount`）不同：它**可以在实现之前先定义并装配**，**未实现时以 `panic` 哨兵装配**——走到即炸、绝不静默。当前是**未冻结期**：允许先定契约、后填实现，避免实现反推接口；**冻结前必须回收**（把每个 panic 哨兵逐条换成显式失败或如实降级，并补用例，见 xhunter-status.md §5）。
 
 **上限精确、用量近似**：窗口上限是配置出来的确定值，而"当前占了多少上下文"只能估算（需要在下发请求前就知道大小，无法依赖供应商回报）。因此硬上限取配置窗口的 90%，**这 10% 之差正是用于吸收 token 估算误差的安全边际**（FR-9.6）。
 
@@ -1063,7 +1065,7 @@ Bounty(session) ──► H6.Session
 
 ### 12.4 H4 — `hunt.Policy`
 
-**契约**：`Decide(ctx, Call) (Decision, error)` / `Charge(llm.Usage)` / `Exhausted(TurnNo) (bool, string)`（设计还要 `ObserveFailure` / `DeniedCount`，见 xhunter-status.md 状态索引 · IA-4.8/4.9）。无人类场景下它是唯一顶替人的位置，默认拒绝。
+**契约**：`Decide(ctx, Call) (Decision, error)` / `Charge(llm.Usage)` / `Exhausted(TurnNo) (bool, string)` / `ObserveFailure(failKind string) (StopLoss, string)` / `DeniedCount() (int, bool)`（止损入口**已定义、实现待 MS-3**，见 xhunter-status.md 状态索引 · IA-4.8/4.9）。无人类场景下它是唯一顶替人的位置，默认拒绝。
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|

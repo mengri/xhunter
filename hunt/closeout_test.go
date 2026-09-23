@@ -24,6 +24,10 @@ func (p *recordingPolicy) Decide(context.Context, Call) (Decision, error) {
 }
 func (p *recordingPolicy) Charge(u llm.Usage)              { p.charges = append(p.charges, u) }
 func (p *recordingPolicy) Exhausted(TurnNo) (bool, string) { return false, "" }
+func (p *recordingPolicy) ObserveFailure(string) (StopLoss, string) {
+	return StopContinue, ""
+}
+func (p *recordingPolicy) DeniedCount() (int, bool) { return 0, false }
 
 // Policy.Charge 拿的是**本轮增量**：累计值被反复当增量上报，预算会被自己的重报耗尽。
 func TestPolicy_ChargeReceivesIncrements(t *testing.T) {

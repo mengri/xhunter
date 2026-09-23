@@ -117,6 +117,10 @@ func (turnsBudgetPolicy) Decide(context.Context, Call) (Decision, error) {
 	return Decision{Verdict: VerdictAllow, Reason: "放行"}, nil
 }
 func (turnsBudgetPolicy) Charge(llm.Usage) {}
+func (turnsBudgetPolicy) ObserveFailure(string) (StopLoss, string) {
+	return StopContinue, ""
+}
+func (turnsBudgetPolicy) DeniedCount() (int, bool) { return 0, false }
 
 func (p turnsBudgetPolicy) Exhausted(turn TurnNo) (bool, string) {
 	if int(turn) >= p.limit {

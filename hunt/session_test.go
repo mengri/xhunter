@@ -91,6 +91,10 @@ func (allowAll) Decide(context.Context, Call) (Decision, error) {
 }
 func (allowAll) Charge(llm.Usage)                {}
 func (allowAll) Exhausted(TurnNo) (bool, string) { return false, "" }
+func (allowAll) ObserveFailure(string) (StopLoss, string) {
+	return StopContinue, ""
+}
+func (allowAll) DeniedCount() (int, bool) { return 0, false }
 
 type denyAll struct{ reason string }
 
@@ -99,6 +103,10 @@ func (d denyAll) Decide(context.Context, Call) (Decision, error) {
 }
 func (denyAll) Charge(llm.Usage)                {}
 func (denyAll) Exhausted(TurnNo) (bool, string) { return false, "" }
+func (denyAll) ObserveFailure(string) (StopLoss, string) {
+	return StopContinue, ""
+}
+func (denyAll) DeniedCount() (int, bool) { return 0, false }
 
 // newTestSession 直接装配到"可执行"状态：绕过 Prepare（它要 git/opener），
 // 只钉住 executeCall 这一层的行为。
