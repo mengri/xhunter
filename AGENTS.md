@@ -44,6 +44,8 @@ Write table-driven or stub-based Go tests beside the package under test. Design 
 
 Task decomposition is currently being rebuilt around the task lifecycle architecture (see `docs/xhunter-architecture.md`); until then, treat each focused change as one commit with an imperative subject. Before implementing a new contract or acceptance item, update the matching document under `docs/`. Pull requests should state the task or issue, summarize behavior and failure paths, list validation performed, and include linked documents or screenshots for CLI-visible changes.
 
+**Document numbering**: IDs are the cross-document key — `FR-`/`NFR-`/`AC-` in `xhunter-product-design.md`, `INV-`/`IA-` in `xhunter-architecture.md`, plus `L-`/`H-` step and component labels in the status document — and they are not renumbered. A **lettered sub-ID must have its own definition row** (`| FR-12.2c | … |`): naming one only inside another item's prose leaves every reference pointing at nothing, and the reference reads as if the requirement were missing rather than as if it were described elsewhere.
+
 ## Security & Configuration Tips
 
 Runtime must not add network calls or dependencies without an approved task decision. **Protocol packages in particular must not pull in vendor SDKs**: the transport layer is written by hand so that it only changes when the protocol changes, and so the core binary stays dependency-free. Keep provider secrets out of source: model-access facts come from environment variables only (`XHUNTER_API_KEY`, or `{env:VAR}` references inside `XHUNTER_HEADERS`), and there are no configuration files or model catalogs to leak them into.
