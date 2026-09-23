@@ -38,6 +38,10 @@ type resultFile struct {
 	// （omitempty），不摆空壳。形状见 gateFile（`passed` 三态：true / false / null=未运行）。
 	Gates []gateFile `json:"gates,omitempty"`
 
+	// SessionDelta 是本次运行相对**上次运行**的增量（FR-1.5）——**恢复时才有意义**（新任务不带
+	// 该键）。**未接线**：写入端（MS-7）接上之前不写该键（omitempty）。形状见 sessionDeltaFile。
+	SessionDelta *sessionDeltaFile `json:"session_delta,omitempty"`
+
 	// Needs / Assumptions / Unverified 是模型在正文固定小节里的自陈（FR-6.3/6.4）。用指针不加 omitempty
 	// 是三态要求：「没提供」要写成 null，而不是缺字段、更不是 []——空数组会被读成
 	// "没有需要补全的条件"，那是另一句话（使用手册 §6）。
@@ -72,6 +76,15 @@ type gateFile struct {
 	ExitCode *int   `json:"exit_code,omitempty"`
 	Source   string `json:"source,omitempty"`
 	Summary  string `json:"summary,omitempty"`
+}
+
+// sessionDeltaFile 是结果文件里 `session_delta` 的形状（FR-1.5、使用手册 §6）：它回答"这次接上了
+// 哪几轮、写了多少次"——`turns_from` / `turns_to` 是本次覆盖的轮次区间，`ops_count` 是本次写操作数。
+// **恢复时才有意义**（新任务不带该键）；写入端在 MS-7 接上。
+type sessionDeltaFile struct {
+	TurnsFrom int `json:"turns_from"`
+	TurnsTo   int `json:"turns_to"`
+	OpsCount  int `json:"ops_count"`
 }
 
 // writeRunOutputs 写出补丁与结果文件。任一写失败都返回错误——交不出交付记录

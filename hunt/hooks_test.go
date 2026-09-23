@@ -29,6 +29,7 @@ func (r *recordingSession) RecordOp(WriteOp)            {}
 func (r *recordingSession) RecordUsage(llm.Usage)       {}
 func (r *recordingSession) Ops() []WriteOp              { return nil }
 func (r *recordingSession) Snapshot() error             { return nil }
+func (r *recordingSession) Load() (Restored, error)     { return Restored{}, nil }
 
 // 加工必须发生在落历史之前：历史与材料都是值拷贝，抢在后面改的过滤器等于白做——
 // 模型下一轮看不到改动，而过滤器作者会以为生效了。过滤器的名字进生效配置快照。

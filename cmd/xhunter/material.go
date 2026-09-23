@@ -120,8 +120,17 @@ func (r *sessionRecorder) RecordUsage(u llm.Usage) {
 	})
 }
 
-// Ops 给出已记录的写操作序列（恢复的唯一刚需）。
+// Ops 给出**本次运行**累积的写操作序列（恢复的唯一刚需）。与 `Load` 的分工：本次 vs 上次。
 func (r *sessionRecorder) Ops() []hunt.WriteOp { return r.ops }
+
+// Load 读回**上次运行**的材料（resume 的唯一状态源）。
+//
+// **未实现（panic 哨兵）**：恢复流程属 MS-7（材料解析已就绪——`loadMaterial` 只做版本校验，
+// 回灌与对齐待接）。走到这里就炸——绝不静默：真去 resume 会立刻发现"还没实现"，而不是安静地
+// 当成新任务跑（那样会重做已完成的轮次）。
+func (r *sessionRecorder) Load() (hunt.Restored, error) {
+	panic("会话恢复未实现：由 MS-7 读回材料并回灌上下文（loadMaterial 已做版本校验）")
+}
 
 // Snapshot 把尚未落盘的记录 flush 出去（每轮与收尾各一次，这就是"周期落盘"）。
 func (r *sessionRecorder) Snapshot() error {

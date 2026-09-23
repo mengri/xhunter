@@ -272,8 +272,9 @@
 | 编号 | 状态 | 对应 MS-n | 缺口说明 |
 |---|---|---|---|
 | <a id="l1-4"></a>L1-4 门禁清单来源裁决 | 待接入 | MS-5 | `Prepare` 里 `s.gates = nil`（一期暂空），来源裁决未接入；**契约已定义**（D2：`GateSource` ＋ 档位常量 `bounty`/`repo`/`none` ＋ `Config.Gates` 装配槽），实现待 MS-5 |
+| ~~契约：会话恢复接入位 ＋ 结果文件 `session_delta` 字段位~~（MS-7） | **契约已定义**（2026-09-23，未冻结期）：`hunt.Restored`（轮次 / 写操作序列 / 用量）＋ `SessionRecorder.Load()`（与 `Ops()` 分工：本次运行 vs 读回上次）；`Prepare` 在 `Bounty.Session != nil` 时接上读回入口（`Load` 实现是 **panic 哨兵**"恢复未实现：MS-7"——真去 resume 立刻炸、不当新任务跑）；结果文件加 `session_delta`（`{turns_from, turns_to, ops_count}`，`omitempty`，写入端未接）。**归属修正**：`session_delta` 原挂 MS-6（归属写错——`turns_from` 只在恢复时才有意义），改挂 **MS-7** |
 | <a id="l1-5"></a>L1-5 扩展能力描述符 | 待接入 | MS-8 | 组装层注入 `ext.ExtHost` 未接入；**契约已定义**（D2：`Capabilities` / `Locate` / `Fingerprint` / `Close` ＋ `ext.Unimplemented{}` panic 哨兵装配），实现待 MS-8 |
-| <a id="l1-8"></a>L1-8 会话恢复（条件） | 待接入 | MS-7 | `XHUNTER_SESSION_ID` 非空时的 checkout tip ＋ 读回材料未接入 |
+| <a id="l1-8"></a>L1-8 会话恢复（条件） | 待接入 | MS-7 | `XHUNTER_SESSION_ID` 非空时的 checkout tip ＋ 读回材料未接入；**接入点已就位**（D3：`Prepare` 在 `Bounty.Session != nil` 时调 `SessionRecorder.Load()`，`Load` / `Restored` 契约已定义），实现待 MS-7 |
 | <a id="l1-9"></a>L1-9 生效配置快照 | 已落地 | MS-2 | 装配完成后冻结一次，进 `hunt_start` 与结果文件 `effective_config`（含原语顺序与殿后 `checkpoint`）；门禁清单随 MS-5。证据 `TestEffectiveConfig_ListsPrimitivesInToolFaceOrder`、`TestPrepare_EmitsHuntStart` |
 | <a id="l2-事件通道"></a>L2-事件通道健康 | 已落地 | MS-2 | `OnTurn` 入口复查 `Sink.Failed()`：通道已断则本轮零工具执行，收敛 `event_channel_failed`（退出 1）。用例 `TestOnTurn_StopsBeforeWorkWhenChannelAlreadyFailed` |
 | <a id="l2-压缩"></a>L2-压缩 | 待接入 | MS-11 | `ContextBuilder` 内无压缩 |
@@ -302,7 +303,7 @@
 |---|---|---|---|
 | <a id="usage-1-2-bounty"></a>usage§1.2·Bounty生成器 | 待接入 | MS-12 | `xhunter run` 尚未接线；当前 CLI 只有 `models` / `version` 与 `--bounty`（后者为占位实现） |
 | <a id="usage-5-events"></a>usage§5·已发出事件 | 部分已发出 | MS-2 | 已发：`hunt_start`、`hunt_end`（带累计用量）、`tool_call`、`tool_result`、`assistant_text`、`usage`（每轮增量）、`heartbeat`（按间隔、带阶段）、`error`、`policy_denied`、`deliverable`、`degraded`（含 `scope: usage`）、`needs_input`、`assumption`；其余事件类型为契约目标，随各自里程碑接线：`check_result` / `gate_config_changed`（MS-5）、`context_compacted`（MS-11）、`config_snapshot`（随止损阈值与轮数硬顶，MS-3/MS-4） |
-| <a id="usage-6-fields"></a>usage§6·待接入字段 | 部分待接入 | MS-2 / MS-6 | 已接线：`needs` / `assumptions`（2026-09-23）、`effective_config`（2026-09-23）、`summary`（2026-09-23）、`unverified`（2026-09-23）。仍未接线：`gates`（MS-5）、`session_delta`（MS-6） |
+| <a id="usage-6-fields"></a>usage§6·待接入字段 | 部分待接入 | MS-2 / MS-6 | 已接线：`needs` / `assumptions`（2026-09-23）、`effective_config`（2026-09-23）、`summary`（2026-09-23）、`unverified`（2026-09-23）。仍未接线：`gates`（MS-5）、`session_delta`（MS-7——**归属修正**：原挂 MS-6 是写错，`turns_from` 只在恢复时才有意义） |
 
 ### 2.3 已结清（本周期）
 
@@ -575,7 +576,7 @@
 **目标**：跨机器 failover 成立：崩溃后向新机器投递同一会话，接着最后一个检查点继续，**不重放写操作**。
 
 **范围**
-- 投递给出 `XHUNTER_SESSION_ID` → `Prepare` 里：checkout 任务分支 tip → 读回材料 → 回灌上下文（过 `ContextBuilder`）→ 从下一轮继续。
+- 投递给出 `XHUNTER_SESSION_ID` → `Prepare` 里：checkout 任务分支 tip → 读回材料（`SessionRecorder.Load()`）→ 回灌上下文（过 `ContextBuilder`）→ 从下一轮继续。（**接入点已就位（D3）**；`Load` 的实现在 MS-7。）
 - **零工具执行、零模型调用**：恢复段不调用任何原语。
 - **恢复失败** → 退出码 1；材料**不存在**是正常情况，与「损坏」分开。
 - 分支语义沿用已有实现（`TestPrepareBaseline_ResumeChecksOutBranchTip`）。

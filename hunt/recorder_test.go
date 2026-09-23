@@ -38,8 +38,9 @@ func (r *fakeRecorder) RecordUsage(u llm.Usage) {
 	r.usages = append(r.usages, u)
 	r.trace = append(r.trace, "record-usage")
 }
-func (r *fakeRecorder) Ops() []WriteOp  { return r.ops }
-func (r *fakeRecorder) Snapshot() error { r.trace = append(r.trace, "snapshot"); return r.snapErr }
+func (r *fakeRecorder) Ops() []WriteOp          { return r.ops }
+func (r *fakeRecorder) Snapshot() error         { r.trace = append(r.trace, "snapshot"); return r.snapErr }
+func (r *fakeRecorder) Load() (Restored, error) { return Restored{}, nil }
 
 // 材料位置绑定失败只降级：Prepare 不失败，只留一条 warn。
 func TestRecorder_OpenFailureDegradesWithoutFailingPrepare(t *testing.T) {

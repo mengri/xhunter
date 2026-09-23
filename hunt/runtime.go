@@ -18,6 +18,17 @@ type ContextBuilder interface {
 	Append(rec harness.Turn)
 }
 
+// Restored 是**读回**的会话材料——崩溃后恢复的唯一状态源（架构 §7.6）。
+//
+// 形状对上材料里真正用得上的三类事实：轮次（回灌上下文）、写操作序列（对齐工作区，**不重放**——
+// 工作区已由分支 tip 给到）、用量（续算预算）。由材料的 reader 给出。
+type Restored struct {
+	SchemaVersion int
+	Turns         []harness.Turn
+	Ops           []WriteOp
+	Usage         llm.Usage
+}
+
 // SessionRecorder 记录会话材料（供崩溃后恢复）。
 //
 // 方法集**一次加齐**（不留二次扩公开接口）：材料是恢复的唯一状态源，而**写操作序列是恢复的唯一
@@ -33,10 +44,14 @@ type SessionRecorder interface {
 	RecordOp(op WriteOp)
 	// RecordUsage 记录本轮用量增量（与计费、usage 事件同源）。
 	RecordUsage(u llm.Usage)
-	// Ops 给出已记录的写操作序列。
+	// Ops 给出**本次运行**累积的写操作序列（`Session` 现攥着的那些）。与 `Load` 的分工：
+	// `Ops()`＝本次运行累积；`Load()`＝上次运行**落盘**的那份（读盘）。职责不重叠。
 	Ops() []WriteOp
 	// Snapshot 把尚未落盘的记录 flush 出去（材料落盘的周期点）。
 	Snapshot() error
+	// Load 从盘上读回**上次运行**的材料（供恢复）。本次没有材料（新任务 / `Open` 未成功）时
+	// 返回零值（`SchemaVersion == 0`），不是错误——"不存在"与"损坏"要分开（架构 §7.6）。
+	Load() (Restored, error)
 }
 
 // ExternalEvent 是外部事件；事件类型只增不改。

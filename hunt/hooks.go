@@ -57,6 +57,23 @@ func (s *Session) Prepare(ctx context.Context, run *harness.Run) error {
 	// 材料位置随工作区就绪而定：绑定失败只降级、不阻断（IA-6.6）。
 	s.openRecorder(root)
 
+	// 会话恢复（仅当投递给出会话标识时，架构 §7.6）：resume 的入口在业务侧——读回材料 →
+	// 台账出已完成轮次与写操作序列 → 回灌上下文 → 从下一轮继续。checkout 分支 tip 已由
+	// `PrepareBaseline` 覆盖（"分支已存在且 tip 为基线或其后代 → checkout tip"），不重复做。
+	//
+	// **未接入（未冻结期）**：读回的实现是 panic 哨兵（"恢复未实现：MS-7"）——真去 resume 会
+	// 立刻炸、而不是安静地当成新任务跑（那样会重做已完成的轮次）。上下文回灌（过 `ContextBuilder`
+	// 的压缩管线）与"新投递条件作为新 user 消息追加"是 MS-7 的实现工作；回灌的落点在下面组装首轮
+	// 消息处（`firstPrompt` / `s.cfg.Context`）。
+	if s.cfg.Bounty.Session != nil {
+		if s.cfg.Session == nil {
+			return errors.New("要求恢复会话但未装配会话记录器（SessionRecorder）")
+		}
+		if _, err := s.cfg.Session.Load(); err != nil {
+			return fmt.Errorf("读回会话材料失败：%w", err)
+		}
+	}
+
 	// 工作区就绪后构造原语并定格工具面：原语读文件需要工作区，声明与执行因此同源。
 	// 工具面自身不成立也算装配缺件——错误在首轮推理之前暴露，而不是等供应商拒收请求。
 	if err := s.buildTools(storage); err != nil {
