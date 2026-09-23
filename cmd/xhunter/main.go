@@ -6,7 +6,8 @@
 //	                                              执行一次 Hunt
 //	xhunter version
 //
-// 退出码：0 成功 / 1 任务失败 / 2 环境问题（可重试）/ 3 取消。
+// 退出码：0 = 模型正常完成对话（成败另看 status）；1 = 未进入对话 / 被上游与环境打断（环境问题，
+// 修好可重试）；2 = 被引擎中止（预算耗尽、止损、轮数硬顶、引擎侧错误）；3 = 被取消。
 package main
 
 import (
@@ -110,7 +111,7 @@ func huntCmd(args []string) int {
 		return exitEnv
 	}
 
-	// 模型接入事实完全来自环境变量：一次报出全部缺项（退出 2），
+	// 模型接入事实完全来自环境变量：一次报出全部缺项（退出 1），
 	// 不留到第一次推理才发现——那时候已经烧掉了轮次与预算。
 	resolved, err := providerconfig.FromEnv(os.LookupEnv)
 	if err != nil {

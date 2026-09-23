@@ -2,7 +2,9 @@ package hunt
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 
 	"xhunter/harness"
@@ -171,4 +173,48 @@ func TestPrepare_EmitsHuntStart(t *testing.T) {
 			t.Errorf("Prepare 未成功时快照应为零值：%+v", s.EffectiveConfig())
 		}
 	})
+}
+
+// 快照里的集合在"空"时也必须是**空数组**而非 nil：nil 序列化成 null，被读成"未提供／不知道有没有"。
+// 三期集合由 `pluginNames` / 构造保证非 nil；`ext` 由装配层给，冻结处兜底归一。
+func TestEffectiveConfig_AbsentCollectionsAreEmptyArraysNotNil(t *testing.T) {
+	s := NewSession(Config{
+		Bounty: Bounty{ID: "b1", Task: "t", Repo: gitRepoRef()},
+		Git:    &stubBaselineGit{},
+		Opener: stubOpener{},
+		Policy: allowAll{},
+		Sink:   &captureSink{},
+		// 刻意不给 Tools / 插件 / 过滤器 / Assembly.Ext：三方集合都应是空数组。
+	})
+	if err := s.Prepare(context.Background(), &harness.Run{}); err != nil {
+		t.Fatalf("Prepare 失败：%v", err)
+	}
+
+	got := s.EffectiveConfig()
+	for _, c := range []struct {
+		name string
+		v    []string
+	}{
+		{"system_plugins", got.SystemPlugins},
+		{"user_plugins", got.UserPlugins},
+		{"filters", got.Filters},
+		{"ext", got.Ext},
+	} {
+		if c.v == nil {
+			t.Errorf("%s 必须是空数组而非 nil（nil → null，被读成「未提供」）", c.name)
+		}
+	}
+
+	b, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("序列化失败：%v", err)
+	}
+	for _, key := range []string{"system_plugins", "user_plugins", "filters", "ext"} {
+		if strings.Contains(string(b), `"`+key+`":null`) {
+			t.Errorf("%s 不得序列化成 null（空数组 = 已知的「没有」）：%s", key, b)
+		}
+	}
+	if !strings.Contains(string(b), `"ext":[]`) {
+		t.Errorf("ext 应序列化成 []：%s", b)
+	}
 }

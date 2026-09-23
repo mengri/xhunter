@@ -165,7 +165,7 @@ func (e *Engine) Run(ctx context.Context, in Input) (out Outcome) {
 		if err != nil {
 			// 取消优先于任何失败归因：请求在途中被取消时，各协议实现都会返回一个
 			// "请求被取消"的错误——若按推理失败处理，一次主动取消会被判成环境问题
-			// （退出 2），与"取消收敛为 cancelled/3"直接冲突。
+			// （退出 1），与"取消收敛为 cancelled/3"直接冲突。
 			if ctx.Err() != nil {
 				run.terminate(StatusCancelled, "cancelled", ExitCancelled)
 			} else {

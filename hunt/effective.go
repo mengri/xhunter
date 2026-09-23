@@ -16,7 +16,8 @@ type AssemblyFacts struct {
 	Policy map[string]any
 	// Checkpoint 是检查点行为口径（当前只有一档：只在结构完整点上自动产生）。
 	Checkpoint string
-	// Ext 是扩展能力指纹。本期为空——扩展尚未接入，空数组如实表示"没有扩展"。
+	// Ext 是扩展能力指纹。空数组 = **没有扩展**（一期就是这种情况：扩展未接入）；不要留 nil——
+	// nil 会序列化成 `null`，被读成"不知道有没有扩展"（那是另一句话）。冻结快照处会把 nil 归成空切片。
 	Ext []string
 	// Platform 是目标平台（GOOS/GOARCH）。
 	Platform string
@@ -34,12 +35,14 @@ type EffectiveConfig struct {
 	UserPlugins   []string `json:"user_plugins"`
 	// Filters 是结果过滤器链的名字，顺序即生效顺序。
 	Filters []string `json:"filters"`
-	// Policy / Checkpoint / Ext / Platform 原样来自装配层注入的 AssemblyFacts。
+	// Policy / Checkpoint / Platform 原样来自装配层注入的 AssemblyFacts。
 	Policy     map[string]any `json:"policy"`
 	Budget     Budget         `json:"budget"`
 	Checkpoint string         `json:"checkpoint"`
-	Ext        []string       `json:"ext"`
-	Platform   string         `json:"platform"`
+	// Ext 是扩展能力指纹。**空数组 = 没有扩展**（已知事实），不是 `null`（未提供）——同一条纪律
+	// 见 `files_changed` / `needs` 对空值的处理。
+	Ext      []string `json:"ext"`
+	Platform string   `json:"platform"`
 }
 
 // MarshalJSON 让预算在快照里以可读形状出现：0 表示该维度不限；墙钟换算成毫秒——

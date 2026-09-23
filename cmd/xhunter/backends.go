@@ -39,6 +39,7 @@ func assemblyFacts() hunt.AssemblyFacts {
 	return hunt.AssemblyFacts{
 		Policy:     policy.Facts(),
 		Checkpoint: checkpointBehaviour,
+		Ext:        []string{}, // 一期没有扩展：空数组如实表示"没有"，不是"不知道"（nil → null）
 		Platform:   runtime.GOOS + "/" + runtime.GOARCH,
 	}
 }

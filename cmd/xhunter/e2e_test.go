@@ -285,7 +285,7 @@ func TestEndToEnd_ResultFileWrittenOnFailure(t *testing.T) {
 	stdoutText, stderrText := drainStdStreams(t, stdout, stderr)
 
 	if code != exitEnv {
-		t.Fatalf("远端不可达应退出 2，实际 %d\n%s", code, stderrText)
+		t.Fatalf("远端不可达应退出 1，实际 %d\n%s", code, stderrText)
 	}
 	raw, err := os.ReadFile(resultPath)
 	if err != nil {
@@ -358,7 +358,7 @@ func TestEndToEnd_BudgetExhaustionStopsTheRun(t *testing.T) {
 	stdoutText, stderrText := drainStdStreams(t, stdout, stderr)
 
 	if code != exitAborted {
-		t.Fatalf("预算耗尽应退出 1，实际 %d\nstdout:\n%s\nstderr:\n%s", code, stdoutText, stderrText)
+		t.Fatalf("预算耗尽应退出 2，实际 %d\nstdout:\n%s\nstderr:\n%s", code, stdoutText, stderrText)
 	}
 	if !strings.Contains(stdoutText, `"status":"failed"`) || !strings.Contains(stdoutText, "budget_exhausted:turns") {
 		t.Errorf("终态应上报耗尽维度：\n%s", stdoutText)
@@ -378,10 +378,10 @@ func TestEndToEnd_BudgetExhaustionStopsTheRun(t *testing.T) {
 }
 
 // 通道断裂即环境错误（FR-10.4、AC-19）：消费者已不在通道上时，继续跑只是自说自话。
-// 这里让 stdout 指向一个**读端已关**的管道：写入得到 EPIPE，进程必须以退出码 2
+// 这里让 stdout 指向一个**读端已关**的管道：写入得到 EPIPE，进程必须以退出码 1
 // 收敛并记下原因——而不是把"写不出去"降级成一条 warn。
 //
-// 场景取"本来会成功"的那条路：否则退出码 2 无法与任务自身的失败区分开。
+// 场景取"本来会成功"的那条路：否则退出码 1 无法与任务自身的失败区分开。
 func TestEndToEnd_BrokenEventChannelIsEnvError(t *testing.T) {
 	requireGitForE2E(t)
 	fx := newRepoFixture(t)
@@ -434,7 +434,7 @@ func TestEndToEnd_BrokenEventChannelIsEnvError(t *testing.T) {
 	_ = writer.Close()
 
 	if code != exitEnv {
-		t.Fatalf("事件写不出去必须以退出码 2 收敛，实际 %d\nstderr:\n%s", code, errText)
+		t.Fatalf("事件写不出去必须以退出码 1 收敛，实际 %d\nstderr:\n%s", code, errText)
 	}
 	if !strings.Contains(string(errText), "事件通道写入失败") {
 		t.Errorf("必须记下通道断裂的原因：\n%s", errText)
@@ -658,6 +658,61 @@ func TestEndToEnd_EventSequenceIsComplete(t *testing.T) {
 	}
 	if deliverableIdx < 0 || huntEndIdx < 0 || deliverableIdx > huntEndIdx {
 		t.Errorf("deliverable 必须在 hunt_end 之前：deliverable=%d hunt_end=%d", deliverableIdx, huntEndIdx)
+	}
+}
+
+// 生效快照的空集合口径：`ext`（以及 `filters`）是**空数组**而不是 `null`——`[]` = 没有扩展（已知
+// 事实），`null` = 未提供（"不知道有没有"）。事件流与结果文件读的是同一份，两处都要是 `[]`。
+func TestEndToEnd_EffectiveConfigEmptyCollectionsAreArrays(t *testing.T) {
+	r := runSuccessOnce(t)
+	if r.code != exitOK {
+		t.Fatalf("成功运行应退出 0，实际 %d\nstdout:\n%s\nstderr:\n%s", r.code, r.stdout, r.stderr)
+	}
+
+	// 事件流：hunt_start.effective_config 的集合字段必须是数组（ext/filters 为空数组而非 null）。
+	var startLine string
+	for _, line := range nonEmptyLines(r.stdout) {
+		if strings.Contains(line, `"type":"hunt_start"`) {
+			startLine = line
+		}
+	}
+	if startLine == "" {
+		t.Fatalf("事件流缺少 hunt_start：\n%s", r.stdout)
+	}
+	var startEv struct {
+		EC map[string]json.RawMessage `json:"effective_config"`
+	}
+	if err := json.Unmarshal([]byte(startLine), &startEv); err != nil {
+		t.Fatalf("hunt_start 不是合法 JSON：%v", err)
+	}
+	if got := string(startEv.EC["ext"]); got != "[]" {
+		t.Errorf("hunt_start.effective_config.ext = %s，期望 []（空数组 = 没有扩展，不是 null）", got)
+	}
+	if got := string(startEv.EC["filters"]); got != "[]" {
+		t.Errorf("hunt_start.effective_config.filters = %s，期望 []", got)
+	}
+	for _, k := range []string{"system_plugins", "user_plugins"} {
+		if v := string(startEv.EC[k]); !strings.HasPrefix(v, "[") {
+			t.Errorf("hunt_start.effective_config.%s = %s，期望数组（空也要 []，不是 null）", k, v)
+		}
+	}
+
+	// 结果文件：读同一份快照，ext 同样必须是 []。
+	raw, err := os.ReadFile(r.result)
+	if err != nil {
+		t.Fatalf("读结果文件失败：%v", err)
+	}
+	var res struct {
+		EC map[string]json.RawMessage `json:"effective_config"`
+	}
+	if err := json.Unmarshal(raw, &res); err != nil {
+		t.Fatalf("结果文件不是合法 JSON：%v", err)
+	}
+	if got := string(res.EC["ext"]); got != "[]" {
+		t.Errorf("结果文件 effective_config.ext = %s，期望 []", got)
+	}
+	if got := string(res.EC["filters"]); got != "[]" {
+		t.Errorf("结果文件 effective_config.filters = %s，期望 []", got)
 	}
 }
 

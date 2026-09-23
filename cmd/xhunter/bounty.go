@@ -89,7 +89,7 @@ func bountyFromEnv(task string, lookup lookupEnv) (hunt.Bounty, error) {
 	return bounty, nil
 }
 
-// parseBudget 从环境读三重预算上限。值必须是正数；写错即启动期失败（退出 2），
+// parseBudget 从环境读三重预算上限。值必须是正数；写错即启动期失败（退出 1），
 // 不静默当成"不限"——一个拼错的变量名会让预算悄悄失效。
 func parseBudget(lookup lookupEnv) (hunt.Budget, error) {
 	var b hunt.Budget

@@ -126,6 +126,13 @@ func (s *Session) freezeEffectiveConfig(systemPlugins, userPlugins []PromptPlugi
 		filters = append(filters, f.Name)
 	}
 
+	// 扩展指纹在冻结处归一：空数组 = 没有扩展（已知事实），nil 会被序列化成 `null`、被读成
+	// "不知道有没有"——第三方装配方漏设 Ext 时也不该写出一句"不知道有没有"。
+	ext := s.cfg.Assembly.Ext
+	if ext == nil {
+		ext = []string{}
+	}
+
 	return EffectiveConfig{
 		Primitives:    primitives,
 		SystemPlugins: pluginNames(systemPlugins),
@@ -134,7 +141,7 @@ func (s *Session) freezeEffectiveConfig(systemPlugins, userPlugins []PromptPlugi
 		Policy:        s.cfg.Assembly.Policy,
 		Budget:        s.cfg.Bounty.Budget,
 		Checkpoint:    s.cfg.Assembly.Checkpoint,
-		Ext:           s.cfg.Assembly.Ext,
+		Ext:           ext,
 		Platform:      s.cfg.Assembly.Platform,
 	}
 }
