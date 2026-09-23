@@ -440,6 +440,53 @@ func TestEndToEnd_BrokenEventChannelIsEnvError(t *testing.T) {
 	}
 }
 
+// 心跳端到端（FR-10.1、IA-5.4）：间隔调到很小，一次成功运行的事件流里至少一条 heartbeat，
+// 且最后一条是 hunt_end——心跳绝不能在终态之后继续滴答。
+func TestEndToEnd_HeartbeatEmittedAndHuntEndLast(t *testing.T) {
+	requireGitForE2E(t)
+	fx := newRepoFixture(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", filepath.Join(tmp, "work"))
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		time.Sleep(40 * time.Millisecond) // 模拟模型延迟：给"等模型时的任务级心跳"留出滴答窗口
+		io.WriteString(w, sseWithText("做完了"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	taskPath := writeRunInputs(t, tmp, "产出一份小结")
+	setRunEnv(t, fx, srv.URL+"/v1")
+	t.Setenv("XHUNTER_HEARTBEAT_INTERVAL", "5ms")
+
+	stdout, stderr := swapStdStreams(t)
+	code := run([]string{"--bounty", taskPath})
+	stdoutText, stderrText := drainStdStreams(t, stdout, stderr)
+
+	if code != exitOK {
+		t.Fatalf("完整一次 Hunt 应成功退出（0），实际 %d\nstdout:\n%s\nstderr:\n%s", code, stdoutText, stderrText)
+	}
+
+	if n := strings.Count(stdoutText, `"type":"heartbeat"`); n < 1 {
+		t.Errorf("按 5ms 间隔应至少一条 heartbeat：\n%s", stdoutText)
+	}
+	// 心跳的载荷形状（IA-5.4）：phase ＋ elapsed_ms。
+	hb := eventPayload(t, stdoutText, "heartbeat")
+	if hb["phase"] == "" || hb["elapsed_ms"] == nil {
+		t.Errorf("heartbeat 应带 phase 与 elapsed_ms：%v", hb)
+	}
+	// 最后一条必须是 hunt_end（心跳不得滴答到终态之后）。
+	lines := nonEmptyLines(stdoutText)
+	if last := lines[len(lines)-1]; !strings.Contains(last, `"type":"hunt_end"`) {
+		t.Errorf("hunt_end 必须是最后一条，实得：%s", last)
+	}
+}
+
 // ============================================================ 夹具
 
 type repoFixture struct {

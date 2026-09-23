@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"xhunter/git"
@@ -24,6 +25,7 @@ type ToolFactory func(ws workspace.Workspace) []Primitive
 // 每个过滤器带名字，名字进生效配置快照。SystemPlugins / UserPlugins 是首轮两段正文的
 // 构造插件工厂，顺序即拼接顺序；为 nil 表示该段不接插件。Assembly 是「只有装配层知道」
 // 的生效事实（策略口径、检查点行为、扩展指纹、目标平台），值注入、Session 不猜。
+// Heartbeat 是任务级心跳的间隔；0 表示取默认（`defaultHeartbeatInterval`），不是「关掉」。
 type Config struct {
 	Bounty  Bounty
 	Tools   ToolFactory
@@ -39,7 +41,8 @@ type Config struct {
 	SystemPlugins PromptPluginFactory
 	UserPlugins   PromptPluginFactory
 
-	Assembly AssemblyFacts
+	Assembly  AssemblyFacts
+	Heartbeat time.Duration
 }
 
 // Session 是「代码编辑 agent」的默认执行体：向 harness 提供三组 handler
@@ -85,6 +88,13 @@ type Session struct {
 	// 决定 usage.reported 与是否发 degraded。判据只有这一处。
 	usageReported bool
 
+	// phase 是当前阶段的并发安全快照：心跳 goroutine 读、业务 goroutine 写（`--race` 必须干净），
+	// 因此用 atomic.Value 而不是普通字段。见 Phase 与 setPhase。
+	phase atomic.Value
+	// stopHeartbeat 停掉本次运行的心跳（幂等、阻塞到 goroutine 退出）：Prepare 成功后才有真值，
+	// 默认是空操作——所以 Prepare 未成功时 Finalize 照常调用一次也不会炸，也不会漏停。
+	stopHeartbeat func()
+
 	// declared 是模型在正文里自陈的两类清单（缺什么条件、采取了哪些默认）：轮边界登记、
 	// 收尾据此收敛终态——见 AppendDeclared 与 Finalize。
 	declared Declared
@@ -112,9 +122,20 @@ func (s *Session) Delivery() Delivery {
 // 而不是摆一个空壳（空切片会被读成"没有原语、没有插件"）。
 func (s *Session) EffectiveConfig() EffectiveConfig { return s.effective }
 
+// Phase 返回当前阶段（心跳据此上报，诊断也用得上）。并发安全：心跳 goroutine 读它。
+func (s *Session) Phase() Phase {
+	if p, ok := s.phase.Load().(Phase); ok {
+		return p
+	}
+	return PhaseBootstrap
+}
+
+// setPhase 记录当前阶段。业务 goroutine 写、心跳 goroutine 读，故走 atomic.Value。
+func (s *Session) setPhase(p Phase) { s.phase.Store(p) }
+
 // NewSession 构造 Session。
 func NewSession(cfg Config) *Session {
-	return &Session{cfg: cfg, ledger: &Ledger{}}
+	return &Session{cfg: cfg, ledger: &Ledger{}, stopHeartbeat: func() {}}
 }
 
 // CheckpointDecl 是检查点原语的声明。它由业务层自带，装配工具面时殿后追加。

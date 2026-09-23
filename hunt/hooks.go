@@ -20,7 +20,7 @@ import (
 // 事件出口、工具执行都由 Session 自己完成。
 
 // Prepare 循环前一次：准备基线、打开工作区、定格工具面、构造首轮提示词、冻结生效配置
-// 快照并发出起飞事件。
+// 快照、发出起飞事件并启动心跳。
 //
 // 工作区在这里就打开并检查——失败即返回错误，循环根本不会开始，因此不存在「跑到一半
 // 才发现工作区不可用」的中间态。
@@ -29,6 +29,8 @@ import (
 // Git / Opener 缺失是**调用即 panic**（被引擎收敛成一句 "panic: invalid memory
 // address"），而 Policy 缺失会被静默跳过——同一份"装配校验"的说法，三种行为。
 func (s *Session) Prepare(ctx context.Context, run *harness.Run) error {
+	s.setPhase(PhaseBootstrap)
+
 	if s.cfg.Git == nil {
 		return errors.New("装配不完整：缺少 git（基线获取、任务分支、检查点与交付提交都靠它）")
 	}
@@ -64,6 +66,7 @@ func (s *Session) Prepare(ctx context.Context, run *harness.Run) error {
 	s.gates = nil
 
 	// 构造首轮两段正文：插件给正文、Session 拼位置与顺序。取一次、整任务内冻结。
+	s.setPhase(PhaseAssemble)
 	in := PromptInput{Bounty: s.cfg.Bounty, Tools: run.Tools}
 	systemPlugins := s.systemPlugins(storage)
 	userPlugins := s.userPlugins(storage)
@@ -97,6 +100,11 @@ func (s *Session) Prepare(ctx context.Context, run *harness.Run) error {
 
 	// 起飞事件：Prepare 成功后立即发——没进入对话就没有起飞事件（失败路径在上面直接 return）。
 	s.emitHuntStart()
+
+	// 进入默认态（等模型——循环绝大部分时间花在这里）并启动心跳。心跳的生命周期归 Session：
+	// 这里起、Finalize 的终态块之前停，因此一条心跳也不会落到 hunt_end 之后（见 startHeartbeat）。
+	s.setPhase(PhaseInfer)
+	s.stopHeartbeat = startHeartbeat(ctx, s.cfg.Sink, s.cfg.Heartbeat, s.Phase)
 	return nil
 }
 
@@ -232,6 +240,10 @@ type ResultFilter func(ctx context.Context, turn *harness.Turn) error
 // 「拿本轮结果、处理成下一轮的输入」这一个动作，连同执行、加工、记录、守卫与检查点都在
 // 这里完成。
 func (s *Session) OnTurn(ctx context.Context, run *harness.Run, turn *harness.Turn) (bool, error) {
+	// 本轮期间处于「执行工具」阶段（执行、加工、记录、检查点），返回后回到默认态「等模型」。
+	s.setPhase(PhaseTools)
+	defer s.setPhase(PhaseInfer)
+
 	// 工具调用由业务执行：harness 只从流里收齐「要调什么」，执行、落盘、结果回灌都在这里。
 	//
 	// 已经有结果的调用不再执行——排在前面 handler 可以直接答复某次调用（缓存命中、一眼
@@ -422,6 +434,8 @@ func (s *Session) emitUsage(in, out, cached int) {
 
 // Finalize 循环后一次（无论成败）：无产出判失败、交付提交、差异、材料落盘、清理、终态上报。
 func (s *Session) Finalize(ctx context.Context, run *harness.Run) error {
+	s.setPhase(PhaseFinalize)
+
 	// 用量口径冻结一次：终态 hunt_end 事件与结果文件读的是**同一份**（各算一遍迟早会漂）。
 	// Reported 的判据来自 charge（上游回报过用量），这里只搬运、不重算。
 	s.usage = UsageReport{
@@ -486,6 +500,10 @@ func (s *Session) Finalize(ctx context.Context, run *harness.Run) error {
 	if err := s.cfg.Git.Clean(ctx); err != nil {
 		s.logf("warn", "工作区清理失败", "err", err.Error())
 	}
+
+	// 先把心跳停死（幂等、阻塞到心跳 goroutine 退出）：停完之后一条心跳也不会再发，
+	// hunt_end 的"最后一条"因此是结构保证，不靠时序运气。
+	s.stopHeartbeat()
 
 	out := run.Outcome()
 

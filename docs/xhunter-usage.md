@@ -90,7 +90,7 @@ xhunter version
 | `XHUNTER_BUDGET_TURNS` | — | 轮数上限（正整数；未设置 = 不限） |
 | `XHUNTER_BUDGET_TOKENS` | — | 累计 token 上限（输入+输出，正整数；未设置 = 不限） |
 | `XHUNTER_BUDGET_WALL_CLOCK` | — | 墙钟上限（Go duration，如 `90m`、`2h`；未设置 = 不限） |
-| `XHUNTER_HEARTBEAT_INTERVAL` | — | 心跳间隔（Go duration，如 `30s`、`2m`；缺省 30s）——平台判断"卡死"的灵敏度由它定 |
+| `XHUNTER_HEARTBEAT_INTERVAL` | — | 心跳间隔（Go duration，如 `45s`、`2m`；缺省 30s）——平台判断"卡死"的灵敏度由它定；**取值非法（含 `0`、负数、非 duration）即启动期退出 1** |
 
 **前缀即分组**（命名是刻意的，防错靠名字而不是靠文档提醒）：`XHUNTER_MODEL_*` 是**模型接入事实**（模型是什么——上限两项必填、其余可选）；`XHUNTER_BUDGET_*` 是**任务预算**（三项都可选，不配即不限）；`XHUNTER_REPO_*` 是仓库事实。三组的**必填性相反**，因此让名字完全不重叠。
 

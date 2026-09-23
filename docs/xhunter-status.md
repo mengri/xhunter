@@ -38,7 +38,7 @@
 | Provider 三协议 | `provider/openaichat` · `openairesponses` · `anthropicmessages` + `provider/adapter` + `providerconfig`（环境变量契约） | 各包 `*_test.go`（IA-8.x/9.x） |
 | CLI 与组装层 | `cmd/xhunter`：`--bounty/--log-file/--result/--patch`、`version`；环境变量投递（仓库事实 ＋ 模型接入）、退出码 0/1/2/3、信号接线 | `bounty_test.go`、`channel_test.go`、`provider_test.go`、`signal_test.go`、`e2e_test.go` |
 | 端到端夹具 | 真 git（本地裸仓库）＋ 真 SSE 假上游，不联网 | `TestEndToEnd_LocalRunProducesDeliveryCommit` 等 5 条 |
-| 事件出口 | 信封四字段统一盖章；已发 `hunt_start` · `tool_call` · `tool_result` · `assistant_text` · `usage` · `error` · `policy_denied` · `degraded` · `deliverable` · `hunt_end` | `hunt/session.go`（工具调用/结果/策略拒绝）、`hunt/hooks.go`（起飞/正文/用量/降级/终态） |
+| 事件出口 | 信封四字段统一盖章；已发 `hunt_start` · `tool_call` · `tool_result` · `assistant_text` · `usage` · `heartbeat` · `error` · `policy_denied` · `degraded` · `deliverable` · `hunt_end` | `hunt/session.go`（工具调用/结果/策略拒绝）、`hunt/hooks.go`（起飞/正文/用量/降级/终态） |
 | 结果文件 | `--result` 无论成败都写；含终态/退出码/仓库事实/提交/改动清单/用量/error | `cmd/xhunter/result.go`（IA-12.9） |
 | 模型声明终态（`needs` / `assumptions`） | `hunt/declare.go`（解析固定小节）＋ `Session.OnTurn`（轮边界登记）＋ `Session.Finalize`（收尾收敛为 `blocked`）；事件 `needs_input` / `assumption`；结果文件 `needs` / `assumptions` | `hunt/declare_test.go`（IA-1.13）、`cmd/xhunter/result_test.go` |
 
@@ -74,7 +74,7 @@
 | 不一致 | 事实 | 影响 |
 |---|---|---|
 | `edit.literal` 的必填性 | 实现里必填（缺它返回 `bad_selector`），schema 的 `required` 只有 `path`/`content`（`hunt/basic/edit.go:31`） | 模型照 schema 省略 → 本可避免的错误（**已于 2026-09-23 修正**，见 §2.3） |
-| 文档列了 6 类事件，部分仍未发出 | `hunt_start` / `tool_call` / `assistant_text` / `usage` / `error` **已发**（本周期）；`heartbeat`（无调用点）仍未发 | 平台侧仍看不到「还活着」（心跳） |
+| ~~文档列了 6 类事件，部分仍未发出~~ | **已全部发出**（2026-09-23，含 `heartbeat`）：心跳按间隔输出、`hunt_end` 为最后一条 | 已消除 |
 | `check.py --wsl` 在映射盘工作区不可用 | 脚本由 `__file__` 推导工作目录，映射盘（UNC）路径在 `--wsl` 分支里被原样拼进 bash 命令，`cd` 失败（实测 `exit 1: cd: \localhostworkagentsxhunter`） | 规范验证入口曾在这台机器上跑不起来，基准只能**直接调用 WSL 内 go** 得到（**已于 2026-09-23 修正**，见 §2.3） |
 | **IA 编号重复** | `IA-2.11` 出现两次（内核条款 / skill 清单）；`IA-8.15` / `IA-8.16` / `IA-8.17` 各出现两次（协议包通用项 / 单协议形状项） | 引用会指错；**已用限定词消歧、不重编号**（重编号要动架构 §12 与本文档几十处引用，收益只是好看）：架构 §12 与本文档的编号现**逐字一致**，写作 `IA-2.11(a) 内核条款与环境事实` / `IA-2.11(b) skill 发现清单` / `IA-8.15(a) 协议版本基线` / `IA-8.15(b) Messages 协议形状` 等 |
 
@@ -101,7 +101,7 @@
 | <a id="fr-6-3"></a>FR-6.3/6.4（`needs` / `assumptions` / `unverified`） | 部分已落地 | MS-2（余） | **`needs` / `assumptions` 已落地**（2026-09-23）：采集机制 = 解析正文固定小节（轮边界登记、收尾收敛为 `blocked`）。**余 `unverified`**（FR-6.4 的第三类）：需新增内核小节与采集，未接入 |
 | <a id="fr-9-4"></a>FR-9.4（两段式止损） | 待接入 | MS-3 | 无 `ObserveFailure` / `DeniedCount` |
 | <a id="fr-9-7"></a>FR-9.7（用量不可得时不得估算） | 已落地 | MS-2 | 上游未回报用量时不报数字：`usage` 事件三字段全零则不发、结果文件 `usage.reported: false` ＋ 一条 `degraded`（`scope: usage`）；预算仍按上报值计（不拿 0 触发/不触发）。用例 `TestOnTurn_NoUsageEventWhenUpstreamSilent`、`TestFinalize_DegradedOnceWhenUsageUnavailable`、`TestResultFile_UsageReportedFalseWhenUpstreamSilent` |
-| <a id="fr-10-1"></a>FR-10.1~10.3（心跳 / 终态事件） | 部分待接入 | MS-2 | `heartbeat` 调用点未接入；其余事件（`hunt_start` / `hunt_end`（带累计用量）/ `tool_call` / `assistant_text` / `usage` / `error`）已发 |
+| <a id="fr-10-1"></a>FR-10.1~10.3（心跳 / 终态事件） | 已落地 | MS-2 | 任务级心跳（间隔可配、随取消即停、带 `phase`/ `elapsed_ms`）与全部轮级/终态事件已发，`hunt_end` 为最后一条。用例 `TestHeartbeat_*`、`TestSession_PhaseTracksStages`、`TestFinalize_StopsHeartbeatBeforeHuntEnd`、`TestParseHeartbeatInterval_DefaultOverrideAndRejects`、`TestEndToEnd_HeartbeatEmittedAndHuntEndLast` |
 | <a id="fr-11-1"></a>FR-11.1（每次模型/工具调用产出结构化事件，含耗时与用量） | 部分已落地 | MS-2 | 模型侧已有 `assistant_text` / `usage`（每轮增量）；工具侧 `tool_call`（`args`）/ `tool_result`（含 `duration_ms`）；终态 `hunt_end` 带累计用量。**余**：`check_result`（MS-5）、`context_compacted`（MS-11）等随各自里程碑接入 |
 | <a id="fr-11-2"></a>FR-11.2（错误结构化） | 已落地 | MS-2 | 终态 `failed` 发一条 `error`（`kind`＝原因首段 / `retryable`＝与退出码同源 / `context`＝阶段与轮次）；取消与 `blocked` 不发。`kind` / `retryable` 的口径上收为 `hunt.ErrorKind` / `hunt.RetryableForExitCode`，事件与结果文件同源。用例 `TestFinalize_EmitsErrorOnFailureMatchingExitCode`、`TestFinalize_NoErrorEventOnBlockedOrCancelled` |
 | <a id="fr-11-6"></a>FR-11.6（生效配置快照） | 已落地 | MS-2 | 装配完成后冻结一次，进 `hunt_start` 与结果文件 `effective_config`；门禁清单随 MS-5 接入。用例 `TestEffectiveConfig_ListsPrimitivesInToolFaceOrder`、`TestEffectiveConfig_CarriesPluginAndFilterNames`、`TestEffectiveConfig_CarriesAssemblyFacts`、`TestPrepare_EmitsHuntStart`、`TestResultFile_EffectiveConfigIsWritten` |
@@ -189,7 +189,7 @@
 | <a id="ia-5-1"></a>IA-5.1 | 已落地 | `TestEventSink_EmitsFlatJSONLine` | — | — |
 | <a id="ia-5-2"></a>IA-5.2 | 待补 | — | MS-2 | stdout 纯 NDJSON 端到端断言（AC-9） |
 | <a id="ia-5-3"></a>IA-5.3 | 已落地 | `TestEventSink_RemembersFirstWriteFailure`、`TestEndToEnd_BrokenEventChannelIsEnvError` | — | — |
-| <a id="ia-5-4"></a>IA-5.4 | 待接入 | — | MS-2 | `Heartbeat` 已实现，调用点未接入 |
+| <a id="ia-5-4"></a>IA-5.4 | 已落地 | `TestHeartbeat_EmitsAtInterval`、`TestHeartbeat_StopsOnContextCancel`、`TestHeartbeat_StopIsIdempotent`、`TestSession_PhaseTracksStages` | MS-2 | 心跳按任务输出（非 runtime），带 `phase` 与 `elapsed_ms`；间隔缺省 30s、`XHUNTER_HEARTBEAT_INTERVAL` 可覆盖；随 ctx 取消即停（INV-8），停止点在 `Finalize` 的终态块之前 |
 | <a id="ia-5-5"></a>IA-5.5 | 已落地 | `TestExecuteCall_EveryOutcomeEmitsOneToolResult`、`TestExecuteCall_SuccessRecordsOpsAndSummary` | — | — |
 | <a id="ia-5-6"></a>IA-5.6 | 已落地 | 代码检查（FR-11.5） | — | — |
 | <a id="ia-5-7"></a>IA-5.7 | 已落地 | `TestEventSink_StampsEnvelopeOnEveryEvent`、`TestHuntCmd_EventsGoToStdoutAndLogsGoToStderr`、`TestBountyFromEnv_TraceID` | — | — |
@@ -292,7 +292,7 @@
 | <a id="h2-context"></a>H2 Context | 组装已落地 / 压缩待接入 | 见 IA-2.x；压缩属 MS-11 |
 | <a id="h3-tools"></a>H3 Tools | 基础＋流水线已落地 / 符号与门禁待接入 | 见 IA-3.x；符号属 MS-8/MS-10，门禁属 MS-5 |
 | <a id="h4-policy"></a>H4 Policy | 见 H4-裁决点 | 见上 |
-| <a id="h5-stream"></a>H5 Stream | 出口/信封已落地 / 心跳与落盘待接入 | 心跳调用点 MS-2；session 落盘 MS-6 |
+| <a id="h5-stream"></a>H5 Stream | 出口/信封 ＋ 心跳已落地 / 落盘待接入 | 心跳已接入（MS-2）；session 落盘 MS-6 |
 | <a id="h6-session"></a>H6 Session | 待接入 | 只记内存；材料 MS-6、恢复 MS-7 |
 | <a id="h7-ext"></a>H7 Ext | 待接入 | `ext.ExtHost` 无实现（MS-8） |
 
@@ -301,7 +301,7 @@
 | 编号 | 状态 | 对应 MS-n | 缺口说明 |
 |---|---|---|---|
 | <a id="usage-1-2-bounty"></a>usage§1.2·Bounty生成器 | 待接入 | MS-12 | `xhunter run` 尚未接线；当前 CLI 只有 `models` / `version` 与 `--bounty`（后者为占位实现） |
-| <a id="usage-5-events"></a>usage§5·已发出事件 | 部分已发出 | MS-2 | 已发：`hunt_start`、`hunt_end`（带累计用量）、`tool_call`、`tool_result`、`assistant_text`、`usage`（每轮增量）、`error`、`policy_denied`、`deliverable`、`degraded`（含 `scope: usage`）、`heartbeat`（调用点待接入）、`needs_input`、`assumption`；其余事件类型与字段为契约目标，待接线（`check_result`/`context_compacted`） |
+| <a id="usage-5-events"></a>usage§5·已发出事件 | 部分已发出 | MS-2 | 已发：`hunt_start`、`hunt_end`（带累计用量）、`tool_call`、`tool_result`、`assistant_text`、`usage`（每轮增量）、`heartbeat`（按间隔、带阶段）、`error`、`policy_denied`、`deliverable`、`degraded`（含 `scope: usage`）、`needs_input`、`assumption`；其余事件类型与字段为契约目标，待接线（`check_result`/`context_compacted`） |
 | <a id="usage-6-fields"></a>usage§6·待接入字段 | 部分待接入 | MS-2 / MS-6 | 已接线：`needs` / `assumptions`（2026-09-23）、`effective_config`（2026-09-23）、`summary`（2026-09-23）。仍未接线：`unverified`（MS-2）、`gates`（MS-5）、`session_delta`（MS-6） |
 
 ### 2.3 已结清（本周期）
@@ -326,6 +326,7 @@
 | ~~生效配置快照~~（MS-2） | **已落地**（2026-09-23）：`Prepare` 装配完成后把「本次实际生效的规则」冻结成快照，进 `hunt_start` 事件与结果文件 `effective_config`——原语清单与顺序（含殿后 `checkpoint`）、两段插件名与顺序、结果过滤器链名、策略口径、三重预算、检查点行为、扩展能力指纹、目标平台。快照是**只读事实、模型不可影响**，同时服务远程诊断与 MR 评审；`Prepare` 失败不发起飞事件、结果文件省略该字段（不摆空壳）。配套：`PromptPlugin` 加自述名 `Name()`、结果过滤器具名化为 `NamedFilter`。用例：`TestEffectiveConfig_ListsPrimitivesInToolFaceOrder`、`TestEffectiveConfig_CarriesPluginAndFilterNames`、`TestEffectiveConfig_CarriesAssemblyFacts`、`TestPrepare_EmitsHuntStart`（`hunt`）、`TestResultFile_EffectiveConfigIsWritten`（`cmd/xhunter`） |
 | ~~轮级事件补齐（`tool_call` / `usage` 增量 / `assistant_text` / 结果文件 `summary`）~~（MS-2） | **已落地**（2026-09-23）：`tool_call` 在**执行前**发（`call_id` / `tool`（模型原始名）/ `args`；参数非法时退化成字符串，绝不因它让通道报错）；`usage` 每轮末发**增量**（增量在用量水位那一处算出、**上报与计费同源**；三字段全零不发——上游沉默不得报 0 装作有数）；`assistant_text` 在收流合并后发，与进历史、自陈解析**同一份**正文；结果文件加 `summary`（模型最后一轮答复，无答复则省略该键）。用例：`TestOnTurn_EmitsToolCallBeforeResult`、`TestOnTurn_ToolCallArgsSurviveMalformedJSON`、`TestOnTurn_EmitsUsageDeltaPerTurn`、`TestOnTurn_NoUsageEventWhenUpstreamSilent`、`TestOnTurn_EmitsAssistantTextMatchingHistory`（`hunt`）、`TestResultFile_SummaryIsWritten`（`cmd/xhunter`），并扩 `TestEndToEnd_LocalRunProducesDeliveryCommit` |
 | ~~终态可观测（`hunt_end` 累计用量 ＋ `usage.reported` ＋ `error` 事件）~~（MS-2） | **已落地**（2026-09-23）：用量对外口径上收为 `hunt.UsageReport`（含 `reported`），`hunt_end` 带累计用量、与结果文件 `usage` **同一份**；`Reported` 的判据只在 `Session.charge`（本轮增量有任一非零）；不可得时发一条 `degraded`（`scope: usage`）且结果文件 `usage.reported: false`；终态 `failed` 发结构化 `error`（`kind` / `retryable` / `context`），`kind` 与 `retryable` 口径上收为 `hunt.ErrorKind` / `hunt.RetryableForExitCode`（事件与结果文件同源），取消与 `blocked` 不发。用例：`TestHuntEnd_CarriesCumulativeUsage`、`TestHuntEnd_IsTheLastEvent`、`TestFinalize_EmitsErrorOnFailureMatchingExitCode`、`TestFinalize_NoErrorEventOnBlockedOrCancelled`、`TestFinalize_DegradedOnceWhenUsageUnavailable`（`hunt`）、`TestResultFile_UsageReportedFalseWhenUpstreamSilent`（`cmd/xhunter`），并扩 `TestEndToEnd_ResultFileWrittenOnFailure` / `TestEndToEnd_BudgetExhaustionStopsTheRun` |
+| ~~心跳接入~~（MS-2） | **已落地**（2026-09-23）：任务级心跳由 `Session` 掌管——`Prepare` 末尾启动、`Finalize` 的终态事件块之前停止（`hunt/heartbeat.go` 的 `startHeartbeat`），`stop` 幂等且阻塞到心跳 goroutine 退出，因此 `hunt_end` 仍是最后一条事件（时钟不会滴答到收尾之后）。间隔缺省 30s、`XHUNTER_HEARTBEAT_INTERVAL` 可覆盖（非法即退出 1）、随 ctx 取消即停（INV-8）；阶段由并发安全的 `Session.Phase()` 提供（bootstrap/assemble/infer/tools/finalize）。用例 `TestHeartbeat_EmitsAtInterval`、`TestHeartbeat_StopsOnContextCancel`、`TestHeartbeat_StopIsIdempotent`、`TestSession_PhaseTracksStages`、`TestFinalize_StopsHeartbeatBeforeHuntEnd`（`hunt`）、`TestParseHeartbeatInterval_DefaultOverrideAndRejects`、`TestEndToEnd_HeartbeatEmittedAndHuntEndLast`（`cmd/xhunter`） |
 
 ---
 
@@ -345,7 +346,7 @@
 | 流看门狗 | `L4-流看门狗`、`FR-1.11`（①） |
 | 结构检查 | `IA-11.11`、`L6-结构检查`、`FR-1.3d` |
 | 止损两段式 | `IA-4.8`、`IA-4.9`、`H4-裁决点`、`FR-9.4` |
-| 可观测补齐 | `IA-5.2`、`IA-5.4`、`IA-12.6`（加强版）、`L2-事件通道`、`L6-事件通道复查`、`FR-10.1`、`AC-9`、`usage§5·已发出事件`、`usage§6·待接入字段` |
+| 可观测补齐 | `IA-5.2`、`IA-12.6`（加强版）、`L2-事件通道`、`L6-事件通道复查`、`AC-9`、`usage§5·已发出事件`、`usage§6·待接入字段` |
 | 本地驱动 | `usage§1.2·Bounty生成器`、`FR-1.10` |
 
 ### 3.2 判定方式缺用例（对应原 §14.2）
@@ -387,7 +388,7 @@
 | # | 名称 | 对应分期 | 依赖 | 体量 | 主要 FR / IA | 状态 |
 |---|---|---|---|---|---|---|
 | **MS-1** | 验收入口与契约对齐 | 一期收口 | — | 小 | FR-2.2、IA-3.16 | **已完成**（2026-09-23；三项全部落地，见 §2.3） |
-| **MS-2** | 运行可观测补齐（事件流 ＋ 生效配置快照） | 一期收口 | MS-1 | 中 | FR-10、FR-11.1/11.6、FR-6.3/6.4、IA-5.2/5.4 | **部分完成**（澄清回路采集、生效配置快照、`hunt_start`/`tool_call`/`assistant_text`/`usage`/`hunt_end` 累计用量/`usage.reported`/`error` 已落地；`heartbeat` 未开始） |
+| **MS-2** | 运行可观测补齐（事件流 ＋ 生效配置快照） | 一期收口 | MS-1 | 中 | FR-10、FR-11.1/11.6、FR-6.3/6.4、IA-5.2/5.4 | **部分完成**（澄清回路采集、生效配置快照、`hunt_start`/`tool_call`/`assistant_text`/`usage`/`hunt_end` 累计用量/`usage.reported`/`error`/`heartbeat` 已落地；余 `IA-5.2` 纯 NDJSON 端到端断言与通道收口 T5） |
 | **MS-3** | 止损完备（两段式止损） | 一期收口 | MS-2 | 中 | FR-9.1/9.4、IA-4.8/4.9 | 未开始 |
 | **MS-4** | 检查点分档与提交健壮性 | 一期收口 | MS-1 | 中 | FR-1.3b/1.3c/1.11②、IA-11.8/11.10/11.11/11.13 | 部分完成（判据不可判定 → 不提交已落地） |
 | **MS-5** | 门禁落地（`check` 实现 ＋ 全链护栏） | 一期收口 | MS-4 | 大 | FR-5.2b~5.2i、IA-11.12 | 未开始 |

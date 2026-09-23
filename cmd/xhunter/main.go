@@ -72,7 +72,8 @@ XHUNTER_REPO_BRANCH / XHUNTER_BOUNTY_ID / XHUNTER_SESSION_ID（可选）。
 模型接入：XHUNTER_MODEL / XHUNTER_BASE_URL / XHUNTER_MODEL_CONTEXT_TOKENS /
 XHUNTER_MODEL_OUTPUT_TOKENS（必填）、XHUNTER_PROTOCOL（协议取值，缺省对话补全）、
 XHUNTER_API_KEY / XHUNTER_HEADERS（可选）。预算上限（可选）：XHUNTER_BUDGET_TURNS /
-XHUNTER_BUDGET_TOKENS / XHUNTER_BUDGET_WALL_CLOCK。
+XHUNTER_BUDGET_TOKENS / XHUNTER_BUDGET_WALL_CLOCK。心跳间隔（可选）：
+XHUNTER_HEARTBEAT_INTERVAL（Go duration，缺省 30s）。
 `)
 }
 
@@ -97,6 +98,13 @@ func huntCmd(args []string) int {
 		return exitEnv
 	}
 	bounty, err := bountyFromEnv(task, os.LookupEnv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return exitEnv
+	}
+
+	// 心跳间隔是部署事实：写错即启动期失败（退出 1），不留到运行期才发现。
+	heartbeat, err := parseHeartbeatInterval(os.LookupEnv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return exitEnv
@@ -148,6 +156,8 @@ func huntCmd(args []string) int {
 		UserPlugins:   defaultUserPlugins,
 		// 生效配置快照里「只有装配层知道」的那部分：装配它就等于声明"本次生效的是什么"。
 		Assembly: assemblyFacts(),
+		// 心跳间隔来自部署事实（0 = 取 Session 默认 30s）。
+		Heartbeat: heartbeat,
 	})
 
 	// 循环只拿到「模型 + 三组 handler」：换一套 handler 就是换一套业务。

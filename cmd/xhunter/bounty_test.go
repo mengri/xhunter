@@ -249,3 +249,29 @@ func TestBountyFromEnv_TraceID(t *testing.T) {
 		}
 	})
 }
+
+// 心跳间隔（FR-10.1）：未设置 → 0（取 Session 默认 30s）；正 duration → 原样；非法
+// （含 0、负数、非 duration）→ 启动期失败（退出 1）——不留到运行期才发现、也不静默退回默认。
+func TestParseHeartbeatInterval_DefaultOverrideAndRejects(t *testing.T) {
+	t.Run("未设置取默认", func(t *testing.T) {
+		d, err := parseHeartbeatInterval(fakeEnv(nil))
+		if err != nil || d != 0 {
+			t.Errorf("未设置应返回 0（由 Session 取默认 30s）：%v %v", d, err)
+		}
+	})
+	t.Run("显式覆盖", func(t *testing.T) {
+		if d, err := parseHeartbeatInterval(fakeEnv(map[string]string{envHeartbeatInterval: "45s"})); err != nil || d != 45*time.Second {
+			t.Errorf("45s 应解析为 45s：%v %v", d, err)
+		}
+		if d, err := parseHeartbeatInterval(fakeEnv(map[string]string{envHeartbeatInterval: "2m"})); err != nil || d != 2*time.Minute {
+			t.Errorf("2m 应解析为 2m：%v %v", d, err)
+		}
+	})
+	t.Run("非法即失败", func(t *testing.T) {
+		for _, bad := range []string{"0", "0s", "-5s", "abc", "半小时"} {
+			if _, err := parseHeartbeatInterval(fakeEnv(map[string]string{envHeartbeatInterval: bad})); err == nil {
+				t.Errorf("%q 必须报错（0 会被读成不限/关掉，两种都不是承诺语义）", bad)
+			}
+		}
+	})
+}

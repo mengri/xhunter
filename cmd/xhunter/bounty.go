@@ -25,6 +25,10 @@ const (
 	envBudgetTurns     = "XHUNTER_BUDGET_TURNS"
 	envBudgetTokens    = "XHUNTER_BUDGET_TOKENS"
 	envBudgetWallClock = "XHUNTER_BUDGET_WALL_CLOCK"
+
+	// 心跳间隔：任务级心跳的部署事实（可选）。未设置取 Session 的默认 30s；
+	// 平台判断"卡死"的灵敏度由它定。
+	envHeartbeatInterval = "XHUNTER_HEARTBEAT_INTERVAL"
 )
 
 // lookupEnv 让组装过程可在测试里替换环境来源。
@@ -112,6 +116,23 @@ func parseBudget(lookup lookupEnv) (hunt.Budget, error) {
 		b.MaxWallClock = d
 	}
 	return b, nil
+}
+
+// parseHeartbeatInterval 从环境读心跳间隔。取值非法即启动期失败（环境问题，退出 1）——
+// 不留到运行期才发现、也不静默退回默认值：一个拼错的变量名会让间隔悄悄失效。
+//
+// 未设置 → 0（由 Session 取默认 30s）。显式写 0 / 负数一律非法：0 会被读成"不限"或"关掉"，
+// 两种都不是我们承诺的语义——「不配」才是取默认。
+func parseHeartbeatInterval(lookup lookupEnv) (time.Duration, error) {
+	v := readEnv(lookup, envHeartbeatInterval)
+	if v == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("%s 必须是正的时间长度（如 45s、2m；当前 %q）", envHeartbeatInterval, v)
+	}
+	return d, nil
 }
 
 // SessionID 返回这次执行所属的会话标识。取值口径定义在 hunt.Bounty 上，这里只是本包的
