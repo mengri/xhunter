@@ -163,3 +163,39 @@ func TestResultFile_EffectiveConfigIsWritten(t *testing.T) {
 		}
 	})
 }
+
+// summary 是模型最后一轮答复（交付物的一部分：任务可能就是要产出一份小结）：有答复就写出，
+// 没有就不写这个键（omitempty，不摆空壳）。
+func TestResultFile_SummaryIsWritten(t *testing.T) {
+	bounty := hunt.Bounty{ID: "b1", Repo: git.RepoRef{Branch: "xhunter/x", BaseCommit: "abc"}}
+	out := harness.Outcome{Status: harness.StatusSucceeded, Reason: "no_tool_call", ExitCode: harness.ExitOK}
+
+	t.Run("有答复", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "r.json")
+		d := hunt.Delivery{Summary: "任务完成：已生成小结"}
+		if err := writeRunOutputs(path, "", bounty, out, d, hunt.Declared{}, hunt.EffectiveConfig{}); err != nil {
+			t.Fatalf("写结果文件失败：%v", err)
+		}
+		if got := readResultFile(t, path).Summary; got != "任务完成：已生成小结" {
+			t.Errorf("summary = %q，期望最后一轮答复", got)
+		}
+	})
+
+	t.Run("无答复省略", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "r.json")
+		if err := writeRunOutputs(path, "", bounty, out, hunt.Delivery{}, hunt.Declared{}, hunt.EffectiveConfig{}); err != nil {
+			t.Fatalf("写结果文件失败：%v", err)
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("读结果文件失败：%v", err)
+		}
+		var probe map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &probe); err != nil {
+			t.Fatalf("解析结果文件失败：%v", err)
+		}
+		if _, ok := probe["summary"]; ok {
+			t.Error("无答复时不得出现 summary 键——不摆空壳")
+		}
+	})
+}

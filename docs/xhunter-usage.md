@@ -187,7 +187,7 @@ xhunter version
 >
 > **用量口径**（`usage` 事件与结果文件的 `usage` 同一口径）：`input_tokens` 是**全部输入** token——含从缓存读取的，也含写入缓存的；`cached_input_tokens` 是其中**从缓存读取**的部分（`input_tokens` 的子集，恒有 `cached ≤ input`）；`output_tokens` 是全部生成（含思考 token，上游也按输出计价）。**输出侧没有缓存**——被缓存的是请求前缀，命中永远记在**下一次请求的输入**上，本次输出全额计价。写入缓存的 token（cache write）当前并入 `input_tokens`、不单列。
 
-**事件顺序**：`tool_result` / `policy_denied` / `check_result` 三类事件**在模型流结束后（运行段 L5 响应处理）发出**，不随流内 `tool_use` 即时产生——接收段零副作用（流内挂起无半写状态）。事件**类型与字段不变**，仅时序后移。`assistant_text` / `usage` 仍为流内实时。
+**事件顺序**：`tool_call` / `tool_result` / `policy_denied` / `check_result` / `assistant_text` / `usage` 都在**轮边界**（模型流结束后立即）发出，不在接收段随流内事件即时产生——接收段零副作用（流内挂起无半写状态）；正文与用量在轮边界才被业务看到（收流在引擎里，而引擎没有事件出口）。同一轮内 `tool_call` 排在对应 `tool_result` 之前，按同一个 `call_id` 配对。事件**类型与字段不变**，仅时序从流内后移到轮边界。
 
 **降级与错误的区别**：`degraded` 表示"照常跑下去了，但少了一部分"——例如某份技能说明格式非法被跳过、约定文件超限被截断。它是**非致命**的，任务继续；`error` 才表示当前动作失败。降级必须可见，因为"少了一部分"若不暴露，产出偏差要到评审时才看得出来。
 
@@ -227,6 +227,7 @@ xhunter version
   },
   "needs": ["..."],
   "assumptions": ["..."],
+  "summary": "...",
   "usage": {"reported": true, "input_tokens": 0, "output_tokens": 0, "cached_input_tokens": 0, "turns": 0, "elapsed_ms": 0},
   "error": {"kind": "prepare_failed", "message": "...", "retryable": true}
 }

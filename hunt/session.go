@@ -2,6 +2,7 @@ package hunt
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -65,10 +66,16 @@ type Session struct {
 	files []string
 	patch string
 
+	// lastText 是模型最后一轮的**非空**正文：它就是"最终答复"（任务可能就是要产出一份小结，
+	// 那份答复本身即交付物）。每轮正文非空时覆盖，收尾随 Delivery 交给装配层写结果文件
+	// summary——放在这里，是因为它和 files / patch 同属"收尾定型的交付事实"。
+	lastText string
+
 	checkpointRequested bool
 	checkpointSummary   string
 
-	// charged 是已转交策略的累计用量水位：run 上的用量是累计值，策略要的是增量。
+	// charged 是已转交策略的累计用量水位：run 上的用量是累计值，策略与 usage 事件要的都是
+	// 增量。
 	charged llm.Usage
 
 	// declared 是模型在正文里自陈的两类清单（缺什么条件、采取了哪些默认）：轮边界登记、
@@ -77,17 +84,18 @@ type Session struct {
 }
 
 // Delivery 是收尾后可读的交付事实：主交付是分支 tip（Commit），附带交付是改动
-// 文件清单与补丁（FR-6.1）。仓库实现的四个动作只到 Clean 为止，交付物因此在
+// 文件清单、补丁与最终答复（FR-6.1）。仓库实现的四个动作只到 Clean 为止，交付物因此在
 // Finalize 里定型，并由装配层拿去写结果文件。
 type Delivery struct {
-	Commit *git.Commit
-	Files  []string
-	Patch  string
+	Commit  *git.Commit
+	Files   []string
+	Patch   string
+	Summary string
 }
 
 // Delivery 返回本次执行的交付事实（Finalize 之后调用才有内容）。
 func (s *Session) Delivery() Delivery {
-	return Delivery{Commit: s.commit, Files: s.files, Patch: s.patch}
+	return Delivery{Commit: s.commit, Files: s.files, Patch: s.patch, Summary: s.lastText}
 }
 
 // EffectiveConfig 返回本次 Hunt 的生效配置快照（收尾后由装配层读走写结果文件）。
@@ -186,16 +194,22 @@ func (s *Session) decls() []llm.ToolDecl {
 
 // ============================================================ 工具调用（OnTurn 里执行）
 
-// executeCall 执行一次工具调用：绑定参数 → 查表 → 裁决 → 原语执行 → 统一落盘 → 回灌结果。
+// executeCall 执行一次工具调用：发「提出调用」事件 → 绑定参数 → 查表 → 裁决 → 原语执行
+// → 统一落盘 → 回灌结果。
 //
 // **每一次调用都恰好留下一条 tool_result 事件**（AC-28）：绑定失败、名字不认识、
 // 策略拒绝、执行报错、落盘失败都算"模型提了一次调用、系统给了一个结果"，一律如实上报。
 // 事件里必须带 `call_id`——并行或多调用时它是外部消费者唯一的配对依据（IA-1.5）。
 // 用 defer 统一收口，是因为"每条 return 都记得发事件"这种纪律迟早会被漏掉一条。
+//
+// 执行前先发一条 `tool_call`（同一个 `call_id`），与随后的 `tool_result` 成对——平台据此
+// 看到"模型想调什么、参数是什么"，而不只是结果。只有真正进入执行的调用才发：被前面
+// handler 答复过的调用不经过这里（见 OnTurn），它没有"被系统执行"这件事。
 func (s *Session) executeCall(ctx context.Context, turn *harness.Turn, tc llm.ToolCall) llm.ToolResult {
 	started := time.Now()
 	ev := toolResultEvent{callID: tc.ID}
 	defer func() { s.emitToolResult(ev, time.Since(started)) }()
+	s.emitToolCall(tc)
 
 	call, fault := BindToolCall(tc)
 	ev.tool = string(call.Primitive)
@@ -318,6 +332,37 @@ type toolResultEvent struct {
 	tool    string
 	summary string
 	fault   *llm.Fault
+}
+
+// emitToolCall 上报一次「模型提出了调用」，在执行**之前**发。
+//
+// `tool` 是模型原始给出的名字（不是绑定后的原语名）——平台据此看到"模型想调什么"，
+// 即使这个名字后来解析失败也照报。它与随后的 `tool_result` 用同一个 `call_id` 配对。
+func (s *Session) emitToolCall(tc llm.ToolCall) {
+	if s.cfg.Sink == nil {
+		return
+	}
+	_ = s.cfg.Sink.Emit(ExternalEvent{Type: "tool_call", Payload: map[string]any{
+		"call_id": tc.ID,
+		"tool":    tc.Name,
+		"args":    serializableArgs(tc.Arguments),
+	}})
+}
+
+// serializableArgs 把模型给的原始参数转成可安全进事件的形状。
+//
+// 参数合法时原样作为 JSON 对象嵌入；非法时退化成字符串——参数不合法是 BindToolCall 要报的
+// **结构化错误**，不是"事件通道故障"，绝不能让 Emit 因它报错（否则会被通道健康检查误判成
+// 环境问题、把一次普通的参数错误升级成进程终止）。空参数按契约以空对象 `{}` 表达。
+func serializableArgs(raw json.RawMessage) any {
+	switch {
+	case len(raw) == 0:
+		return json.RawMessage("{}")
+	case json.Valid(raw):
+		return raw
+	default:
+		return string(raw)
+	}
 }
 
 // emitToolResult 上报一次工具调用结果。载荷字段与使用手册 §5 的事件契约一一对应：

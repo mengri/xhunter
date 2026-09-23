@@ -14,9 +14,9 @@ import (
 // 结果文件与补丁是"交付记录"这一侧的产物：主交付是远端那条任务分支（FR-6.1），
 // 这里是附带的机器可读结论，供平台记账与评审（FR-1.5、使用手册 §6）。
 //
-// 只写当前真能给出的事实：`assumptions` / `unverified` / `gates` / `session_delta`
-// 尚未落地，就不在这里摆空壳——空数组会被读成"没有门禁、没有假设"，那是另一句话。
-// 字段状态以使用手册 §6 的标注为准。
+// 只写当前真能给出的事实：`unverified` / `gates` / `session_delta` 尚未落地，就不在这里
+// 摆空壳——空数组会被读成"没有门禁、没有假设"，那是另一句话。字段状态以使用手册 §6 的
+// 标注为准。
 
 // resultFile 是结果文件的形状（使用手册 §6）。
 type resultFile struct {
@@ -30,6 +30,10 @@ type resultFile struct {
 	CommitSHA    string   `json:"commit_sha,omitempty"`
 	PatchPath    string   `json:"patch_path,omitempty"`
 	FilesChanged []string `json:"files_changed"`
+
+	// Summary 是模型最后一轮的答复正文——它也是交付物的一部分（任务可能就是要产出一份
+	// 小结）。没有答复就没有这个键（omitempty），不摆空壳。
+	Summary string `json:"summary,omitempty"`
 
 	// Needs / Assumptions 是模型在正文固定小节里的自陈（FR-6.3）。用指针不加 omitempty
 	// 是三态要求：「没提供」要写成 null，而不是缺字段、更不是 []——空数组会被读成
@@ -65,7 +69,7 @@ type errorFile struct {
 // 属环境问题（退出码 2），不得静默继续（对齐 FR-10.4 的"通道断裂即终止"精神）。
 //
 // effective 是本次 Hunt 的生效配置快照（由装配层从 Session 取）：Prepare 成功才有内容，
-// 否则是零值、字段省略。
+// 否则是零值、字段省略；summary 同理来自交付事实（`Delivery.Summary`）。
 func writeRunOutputs(resultPath, patchPath string, bounty hunt.Bounty, out harness.Outcome, d hunt.Delivery, declared hunt.Declared, effective hunt.EffectiveConfig) error {
 	if patchPath != "" {
 		if err := writeFile(patchPath, []byte(d.Patch)); err != nil {
@@ -85,6 +89,7 @@ func writeRunOutputs(resultPath, patchPath string, bounty hunt.Bounty, out harne
 		BaseCommit:   bounty.Repo.BaseCommit,
 		Branch:       bounty.Repo.Branch,
 		FilesChanged: d.Files,
+		Summary:      d.Summary,
 		Needs:        optionalList(declared.Needs),
 		Assumptions:  optionalList(declared.Assumptions),
 		Usage: usageFile{

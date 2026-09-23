@@ -160,6 +160,21 @@ func TestEndToEnd_LocalRunProducesDeliveryCommit(t *testing.T) {
 		t.Errorf("成功路径不该有 error：%+v", res.Error)
 	}
 
+	// 轮级事件补齐：assistant_text 必须在事件流里，且结果文件 summary 等于最后一轮答复
+	// （"任务就是要产出一份小结"时，那份答复就是交付物）。
+	if _, ok := types["assistant_text"]; !ok {
+		t.Errorf("事件流缺少 assistant_text：\n%s", stdoutText)
+	}
+	if got := types["assistant_text"]["text"]; got != "完成" {
+		t.Errorf("assistant_text.text = %v，期望最后一轮答复 完成", got)
+	}
+	if res.Summary != "完成" {
+		t.Errorf("summary = %q，期望最后一轮答复 完成", res.Summary)
+	}
+	if _, ok := types["tool_call"]; !ok {
+		t.Errorf("事件流缺少 tool_call：\n%s", stdoutText)
+	}
+
 	// 补丁必须能应用到干净基线上——"能应用"是 patch 交付的定义（FR-6.1、AC-1）。
 	patch, err := os.ReadFile(patchPath)
 	if err != nil {

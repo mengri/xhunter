@@ -204,6 +204,18 @@ func (s *Session) emitNotices(groups ...[]Notice) {
 	}
 }
 
+// emitAssistantText 上报本轮收流合并后的正文。
+//
+// 它**与进上下文历史的正文是同一份**（见 OnTurn 的调用点：排在过滤器之后、与自陈解析同一
+// 文本）：平台据此拿到模型的答复，而"任务就是要产出一份小结"时那份答复就是交付物。缺出口
+// 时是空操作。
+func (s *Session) emitAssistantText(text string) {
+	if s.cfg.Sink == nil {
+		return
+	}
+	_ = s.cfg.Sink.Emit(ExternalEvent{Type: "assistant_text", Payload: map[string]any{"text": text}})
+}
+
 // ResultFilter 在「工具已执行、还没落历史」之间加工本轮结果，是轮级的扩展点：
 // 拿得到整轮（可跨调用批量处理），改的是模型下一轮将要看到的那份文本。
 //
@@ -223,7 +235,8 @@ func (s *Session) OnTurn(ctx context.Context, run *harness.Run, turn *harness.Tu
 	// 工具调用由业务执行：harness 只从流里收齐「要调什么」，执行、落盘、结果回灌都在这里。
 	//
 	// 已经有结果的调用不再执行——排在前面 handler 可以直接答复某次调用（缓存命中、一眼
-	// 可见的非法规格），把它从执行里摘出去，而不是被再执行一遍。
+	// 可见的非法规格），把它从执行里摘出去，而不是被再执行一遍。这类调用**不发 tool_call**：
+	// 它没有被系统执行，发出去就成了"提了却没结果"的悬空事件。
 	answered := make(map[string]bool, len(turn.Results))
 	for _, r := range turn.Results {
 		answered[r.CallID] = true
@@ -245,6 +258,14 @@ func (s *Session) OnTurn(ctx context.Context, run *harness.Run, turn *harness.Tu
 		if err := f.Run(ctx, turn); err != nil {
 			return false, err
 		}
+	}
+
+	// 收流合并后的正文：上报 assistant_text、记入"最后一轮答复"，**与进历史、自陈解析的是
+	// 同一份**。排在过滤器之后，才保证三者同源（过滤器可以改 turn.Text）；正文为空则不占
+	// 位置——没有答复就没有可交付的答复，发一条空文本只会给平台添噪音。
+	if strings.TrimSpace(turn.Text) != "" {
+		s.emitAssistantText(turn.Text)
+		s.lastText = turn.Text
 	}
 
 	// 登记自陈清单：它记的是「模型说过什么」，不是历史的副本，所以排在记录之前。
@@ -348,22 +369,52 @@ func (s *Session) logf(level, msg string, kv ...any) {
 	s.cfg.Sink.Log(level, msg, kv...)
 }
 
-// charge 把本轮新增用量转交策略。run.Usage 是累计值，策略要的是增量，所以自己记水位：
-// 没有水位就会把累计值反复当增量上报，预算会被自己的重报耗尽。
+// charge 把本轮新增用量转交策略，并上报一次**增量** usage 事件。
+//
+// run.Usage 是累计值，而策略与事件要的都是增量，所以自己记水位：没有水位就会把累计值
+// 反复当增量上报，预算会被自己的重报耗尽、平台也会把同一笔代价重复记账。增量在水位这一处
+// 算出、**上报与计费同源**，不在别处再算一遍。
 func (s *Session) charge(total llm.Usage) {
 	in := total.InputTokens - s.charged.InputTokens
 	out := total.OutputTokens - s.charged.OutputTokens
+	cached := total.CachedInputTokens - s.charged.CachedInputTokens
 	s.charged = total
-	if s.cfg.Policy == nil || (in <= 0 && out <= 0) {
-		return
-	}
+
+	// 负增量（上游重报或乱序到达）按 0 处理，与策略侧口径一致。
 	if in < 0 {
 		in = 0
 	}
 	if out < 0 {
 		out = 0
 	}
+	if cached < 0 {
+		cached = 0
+	}
+
+	// 三个字段全零 = 本轮上游没有回报用量。**不发**：一条全零的 usage 会被读成"这轮不花钱"，
+	// 那是假数字——用量不可得时不得估算、更不得报 0 装作有数。（用量不可得的**如实标注**在
+	// 别处做：`degraded` ＋ 结果文件 `usage.reported`。）
+	if in != 0 || out != 0 || cached != 0 {
+		s.emitUsage(in, out, cached)
+	}
+
+	if s.cfg.Policy == nil || (in <= 0 && out <= 0) {
+		return
+	}
+	// 策略只吃输入／输出两项（它管的是预算，不关心缓存明细），且拿的是增量——语义不动。
 	s.cfg.Policy.Charge(llm.Usage{InputTokens: in, OutputTokens: out})
+}
+
+// emitUsage 上报本轮用量的**增量**（配对的是这一轮）。字段与使用手册 §5 一致，每轮末发。
+func (s *Session) emitUsage(in, out, cached int) {
+	if s.cfg.Sink == nil {
+		return
+	}
+	_ = s.cfg.Sink.Emit(ExternalEvent{Type: "usage", Payload: map[string]any{
+		"input_tokens":        in,
+		"output_tokens":       out,
+		"cached_input_tokens": cached,
+	}})
 }
 
 // Finalize 循环后一次（无论成败）：无产出判失败、交付提交、差异、材料落盘、清理、终态上报。
