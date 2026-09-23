@@ -504,6 +504,163 @@ func TestEndToEnd_HeartbeatEmittedAndHuntEndLast(t *testing.T) {
 	}
 }
 
+// successRun 是一次成功运行的整段输出与结果文件路径。
+type successRun struct {
+	stdout string
+	stderr string
+	code   int
+	result string
+}
+
+// runSuccessOnce 跑一次成功运行（真 git 夹具 + 本地假上游：第 1 轮写文件、第 2 轮收尾），
+// 返回整段 stdout/stderr、退出码与结果文件路径。
+func runSuccessOnce(t *testing.T) successRun {
+	t.Helper()
+	requireGitForE2E(t)
+	fx := newRepoFixture(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", filepath.Join(tmp, "work"))
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if atomic.AddInt32(&calls, 1) == 1 {
+			io.WriteString(w, sseWithToolCall("call_1", "write", `{"path":"hello.txt","content":"hi\n"}`))
+		} else {
+			io.WriteString(w, sseWithText("完成"))
+		}
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	taskPath := writeRunInputs(t, tmp, "给仓库加一个 hello.txt")
+	setRunEnv(t, fx, srv.URL+"/v1")
+
+	resultPath := filepath.Join(tmp, "out", "result.json")
+	stdout, stderr := swapStdStreams(t)
+	code := run([]string{"--bounty", taskPath, "--result", resultPath})
+	stdoutText, stderrText := drainStdStreams(t, stdout, stderr)
+	return successRun{stdout: stdoutText, stderr: stderrText, code: code, result: resultPath}
+}
+
+// IA-5.2 / AC-9：stdout 逐行都是合法事件行（含信封四字段、ts 为 RFC3339），无任何杂质；
+// 同时 stderr 有人类日志——证明两条通道都活着，不是"什么都没输出"通过的。
+func TestEventSink_StdoutIsPureNDJSON(t *testing.T) {
+	r := runSuccessOnce(t)
+	if r.code != exitOK {
+		t.Fatalf("成功运行应退出 0，实际 %d\nstdout:\n%s\nstderr:\n%s", r.code, r.stdout, r.stderr)
+	}
+
+	lines := nonEmptyLines(r.stdout)
+	if len(lines) == 0 {
+		t.Fatal("stdout 上没有任何事件行")
+	}
+	for i, line := range lines {
+		var ev map[string]any
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			t.Fatalf("第 %d 行不是合法 JSON（stdout 只允许事件行）：%q（%v）", i+1, line, err)
+		}
+		if typ, ok := ev["type"].(string); !ok || typ == "" {
+			t.Errorf("第 %d 行缺 type：%q", i+1, line)
+		}
+		for _, k := range []string{"bounty_id", "trace_id", "ts"} {
+			if v, ok := ev[k].(string); !ok || v == "" {
+				t.Errorf("第 %d 行缺信封字段 %s：%q", i+1, k, line)
+			}
+		}
+		ts, _ := ev["ts"].(string)
+		if _, err := time.Parse(time.RFC3339, ts); err != nil {
+			t.Errorf("第 %d 行 ts 不是 RFC3339：%q", i+1, ts)
+		}
+	}
+
+	if strings.TrimSpace(r.stderr) == "" {
+		t.Error("stderr 应有人类日志——否则无法证明两条通道都活着")
+	}
+}
+
+// IA-12.6（加强版）：成功运行的事件序列完整、首尾正确、配对正确。
+func TestEndToEnd_EventSequenceIsComplete(t *testing.T) {
+	r := runSuccessOnce(t)
+	if r.code != exitOK {
+		t.Fatalf("成功运行应退出 0，实际 %d\nstdout:\n%s\nstderr:\n%s", r.code, r.stdout, r.stderr)
+	}
+
+	type event struct {
+		typ     string
+		payload map[string]any
+		idx     int
+	}
+	var evs []event
+	for i, line := range nonEmptyLines(r.stdout) {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatalf("stdout 出现非事件行：%q", line)
+		}
+		typ, _ := m["type"].(string)
+		evs = append(evs, event{typ: typ, payload: m, idx: i})
+	}
+	if len(evs) == 0 {
+		t.Fatal("stdout 上没有事件")
+	}
+
+	present := map[string]bool{}
+	for _, e := range evs {
+		present[e.typ] = true
+	}
+	for _, want := range []string{"hunt_start", "tool_call", "tool_result", "usage", "assistant_text", "deliverable", "hunt_end"} {
+		if !present[want] {
+			t.Errorf("事件流缺少 %s：\n%s", want, r.stdout)
+		}
+	}
+	if evs[0].typ != "hunt_start" {
+		t.Errorf("hunt_start 必须是第一条，实得 %q", evs[0].typ)
+	}
+	if last := evs[len(evs)-1].typ; last != "hunt_end" {
+		t.Errorf("hunt_end 必须是最后一条，实得 %q", last)
+	}
+
+	callIdx, resultIdx := map[string]int{}, map[string]int{}
+	for _, e := range evs {
+		id, _ := e.payload["call_id"].(string)
+		switch e.typ {
+		case "tool_call":
+			if _, ok := callIdx[id]; !ok {
+				callIdx[id] = e.idx
+			}
+		case "tool_result":
+			resultIdx[id] = e.idx
+		}
+	}
+	for id, ci := range callIdx {
+		ri, ok := resultIdx[id]
+		if !ok {
+			t.Errorf("call_id %q 的 tool_call 没有对应 tool_result", id)
+			continue
+		}
+		if ci > ri {
+			t.Errorf("call_id %q 的 tool_call 必须排在 tool_result 之前（%d > %d）", id, ci, ri)
+		}
+	}
+
+	deliverableIdx, huntEndIdx := -1, -1
+	for _, e := range evs {
+		switch e.typ {
+		case "deliverable":
+			deliverableIdx = e.idx
+		case "hunt_end":
+			huntEndIdx = e.idx
+		}
+	}
+	if deliverableIdx < 0 || huntEndIdx < 0 || deliverableIdx > huntEndIdx {
+		t.Errorf("deliverable 必须在 hunt_end 之前：deliverable=%d hunt_end=%d", deliverableIdx, huntEndIdx)
+	}
+}
+
 // ============================================================ 夹具
 
 type repoFixture struct {

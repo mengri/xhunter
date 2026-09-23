@@ -114,7 +114,7 @@
 | <a id="ac-6"></a>AC-6（SIGTERM 取消） | 已落地 | — | 进程级断言 `TestEndToEnd_SigtermConvergesToCancelled`；其余信号形态待补（见 §5） |
 | <a id="ac-7"></a>AC-7（崩溃重派 resume） | 待接入 | MS-7 | 依赖会话材料与恢复 |
 | <a id="ac-8"></a>AC-8（凭据不落事件/日志/patch/材料） | 待补 | §5 | 需 CI 级静态扫描，非单测能覆盖 |
-| <a id="ac-9"></a>AC-9（stdout 全为合法事件行） | 待补 | MS-2 | 端到端断言待补（IA-5.2） |
+| <a id="ac-9"></a>AC-9（stdout 全为合法事件行） | 已落地 | MS-2 | 逐行合法 JSON ＋ 信封四字段（`ts` 为 RFC3339），无杂质。用例 `TestEventSink_StdoutIsPureNDJSON`、`TestHuntCmd_EventsGoToStdoutAndLogsGoToStderr` |
 | <a id="ac-17"></a>AC-17（压缩保真） | 待接入 | MS-11 | 压缩未接入 |
 | <a id="ac-18"></a>AC-18（压缩可观测可复现） | 待接入 | MS-11 | 同上 |
 | <a id="ac-20"></a>AC-20（交付形态 / fast-forward） | 已落地 | — | `TestEndToEnd_LocalRunProducesDeliveryCommit`；`find`/edit 相关注脚见 §2.3 |
@@ -154,7 +154,7 @@
 | <a id="ia-2-10"></a>IA-2.10 | 已落地 | `TestBuild_InjectsRootConventions`、`TestBuild_CaseVariantIsNotRecognized`、`TestBuild_BlankContentIsTreatedAsAbsent`、`TestBuild_OversizeTruncatesWithNotice`、`TestBuild_WithoutBaseCommitFallsBackToWorktree` | — | 嵌套约定附注待排期（见 §5） |
 | <a id="ia-2-11b"></a>IA-2.11(b) skill 发现清单 | 已落地 | `TestBuild_ListsNameDescriptionAndPath`、`TestBuild_InvalidEntryIsSkippedWithNotice`、`TestBuild_NameMustMatchDirectory`、`TestBuild_IgnoresSkillFilesOutsideDirectory`、`TestBuild_TruncatesBeyondLimit`、`TestBuild_NoSkillsYieldsEmptyPart`、`TestParseFrontmatter`、`TestParseFrontmatter_LengthLimitsComeFromSpec` | — | 编号重复，限定词 = skill 发现清单 |
 | <a id="ia-2-12"></a>IA-2.12 | 已落地（策略侧） | `TestDecide_WriteToControlDirDenied`、`TestDecide_WriteToSkillsDraftAllowed` | MS-6 | diff 排除规则待接入 |
-| <a id="ia-2-13"></a>IA-2.13 | 已落地 | `TestDefaultPromptPlugins_OrderIsThePromptOrder`、`TestDefaultPromptPlugins_NoDuplicate`、`TestFirstPrompt_KeepsOrderAndAppendsKernelBlocks` | MS-2 | 插件失败按环境错误收敛的用例待补 |
+| <a id="ia-2-13"></a>IA-2.13 | 已落地 | `TestDefaultPromptPlugins_OrderIsThePromptOrder`、`TestDefaultPromptPlugins_NoDuplicate`、`TestFirstPrompt_KeepsOrderAndAppendsKernelBlocks`、`TestPrepare_PluginFailureConvergesAsEnvError` | MS-2 | 插件失败按环境错误收敛（`prepare_failed` / 退出 1，循环不开始） |
 | <a id="ia-3-1"></a>IA-3.1 | 已落地 | `TestDefaultTools_FaceIsFixed` | — | — |
 | <a id="ia-3-2"></a>IA-3.2 | 已落地 | `TestDefaultTools_ShapeIsDeclared`、各原语 `*_DeclShape`、`TestObjectSchema_CompactsSyntaxButKeepsStringContent`、`TestObjectSchema_InvalidFragmentPanics` | — | — |
 | <a id="ia-3-3"></a>IA-3.3 | 已落地 | `TestCommitter_RejectsWriteWithoutPriorRead`、`TestCommitter_RejectsStaleRead` | — | — |
@@ -185,10 +185,10 @@
 | <a id="ia-4-7b"></a>IA-4.7b | 已落地 | `TestBountyFromEnv_DeliversBudget`、`TestEndToEnd_BudgetExhaustionStopsTheRun` | — | — |
 | <a id="ia-4-8"></a>IA-4.8 | 待接入 | — | MS-3 | `DeniedCount`（连续拒绝达阈值终止） |
 | <a id="ia-4-9"></a>IA-4.9 | 待接入 | — | MS-3 | 止损三态 continue/switch/terminate（FR-9.4） |
-| <a id="ia-4-10"></a>IA-4.10 | 待补 | — | MS-2 | `Session.charge` 的增量语义断言 |
+| <a id="ia-4-10"></a>IA-4.10 | 已落地 | `TestPolicy_ChargeReceivesIncrements` | MS-2 | `Session.charge` 把**增量**交策略：按用量水位算、非增长轮不上报 |
 | <a id="h4-裁决点"></a>H4-裁决点 | 见说明 | 见 IA-4.5~4.9 | MS-3 | 路径边界 / 破坏性 / 预算**已落地**；止损**待接入**（MS-3）；影响面**不做**（设计）；权限询问**不适用**（设计，路径不存在） |
 | <a id="ia-5-1"></a>IA-5.1 | 已落地 | `TestEventSink_EmitsFlatJSONLine` | — | — |
-| <a id="ia-5-2"></a>IA-5.2 | 待补 | — | MS-2 | stdout 纯 NDJSON 端到端断言（AC-9） |
+| <a id="ia-5-2"></a>IA-5.2 | 已落地 | `TestEventSink_StdoutIsPureNDJSON`、`TestHuntCmd_EventsGoToStdoutAndLogsGoToStderr` | MS-2 | stdout 逐行合法事件行（含信封四字段、`ts` RFC3339），无杂质 |
 | <a id="ia-5-3"></a>IA-5.3 | 已落地 | `TestEventSink_RemembersFirstWriteFailure`、`TestEventSink_FailedCoversHeartbeatWrites`、`TestEndToEnd_BrokenEventChannelIsEnvError` | — | — |
 | <a id="ia-5-4"></a>IA-5.4 | 已落地 | `TestHeartbeat_EmitsAtInterval`、`TestHeartbeat_StopsOnContextCancel`、`TestHeartbeat_StopIsIdempotent`、`TestSession_PhaseTracksStages` | MS-2 | 心跳按任务输出（非 runtime），带 `phase` 与 `elapsed_ms`；间隔缺省 30s、`XHUNTER_HEARTBEAT_INTERVAL` 可覆盖；随 ctx 取消即停（INV-8），停止点在 `Finalize` 的终态块之前 |
 | <a id="ia-5-5"></a>IA-5.5 | 已落地 | `TestExecuteCall_EveryOutcomeEmitsOneToolResult`、`TestExecuteCall_SuccessRecordsOpsAndSummary` | — | — |
@@ -263,7 +263,7 @@
 | <a id="ia-12-3"></a>IA-12.3 | 已落地 | `TestDefaultPromptPlugins_OrderIsThePromptOrder`、`TestDefaultPromptPlugins_NoDuplicate` | — | — |
 | <a id="ia-12-4"></a>IA-12.4 | 已落地 | `TestBackends_SatisfyContracts`、`TestBackends_RejectBadRoot` | — | — |
 | <a id="ia-12-5"></a>IA-12.5 | 已落地 | `TestBountyFromEnv_RequiresRepoFacts`、`TestFromEnv_ReportsAllIssuesAtOnce`、`TestProviderFor_UnknownProtocolTellsWhereToAddOne` | — | — |
-| <a id="ia-12-6"></a>IA-12.6 | 已落地 | `TestEndToEnd_LocalRunProducesDeliveryCommit` | MS-2 | 加强版事件序列断言待补 |
+| <a id="ia-12-6"></a>IA-12.6 | 已落地 | `TestEndToEnd_LocalRunProducesDeliveryCommit`、`TestEndToEnd_EventSequenceIsComplete` | MS-2 | 事件序列加强断言（`hunt_start` 首、`hunt_end` 尾、`tool_call`↔`tool_result` 配对、`deliverable` 在 `hunt_end` 前）见后者 |
 | <a id="ia-12-7"></a>IA-12.7 | 已落地 | 代码检查（`harness` 只有 `New(provider, ...)`） | — | — |
 | <a id="ia-12-8"></a>IA-12.8 | 部分待补 | `TestSignalContext_CancelsOnSignal`、`TestSignalContext_StopCancelsContext` | — | 进程级 AC-6 断言待补 |
 | <a id="ia-12-9"></a>IA-12.9 | 已落地 | `TestEndToEnd_LocalRunProducesDeliveryCommit`、`TestEndToEnd_ResultFileWrittenOnFailure`、`TestResultFile_DeclarationsAreThreeState`、`TestResultFile_EffectiveConfigIsWritten` | — | `needs` / `assumptions` 三态（未提供 → `null`）；`effective_config` 已落地；`gates` 仍待接入 |
@@ -302,7 +302,7 @@
 | 编号 | 状态 | 对应 MS-n | 缺口说明 |
 |---|---|---|---|
 | <a id="usage-1-2-bounty"></a>usage§1.2·Bounty生成器 | 待接入 | MS-12 | `xhunter run` 尚未接线；当前 CLI 只有 `models` / `version` 与 `--bounty`（后者为占位实现） |
-| <a id="usage-5-events"></a>usage§5·已发出事件 | 部分已发出 | MS-2 | 已发：`hunt_start`、`hunt_end`（带累计用量）、`tool_call`、`tool_result`、`assistant_text`、`usage`（每轮增量）、`heartbeat`（按间隔、带阶段）、`error`、`policy_denied`、`deliverable`、`degraded`（含 `scope: usage`）、`needs_input`、`assumption`；其余事件类型与字段为契约目标，待接线（`check_result`/`context_compacted`） |
+| <a id="usage-5-events"></a>usage§5·已发出事件 | 部分已发出 | MS-2 | 已发：`hunt_start`、`hunt_end`（带累计用量）、`tool_call`、`tool_result`、`assistant_text`、`usage`（每轮增量）、`heartbeat`（按间隔、带阶段）、`error`、`policy_denied`、`deliverable`、`degraded`（含 `scope: usage`）、`needs_input`、`assumption`；其余事件类型为契约目标，随各自里程碑接线：`check_result` / `gate_config_changed`（MS-5）、`context_compacted`（MS-11）、`config_snapshot`（随止损阈值与轮数硬顶，MS-3/MS-4） |
 | <a id="usage-6-fields"></a>usage§6·待接入字段 | 部分待接入 | MS-2 / MS-6 | 已接线：`needs` / `assumptions`（2026-09-23）、`effective_config`（2026-09-23）、`summary`（2026-09-23）、`unverified`（2026-09-23）。仍未接线：`gates`（MS-5）、`session_delta`（MS-6） |
 
 ### 2.3 已结清（本周期）
@@ -330,6 +330,7 @@
 | ~~心跳接入~~（MS-2） | **已落地**（2026-09-23）：任务级心跳由 `Session` 掌管——`Prepare` 末尾启动、`Finalize` 的终态事件块之前停止（`hunt/heartbeat.go` 的 `startHeartbeat`），`stop` 幂等且阻塞到心跳 goroutine 退出，因此 `hunt_end` 仍是最后一条事件（时钟不会滴答到收尾之后）。间隔缺省 30s、`XHUNTER_HEARTBEAT_INTERVAL` 可覆盖（非法即退出 1）、随 ctx 取消即停（INV-8）；阶段由并发安全的 `Session.Phase()` 提供（bootstrap/assemble/infer/tools/finalize）。用例 `TestHeartbeat_EmitsAtInterval`、`TestHeartbeat_StopsOnContextCancel`、`TestHeartbeat_StopIsIdempotent`、`TestSession_PhaseTracksStages`、`TestFinalize_StopsHeartbeatBeforeHuntEnd`（`hunt`）、`TestParseHeartbeatInterval_DefaultOverrideAndRejects`、`TestEndToEnd_HeartbeatEmittedAndHuntEndLast`（`cmd/xhunter`） |
 | ~~事件通道健康复查~~（MS-2） | **已落地**（2026-09-23）：`EventSink` 加自述健康状态 `Failed()`（覆盖事件与心跳两条写路径），`OnTurn` 轮前（L2）与轮末（L6）复查出口断线即收敛 `event_channel_failed`（退出 1）——早停，不跑完剩余轮次；取消优先；进程末尾 `sink.Failed()` 收口保留为兜底。用例 `TestOnTurn_StopsBeforeWorkWhenChannelAlreadyFailed`、`TestOnTurn_StopsAfterTurnWhenChannelFailsDuringTurn`、`TestOnTurn_ChannelFailureDoesNotOverrideCancellation`（`hunt`）、`TestEventSink_FailedCoversHeartbeatWrites`（`cmd/xhunter`），并扩 `TestEndToEnd_BrokenEventChannelIsEnvError` |
 | ~~`unverified` 采集（FR-6.4 第三类）~~（MS-2） | **已落地**（2026-09-23）：新增固定小节 `## 未验证`（小节名的唯一来源是常量，解析与内核条款同改）；`Declared` 加 `Unverified`、`sectionTarget` 加第三分支、`AppendDeclared` 一并登记；结果文件加 `unverified`（三态，未提供 → `null`）。**只陈述、不判定**——它不改变终态（只有 `needs` 非空才收敛 `blocked`）。用例 `TestParseDeclared_ThreeSectionsAreSeparated`、`TestParseDeclared_UnverifiedAloneIsNotNeeds`、`TestParseDeclared_UnverifiedThreeState`、`TestFinalize_UnverifiedDoesNotBlock`（`hunt`）、`TestResultFile_UnverifiedIsThreeState`（`cmd/xhunter`） |
+| ~~MS-2 收口验收（纯 NDJSON ＋ 事件序列 ＋ 增量语义 ＋ 插件失败）~~ | **已落地**（2026-09-23）：`TestEventSink_StdoutIsPureNDJSON`（stdout 逐行合法 JSON ＋ 信封四字段 ＋ `ts` RFC3339）、`TestEndToEnd_EventSequenceIsComplete`（首尾、`tool_call`↔`tool_result` 配对、`deliverable` 在 `hunt_end` 前）、`TestPolicy_ChargeReceivesIncrements`（`Policy.Charge` 收增量、非增长轮不上报）、`TestPrepare_PluginFailureConvergesAsEnvError`（插件失败 → `prepare_failed`/退出 1）。MS-2 由此收口 |
 
 ---
 
@@ -349,7 +350,7 @@
 | 流看门狗 | `L4-流看门狗`、`FR-1.11`（①） |
 | 结构检查 | `IA-11.11`、`L6-结构检查`、`FR-1.3d` |
 | 止损两段式 | `IA-4.8`、`IA-4.9`、`H4-裁决点`、`FR-9.4` |
-| 可观测补齐 | `IA-5.2`、`IA-12.6`（加强版）、`AC-9`、`usage§5·已发出事件`、`usage§6·待接入字段` |
+| 可观测补齐 | `usage§5·已发出事件`、`usage§6·待接入字段` |
 | 本地驱动 | `usage§1.2·Bounty生成器`、`FR-1.10` |
 
 ### 3.2 判定方式缺用例（对应原 §14.2）
@@ -361,13 +362,11 @@
 | 凭据静态扫描 | `IA-6.8`、`IA-8.4`、`AC-8` |
 | 恢复正确性 | `AC-7`、`IA-6.2`、`IA-6.3` |
 | 嵌套约定附注 | `IA-2.10` |
-| 增量用量语义 | `IA-4.10` |
 | 提交信息合成 / 一次兑现 / 空提交抑制 | `IA-11.13` |
 | 调用顺序与工具面不可见性 | `IA-11.8` |
 | 时间语义 | `IA-11.10` |
 | 「工具面恒定」对照 | `IA-7.1` |
 | Provider 方法集断言 | `IA-8.3` |
-| 插件失败按环境错误收敛 | `IA-2.13` |
 
 ---
 
@@ -391,7 +390,7 @@
 | # | 名称 | 对应分期 | 依赖 | 体量 | 主要 FR / IA | 状态 |
 |---|---|---|---|---|---|---|
 | **MS-1** | 验收入口与契约对齐 | 一期收口 | — | 小 | FR-2.2、IA-3.16 | **已完成**（2026-09-23；三项全部落地，见 §2.3） |
-| **MS-2** | 运行可观测补齐（事件流 ＋ 生效配置快照） | 一期收口 | MS-1 | 中 | FR-10、FR-11.1/11.6、FR-6.3/6.4、IA-5.2/5.4 | **部分完成**（澄清回路采集（含 `unverified`）、生效配置快照、`hunt_start`/`tool_call`/`assistant_text`/`usage`/`hunt_end` 累计用量/`usage.reported`/`error`/`heartbeat`/通道健康复查 已落地；余 `IA-5.2` 纯 NDJSON 端到端断言） |
+| **MS-2** | 运行可观测补齐（事件流 ＋ 生效配置快照） | 一期收口 | MS-1 | 中 | FR-10、FR-11.1/11.6、FR-6.3/6.4、IA-5.2/5.4 | **已完成**（2026-09-23；事件流、生效配置快照、澄清回路三类自陈与收口验收（纯 NDJSON／事件序列／增量语义／插件失败）全部落地，见 §2.3） |
 | **MS-3** | 止损完备（两段式止损） | 一期收口 | MS-2 | 中 | FR-9.1/9.4、IA-4.8/4.9 | 未开始 |
 | **MS-4** | 检查点分档与提交健壮性 | 一期收口 | MS-1 | 中 | FR-1.3b/1.3c/1.11②、IA-11.8/11.10/11.11/11.13 | 部分完成（判据不可判定 → 不提交已落地） |
 | **MS-5** | 门禁落地（`check` 实现 ＋ 全链护栏） | 一期收口 | MS-4 | 大 | FR-5.2b~5.2i、IA-11.12 | 未开始 |
@@ -454,14 +453,16 @@
 - `tool_call`：执行前发（`call_id` / `tool` / `args`）。
 - `error`：各阶段失败的结构化事件，带 `retryable`。
 - 结果文件补 `effective_config`。
-- 澄清回路的三件产物（FR-6.3）：终态新增 `StatusBlocked`；事件 `needs_input`；结果文件 `needs` 与 `assumptions` / `unverified`。解析对象是正文里的固定小节（`## 需要补全` / `## 假设` / `## 未验证`），只做切行去前缀；轮边界与收尾都解析；三态：未提供 → `null` ＋ 原因（不写 `[]`）。另加 `usage.reported` 与 `degraded`（`scope: usage`）。
+- 澄清回路的三件产物（FR-6.3）：终态新增 `StatusBlocked`；事件 `needs_input`；结果文件 `needs` 与 `assumptions` / `unverified`。解析对象是正文里的固定小节（`## 需要补全` / `## 假设` / `## 未验证`），只做切行去前缀；**在轮边界登记一次**（`AppendDeclared`，收尾只读累积结果——压缩接入后下压掉的轮次里就捞不回来，所以要在说出的当轮登记）；三态：未提供 → `null`（不写 `[]`）。另加 `usage.reported` 与 `degraded`（`scope: usage`）。
 
 **独立验收的证据**
-- `cmd/xhunter/e2e_test.go` 扩一条事件序列断言：成功运行含 `hunt_start` / `tool_call` / `tool_result` / `usage` / `deliverable` / `hunt_end`，且 `hunt_end` 是最后一条。
-- `TestEventSink_StdoutIsPureNDJSON`（IA-5.2 待补项）。
+- 事件序列：`TestEndToEnd_EventSequenceIsComplete`（`hunt_start` 首、`hunt_end` 尾、`tool_call`↔`tool_result` 配对、`deliverable` 在 `hunt_end` 前）。
+- stdout 纯 NDJSON：`TestEventSink_StdoutIsPureNDJSON`、`TestHuntCmd_EventsGoToStdoutAndLogsGoToStderr`。
 - 心跳：`TestHeartbeat_EmitsAtInterval`、`TestHeartbeat_StopsOnContextCancel`、`TestHeartbeat_StopIsIdempotent`、`TestSession_PhaseTracksStages`、`TestFinalize_StopsHeartbeatBeforeHuntEnd`、`TestEndToEnd_HeartbeatEmittedAndHuntEndLast`。
 - 结果文件断言：`TestResultFile_EffectiveConfigIsWritten`（`effective_config` 含原语清单顺序）、`TestResultFile_SummaryIsWritten`、`TestResultFile_UsageReportedFalseWhenUpstreamSilent`。
 - 澄清回路：`TestParseDeclared_SectionsAndEntries`、`TestParseDeclared_AbsentSectionIsNilNotEmpty`、`TestParseDeclared_ThreeSectionsAreSeparated`、`TestParseDeclared_UnverifiedAloneIsNotNeeds`、`TestParseDeclared_UnverifiedThreeState`、`TestFinalize_NeedsInputConvergesToBlocked`、`TestFinalize_UnverifiedDoesNotBlock`、`TestResultFile_DeclarationsAreThreeState`、`TestResultFile_UnverifiedIsThreeState`。
+- 增量语义：`TestPolicy_ChargeReceivesIncrements`（`Policy.Charge` 收增量、非增长轮不上报）。
+- 插件失败收敛：`TestPrepare_PluginFailureConvergesAsEnvError`（`prepare_failed` / 退出 1）。
 
 **依赖**：MS-1。**不做**：压缩事件（MS-11）、门禁事件（MS-5）。
 
