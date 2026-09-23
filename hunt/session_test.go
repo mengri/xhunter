@@ -71,6 +71,7 @@ func (c *captureSink) Log(_, msg string, kv ...any) {
 	c.logs = append(c.logs, msg+fmt.Sprint(kv...))
 }
 func (c *captureSink) Heartbeat(Phase) error { return nil }
+func (c *captureSink) Failed() error         { return nil }
 
 func (c *captureSink) ofType(kind string) []map[string]any {
 	var out []map[string]any

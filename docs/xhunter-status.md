@@ -102,6 +102,7 @@
 | <a id="fr-9-4"></a>FR-9.4（两段式止损） | 待接入 | MS-3 | 无 `ObserveFailure` / `DeniedCount` |
 | <a id="fr-9-7"></a>FR-9.7（用量不可得时不得估算） | 已落地 | MS-2 | 上游未回报用量时不报数字：`usage` 事件三字段全零则不发、结果文件 `usage.reported: false` ＋ 一条 `degraded`（`scope: usage`）；预算仍按上报值计（不拿 0 触发/不触发）。用例 `TestOnTurn_NoUsageEventWhenUpstreamSilent`、`TestFinalize_DegradedOnceWhenUsageUnavailable`、`TestResultFile_UsageReportedFalseWhenUpstreamSilent` |
 | <a id="fr-10-1"></a>FR-10.1~10.3（心跳 / 终态事件） | 已落地 | MS-2 | 任务级心跳（间隔可配、随取消即停、带 `phase`/ `elapsed_ms`）与全部轮级/终态事件已发，`hunt_end` 为最后一条。用例 `TestHeartbeat_*`、`TestSession_PhaseTracksStages`、`TestFinalize_StopsHeartbeatBeforeHuntEnd`、`TestParseHeartbeatInterval_DefaultOverrideAndRejects`、`TestEndToEnd_HeartbeatEmittedAndHuntEndLast` |
+| <a id="fr-10-4"></a>FR-10.4（事件/心跳写失败即终止） | 已落地 | MS-2 | 出口自述健康状态（`EventSink.Failed()`，覆盖事件与心跳两条写路径）；`OnTurn` 轮前/轮末复查 → `event_channel_failed`（退出 1），取消优先（不被通道问题改写）；进程末尾 `sink.Failed()` 收口保留为兜底。用例 `TestOnTurn_StopsBeforeWorkWhenChannelAlreadyFailed`、`TestOnTurn_StopsAfterTurnWhenChannelFailsDuringTurn`、`TestOnTurn_ChannelFailureDoesNotOverrideCancellation`、`TestEventSink_FailedCoversHeartbeatWrites`、`TestEndToEnd_BrokenEventChannelIsEnvError` |
 | <a id="fr-11-1"></a>FR-11.1（每次模型/工具调用产出结构化事件，含耗时与用量） | 部分已落地 | MS-2 | 模型侧已有 `assistant_text` / `usage`（每轮增量）；工具侧 `tool_call`（`args`）/ `tool_result`（含 `duration_ms`）；终态 `hunt_end` 带累计用量。**余**：`check_result`（MS-5）、`context_compacted`（MS-11）等随各自里程碑接入 |
 | <a id="fr-11-2"></a>FR-11.2（错误结构化） | 已落地 | MS-2 | 终态 `failed` 发一条 `error`（`kind`＝原因首段 / `retryable`＝与退出码同源 / `context`＝阶段与轮次）；取消与 `blocked` 不发。`kind` / `retryable` 的口径上收为 `hunt.ErrorKind` / `hunt.RetryableForExitCode`，事件与结果文件同源。用例 `TestFinalize_EmitsErrorOnFailureMatchingExitCode`、`TestFinalize_NoErrorEventOnBlockedOrCancelled` |
 | <a id="fr-11-6"></a>FR-11.6（生效配置快照） | 已落地 | MS-2 | 装配完成后冻结一次，进 `hunt_start` 与结果文件 `effective_config`；门禁清单随 MS-5 接入。用例 `TestEffectiveConfig_ListsPrimitivesInToolFaceOrder`、`TestEffectiveConfig_CarriesPluginAndFilterNames`、`TestEffectiveConfig_CarriesAssemblyFacts`、`TestPrepare_EmitsHuntStart`、`TestResultFile_EffectiveConfigIsWritten` |
@@ -188,7 +189,7 @@
 | <a id="h4-裁决点"></a>H4-裁决点 | 见说明 | 见 IA-4.5~4.9 | MS-3 | 路径边界 / 破坏性 / 预算**已落地**；止损**待接入**（MS-3）；影响面**不做**（设计）；权限询问**不适用**（设计，路径不存在） |
 | <a id="ia-5-1"></a>IA-5.1 | 已落地 | `TestEventSink_EmitsFlatJSONLine` | — | — |
 | <a id="ia-5-2"></a>IA-5.2 | 待补 | — | MS-2 | stdout 纯 NDJSON 端到端断言（AC-9） |
-| <a id="ia-5-3"></a>IA-5.3 | 已落地 | `TestEventSink_RemembersFirstWriteFailure`、`TestEndToEnd_BrokenEventChannelIsEnvError` | — | — |
+| <a id="ia-5-3"></a>IA-5.3 | 已落地 | `TestEventSink_RemembersFirstWriteFailure`、`TestEventSink_FailedCoversHeartbeatWrites`、`TestEndToEnd_BrokenEventChannelIsEnvError` | — | — |
 | <a id="ia-5-4"></a>IA-5.4 | 已落地 | `TestHeartbeat_EmitsAtInterval`、`TestHeartbeat_StopsOnContextCancel`、`TestHeartbeat_StopIsIdempotent`、`TestSession_PhaseTracksStages` | MS-2 | 心跳按任务输出（非 runtime），带 `phase` 与 `elapsed_ms`；间隔缺省 30s、`XHUNTER_HEARTBEAT_INTERVAL` 可覆盖；随 ctx 取消即停（INV-8），停止点在 `Finalize` 的终态块之前 |
 | <a id="ia-5-5"></a>IA-5.5 | 已落地 | `TestExecuteCall_EveryOutcomeEmitsOneToolResult`、`TestExecuteCall_SuccessRecordsOpsAndSummary` | — | — |
 | <a id="ia-5-6"></a>IA-5.6 | 已落地 | 代码检查（FR-11.5） | — | — |
@@ -275,12 +276,12 @@
 | <a id="l1-5"></a>L1-5 扩展能力描述符 | 待接入 | MS-8 | 组装层注入 `ext.ExtHost` 未接入 |
 | <a id="l1-8"></a>L1-8 会话恢复（条件） | 待接入 | MS-7 | `XHUNTER_SESSION_ID` 非空时的 checkout tip ＋ 读回材料未接入 |
 | <a id="l1-9"></a>L1-9 生效配置快照 | 已落地 | MS-2 | 装配完成后冻结一次，进 `hunt_start` 与结果文件 `effective_config`（含原语顺序与殿后 `checkpoint`）；门禁清单随 MS-5。证据 `TestEffectiveConfig_ListsPrimitivesInToolFaceOrder`、`TestPrepare_EmitsHuntStart` |
-| <a id="l2-事件通道"></a>L2-事件通道健康 | 待接入 | MS-2 | sink 写失败目前直接上抛，轮前健康检查未接入 |
+| <a id="l2-事件通道"></a>L2-事件通道健康 | 已落地 | MS-2 | `OnTurn` 入口复查 `Sink.Failed()`：通道已断则本轮零工具执行，收敛 `event_channel_failed`（退出 1）。用例 `TestOnTurn_StopsBeforeWorkWhenChannelAlreadyFailed` |
 | <a id="l2-压缩"></a>L2-压缩 | 待接入 | MS-11 | `ContextBuilder` 内无压缩 |
 | <a id="l4-流看门狗"></a>L4-流看门狗 | 待接入 | MS-12 | 不活动超时 → `Cancel()` → 环境错误 未接入 |
 | <a id="l6-检查点"></a>L6-检查点决策 | 部分待接入 | MS-4 / MS-5 / MS-9 | 模型显式请求 ＋ 收尾已落地；门禁驱动（MS-5）、结构判据（MS-9）待接入 |
 | <a id="l6-结构检查"></a>L6-结构检查 | 待接入 | MS-9 | 判据未接入；「不可判定 → 不提交」已落地 |
-| <a id="l6-事件通道复查"></a>L6-事件通道复查 | 待接入 | MS-2 | → 环境错误（退出 1）未接入 |
+| <a id="l6-事件通道复查"></a>L6-事件通道复查 | 已落地 | MS-2 | 轮末守卫复查（取消之后、预算之前）：本轮发出时断则不再进入下一轮，收敛 `event_channel_failed`（退出 1）。用例 `TestOnTurn_StopsAfterTurnWhenChannelFailsDuringTurn`、`TestOnTurn_ChannelFailureDoesNotOverrideCancellation` |
 | <a id="l6-提交连败"></a>L6-提交连败复查 | 待接入 | MS-4 | 连续 3 次提交失败 → 本轮结束即收敛 未接入 |
 | <a id="l7-gates"></a>L7-gates 补跑 | 待接入 | MS-5 | 门禁清单暂空，收尾补跑未接入 |
 
@@ -327,6 +328,7 @@
 | ~~轮级事件补齐（`tool_call` / `usage` 增量 / `assistant_text` / 结果文件 `summary`）~~（MS-2） | **已落地**（2026-09-23）：`tool_call` 在**执行前**发（`call_id` / `tool`（模型原始名）/ `args`；参数非法时退化成字符串，绝不因它让通道报错）；`usage` 每轮末发**增量**（增量在用量水位那一处算出、**上报与计费同源**；三字段全零不发——上游沉默不得报 0 装作有数）；`assistant_text` 在收流合并后发，与进历史、自陈解析**同一份**正文；结果文件加 `summary`（模型最后一轮答复，无答复则省略该键）。用例：`TestOnTurn_EmitsToolCallBeforeResult`、`TestOnTurn_ToolCallArgsSurviveMalformedJSON`、`TestOnTurn_EmitsUsageDeltaPerTurn`、`TestOnTurn_NoUsageEventWhenUpstreamSilent`、`TestOnTurn_EmitsAssistantTextMatchingHistory`（`hunt`）、`TestResultFile_SummaryIsWritten`（`cmd/xhunter`），并扩 `TestEndToEnd_LocalRunProducesDeliveryCommit` |
 | ~~终态可观测（`hunt_end` 累计用量 ＋ `usage.reported` ＋ `error` 事件）~~（MS-2） | **已落地**（2026-09-23）：用量对外口径上收为 `hunt.UsageReport`（含 `reported`），`hunt_end` 带累计用量、与结果文件 `usage` **同一份**；`Reported` 的判据只在 `Session.charge`（本轮增量有任一非零）；不可得时发一条 `degraded`（`scope: usage`）且结果文件 `usage.reported: false`；终态 `failed` 发结构化 `error`（`kind` / `retryable` / `context`），`kind` 与 `retryable` 口径上收为 `hunt.ErrorKind` / `hunt.RetryableForExitCode`（事件与结果文件同源），取消与 `blocked` 不发。用例：`TestHuntEnd_CarriesCumulativeUsage`、`TestHuntEnd_IsTheLastEvent`、`TestFinalize_EmitsErrorOnFailureMatchingExitCode`、`TestFinalize_NoErrorEventOnBlockedOrCancelled`、`TestFinalize_DegradedOnceWhenUsageUnavailable`（`hunt`）、`TestResultFile_UsageReportedFalseWhenUpstreamSilent`（`cmd/xhunter`），并扩 `TestEndToEnd_ResultFileWrittenOnFailure` / `TestEndToEnd_BudgetExhaustionStopsTheRun` |
 | ~~心跳接入~~（MS-2） | **已落地**（2026-09-23）：任务级心跳由 `Session` 掌管——`Prepare` 末尾启动、`Finalize` 的终态事件块之前停止（`hunt/heartbeat.go` 的 `startHeartbeat`），`stop` 幂等且阻塞到心跳 goroutine 退出，因此 `hunt_end` 仍是最后一条事件（时钟不会滴答到收尾之后）。间隔缺省 30s、`XHUNTER_HEARTBEAT_INTERVAL` 可覆盖（非法即退出 1）、随 ctx 取消即停（INV-8）；阶段由并发安全的 `Session.Phase()` 提供（bootstrap/assemble/infer/tools/finalize）。用例 `TestHeartbeat_EmitsAtInterval`、`TestHeartbeat_StopsOnContextCancel`、`TestHeartbeat_StopIsIdempotent`、`TestSession_PhaseTracksStages`、`TestFinalize_StopsHeartbeatBeforeHuntEnd`（`hunt`）、`TestParseHeartbeatInterval_DefaultOverrideAndRejects`、`TestEndToEnd_HeartbeatEmittedAndHuntEndLast`（`cmd/xhunter`） |
+| ~~事件通道健康复查~~（MS-2） | **已落地**（2026-09-23）：`EventSink` 加自述健康状态 `Failed()`（覆盖事件与心跳两条写路径），`OnTurn` 轮前（L2）与轮末（L6）复查出口断线即收敛 `event_channel_failed`（退出 1）——早停，不跑完剩余轮次；取消优先；进程末尾 `sink.Failed()` 收口保留为兜底。用例 `TestOnTurn_StopsBeforeWorkWhenChannelAlreadyFailed`、`TestOnTurn_StopsAfterTurnWhenChannelFailsDuringTurn`、`TestOnTurn_ChannelFailureDoesNotOverrideCancellation`（`hunt`）、`TestEventSink_FailedCoversHeartbeatWrites`（`cmd/xhunter`），并扩 `TestEndToEnd_BrokenEventChannelIsEnvError` |
 
 ---
 
@@ -346,7 +348,7 @@
 | 流看门狗 | `L4-流看门狗`、`FR-1.11`（①） |
 | 结构检查 | `IA-11.11`、`L6-结构检查`、`FR-1.3d` |
 | 止损两段式 | `IA-4.8`、`IA-4.9`、`H4-裁决点`、`FR-9.4` |
-| 可观测补齐 | `IA-5.2`、`IA-12.6`（加强版）、`L2-事件通道`、`L6-事件通道复查`、`AC-9`、`usage§5·已发出事件`、`usage§6·待接入字段` |
+| 可观测补齐 | `IA-5.2`、`IA-12.6`（加强版）、`AC-9`、`usage§5·已发出事件`、`usage§6·待接入字段` |
 | 本地驱动 | `usage§1.2·Bounty生成器`、`FR-1.10` |
 
 ### 3.2 判定方式缺用例（对应原 §14.2）
@@ -388,7 +390,7 @@
 | # | 名称 | 对应分期 | 依赖 | 体量 | 主要 FR / IA | 状态 |
 |---|---|---|---|---|---|---|
 | **MS-1** | 验收入口与契约对齐 | 一期收口 | — | 小 | FR-2.2、IA-3.16 | **已完成**（2026-09-23；三项全部落地，见 §2.3） |
-| **MS-2** | 运行可观测补齐（事件流 ＋ 生效配置快照） | 一期收口 | MS-1 | 中 | FR-10、FR-11.1/11.6、FR-6.3/6.4、IA-5.2/5.4 | **部分完成**（澄清回路采集、生效配置快照、`hunt_start`/`tool_call`/`assistant_text`/`usage`/`hunt_end` 累计用量/`usage.reported`/`error`/`heartbeat` 已落地；余 `IA-5.2` 纯 NDJSON 端到端断言与通道收口 T5） |
+| **MS-2** | 运行可观测补齐（事件流 ＋ 生效配置快照） | 一期收口 | MS-1 | 中 | FR-10、FR-11.1/11.6、FR-6.3/6.4、IA-5.2/5.4 | **部分完成**（澄清回路采集、生效配置快照、`hunt_start`/`tool_call`/`assistant_text`/`usage`/`hunt_end` 累计用量/`usage.reported`/`error`/`heartbeat`/通道健康复查 已落地；余 `IA-5.2` 纯 NDJSON 端到端断言） |
 | **MS-3** | 止损完备（两段式止损） | 一期收口 | MS-2 | 中 | FR-9.1/9.4、IA-4.8/4.9 | 未开始 |
 | **MS-4** | 检查点分档与提交健壮性 | 一期收口 | MS-1 | 中 | FR-1.3b/1.3c/1.11②、IA-11.8/11.10/11.11/11.13 | 部分完成（判据不可判定 → 不提交已落地） |
 | **MS-5** | 门禁落地（`check` 实现 ＋ 全链护栏） | 一期收口 | MS-4 | 大 | FR-5.2b~5.2i、IA-11.12 | 未开始 |

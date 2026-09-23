@@ -420,7 +420,8 @@ func TestEndToEnd_BrokenEventChannelIsEnvError(t *testing.T) {
 	os.Stdout = writer
 	t.Cleanup(func() { os.Stdout = oldOut; writer.Close() })
 
-	code := run([]string{"--bounty", taskPath})
+	resultPath := filepath.Join(tmp, "result.json")
+	code := run([]string{"--bounty", taskPath, "--result", resultPath})
 
 	os.Stderr = oldErr
 	if err := stderrFile.Sync(); err != nil {
@@ -437,6 +438,22 @@ func TestEndToEnd_BrokenEventChannelIsEnvError(t *testing.T) {
 	}
 	if !strings.Contains(string(errText), "事件通道写入失败") {
 		t.Errorf("必须记下通道断裂的原因：\n%s", errText)
+	}
+
+	// 通道断裂由轮边界复查收敛（不止进程末尾收口）：终态应为 event_channel_failed / 环境错误。
+	raw, err := os.ReadFile(resultPath)
+	if err != nil {
+		t.Fatalf("结果文件未写出：%v", err)
+	}
+	var res resultFile
+	if err := json.Unmarshal(raw, &res); err != nil {
+		t.Fatalf("结果文件不是合法 JSON：%v", err)
+	}
+	if res.Status != "failed" || res.ExitCode != exitEnv {
+		t.Errorf("通道断裂终态不对：%+v", res)
+	}
+	if !strings.HasPrefix(res.Reason, "event_channel_failed") {
+		t.Errorf("reason = %q，期望以 event_channel_failed 开头", res.Reason)
 	}
 }
 

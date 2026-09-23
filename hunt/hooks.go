@@ -244,6 +244,18 @@ func (s *Session) OnTurn(ctx context.Context, run *harness.Run, turn *harness.Tu
 	s.setPhase(PhaseTools)
 	defer s.setPhase(PhaseInfer)
 
+	// 入口守卫：取消优先——已取消就不再开工，也不让通道问题改写取消。
+	if ctx.Err() != nil {
+		run.SetTerminal(harness.Terminal{Status: harness.StatusCancelled, Reason: "cancelled", Code: harness.ExitCancelled})
+		return false, nil
+	}
+	// 轮前复查（L2）：上一轮之后通道若断了（含 hunt_start 就写失败），本轮一个工具都不该执行——
+	// 消费者已不在通道上，继续跑只是在烧预算地自说自话。
+	if err := s.channelFailure(); err != nil {
+		run.SetTerminal(harness.Terminal{Status: harness.StatusFailed, Reason: eventChannelFailed + ": " + err.Error(), Code: harness.ExitEnv})
+		return false, nil
+	}
+
 	// 工具调用由业务执行：harness 只从流里收齐「要调什么」，执行、落盘、结果回灌都在这里。
 	//
 	// 已经有结果的调用不再执行——排在前面 handler 可以直接答复某次调用（缓存命中、一眼
@@ -300,9 +312,15 @@ func (s *Session) OnTurn(ctx context.Context, run *harness.Run, turn *harness.Tu
 		run.Messages = s.cfg.Context.Assemble()
 	}
 
-	// 守卫：取消优先于预算。
+	// 守卫：取消优先于通道、通道优先于预算。
 	if ctx.Err() != nil {
 		run.SetTerminal(harness.Terminal{Status: harness.StatusCancelled, Reason: "cancelled", Code: harness.ExitCancelled})
+		return false, nil
+	}
+	// 轮末复查（L6）：本轮发出时若把通道写断了，本轮工具已执行完（那是已发生的事实），
+	// 但不再进入下一轮。
+	if err := s.channelFailure(); err != nil {
+		run.SetTerminal(harness.Terminal{Status: harness.StatusFailed, Reason: eventChannelFailed + ": " + err.Error(), Code: harness.ExitEnv})
 		return false, nil
 	}
 	if s.cfg.Policy != nil {
@@ -380,6 +398,19 @@ func (s *Session) logf(level, msg string, kv ...any) {
 	}
 	s.cfg.Sink.Log(level, msg, kv...)
 }
+
+// channelFailure 返回事件出口的断线原因（无出口时 nil）。健康状态的唯一判据是出口自己记着的
+// 第一次写失败——Session 不另记一份（两份必然漂）。它同时覆盖事件与心跳两条写路径。
+func (s *Session) channelFailure() error {
+	if s.cfg.Sink == nil {
+		return nil
+	}
+	return s.cfg.Sink.Failed()
+}
+
+// eventChannelFailed 是「事件通道断裂」的固定原因前缀（使用手册 §7 的 stdout 写失败一档）；
+// 后接出口给出的原因，便于远程定位。
+const eventChannelFailed = "event_channel_failed"
 
 // charge 把本轮新增用量转交策略，并上报一次**增量** usage 事件。
 //

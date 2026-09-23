@@ -28,6 +28,7 @@ func (m *marshallingSink) Emit(ev ExternalEvent) error {
 	m.events = append(m.events, ev)
 	return nil
 }
+func (m *marshallingSink) Failed() error              { return nil }
 func (m *marshallingSink) Log(string, string, ...any) {}
 func (m *marshallingSink) Heartbeat(Phase) error      { return nil }
 

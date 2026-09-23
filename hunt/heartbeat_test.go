@@ -28,6 +28,8 @@ func (s *heartbeatSink) Heartbeat(p Phase) error {
 	return nil
 }
 
+func (s *heartbeatSink) Failed() error { return nil }
+
 func (s *heartbeatSink) count() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -61,6 +63,8 @@ func (s *orderedSink) Heartbeat(Phase) error {
 	s.events = append(s.events, "heartbeat")
 	return nil
 }
+
+func (s *orderedSink) Failed() error { return nil }
 
 func (s *orderedSink) snapshot() []string {
 	s.mu.Lock()
