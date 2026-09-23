@@ -169,6 +169,10 @@ func (s *Session) freezeEffectiveConfig(systemPlugins, userPlugins []PromptPlugi
 
 // emitHuntStart 上报一次起飞事件：任务与仓库事实 ＋ 生效配置快照。
 //
+// **`config_snapshot` 的发出点也在这里**（与起飞同时点：报出这次运行实际生效的三个阈值）——
+// **本次不接**：`max_denied_streak` 的来源（MS-3 的止损阈值）还不存在，发出去就是假数字。
+// 形状见 `configSnapshotPayload`；等 MS-3 把阈值定死后，在下面与 `hunt_start` 一起发。
+//
 // 信封四字段（type / bounty_id / trace_id / ts）由出口统一盖章，这里只交业务载荷。
 // 快照取的是冻结的那一份（s.effective），与结果文件同源。缺出口时是空操作——事件是
 // 诊断通道，不是装配的必需件。

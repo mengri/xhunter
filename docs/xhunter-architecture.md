@@ -172,7 +172,7 @@
 | `hunt.Config.UserPlugins` | `prompt/task`（任务陈述）→ user 段 |
 | `hunt.Config.Filters` | 为空：结果加工链留空即原样透传 |
 | `hunt.Config.Policy` | `internal/policy`：路径边界 ＋ 三重预算（token / 轮数 / 墙钟）。**三项可选，不配即不限**；这里的 `0 = 不限` 是**字段零值**语义——投递层不配就是不限，显式写 `0` 会被拒（见使用手册 §3） |
-| `harness.Config` | 轮数硬上限、连续失败止损（缺省即可用）；与 `Policy` 的分工见 §7.4 |
+| `harness.Config` | 轮数硬上限、连续失败止损、接收段不活动超时 `StreamIdleTimeout`（0=不限、缺省 120s）；与 `Policy` 的分工见 §7.4 |
 
 各阶段的职责与落点见 §6.3（运行段 L1~L7）。
 
@@ -300,7 +300,7 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 | usage | 累加到 `run.Usage`（harness）；业务在 `OnTurn` 里把**增量**交给 `Policy.Charge` | FR-9、FR-11 |
 | error | 不可重试 → 终态（环境错误）；可重试记日志后继续 | FR-11.2 |
 | end | 进入轮边界（`OnTurn`） | — |
-| **流看门狗** | harness 接收段（不活动超时 → `Cancel()` → 环境错误） | FR-1.11①、INV-3 |
+| **流看门狗** | harness 接收段（不活动超时 → `Cancel()` → 环境错误） | FR-1.11①、INV-3。（**契约已定义**（D4）：`harness.Config.StreamIdleTimeout`——0=不限、装配层不设时默认 120s，接收段接入点已留；计时器待 MS-12） |
 
 约束：收流循环可被 ctx 打断（INV-8），打断时**必须调用 `sess.Cancel()` 并收敛为 cancelled**（退出 3）；取消时已收未执行的调用**不执行**；stdout 写失败记 writeErr，轮末收敛（FR-10.4）。
 
@@ -428,6 +428,8 @@ Prepare ──► ┌──  infer ──► receive ──► OnTurn  ──┐
 **两段正文都由插件贡献**（FR-7.8）：多个插件按装配顺序拼接，**执行体只负责把结果放到固定位置上**（`Session.Prepare` 里的 `firstPrompt(system, user)`）。于是"约定文件在哪、skill 清单从哪来、正文写什么"属于插件；执行体保留的是两段的位置与顺序、取一次冻结，以及"正文改不了工具面与权限边界"。
 
 **契约（`hunt/runtime.go`）**：`SetPrompt(msgs)`（`Prepare` 调一次，此后不变）／`Assemble()`（给出「提示词 ＋ 历史」）／`Append(rec harness.Turn)`（累积本轮产生的消息）。**历史只住在这里**——轮级状态只装「本轮那段」，handler 物理上碰不到历史。
+
+**压缩位**（FR-14、MS-11）：压缩落在 `ContextBuilder` **内部**（触发点在 `Assemble`）；`CompactionConfig`（三档水位 ＋ 冷却）是它的**装配参数**——水位由 `providerconfig.Resolved.Watermarks` 从**可用输入预算**算出（FR-14.1），冷却默认 3 轮；命中即下压一级并产出 `context_compacted`。**分层下压的实现待 MS-11**，本次只定义入口与形状。
 
 ```
 system ─┬─ 插件正文       约定与 skill 清单 · 角色与风格        ← 稳定，可长期复用

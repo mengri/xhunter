@@ -9,6 +9,11 @@ import (
 // 会话怎么记、事件怎么发都由业务自己定义并由装配层注入。
 
 // ContextBuilder 组装发给模型的完整消息，并累积历史。
+//
+// **压缩落在它内部**（§7.2）：命中水位（`CompactionConfig` 的三档，由可用输入预算算出）时在
+// `Assemble` 里下压一级并产出 `context_compacted`（形状见 `contextCompactedPayload`）。水位从
+// 哪来、冷却怎么进，见 `CompactionConfig` 的注释。**分层下压的实现属 MS-11**——本次只定义入口
+// 与形状，`Assemble` 的行为不变。
 type ContextBuilder interface {
 	// SetPrompt 设定首轮提示词（Prepare 调一次，此后不变）。
 	SetPrompt(msgs []llm.Message)

@@ -92,7 +92,7 @@
 | <a id="fr-1-3b"></a>FR-1.3b（提交连败上限） | 已落地 | MS-4 | 检查点**连续**提交失败达 3 次（包内常量，不留可配字段）→ 本轮结束即收敛 `checkpoint_failed_streak`（退出 1）；成功即归零。用例 `TestCheckpoint_StreakLimitConvergesAsEnvError`、`TestCheckpoint_SuccessResetsStreak` |
 | <a id="fr-1-3d"></a>FR-1.3d（结构检查） | 部分已落地 | MS-4 / MS-9 | 判据三态（`structuralVerdict`）与「不可判定 → 不提交并如实上报」**已落地**（默认 undecidable，发 `degraded` `scope: checkpoint`）；真实判据随符号扩展接入（MS-9）。用例 `TestCheckpoint_NoAutoCheckpointOffStructuralPoint`、`TestCheckpoint_StructuralFailDoesNotCommit`、`TestCheckpoint_StructuralPassCommits` |
 | <a id="fr-1-10"></a>FR-1.10（Bounty 生成器 / 本地驱动） | 待接入 | MS-12 | `xhunter run` 尚未接线 |
-| <a id="fr-1-11"></a>FR-1.11①/②（流看门狗 / 提交连败提前收敛） | 待接入 | MS-12（①）/ MS-4（②） | ①`StreamIdleTimeout` 未接入；②见 FR-1.3b |
+| <a id="fr-1-11"></a>FR-1.11①/②（流看门狗 / 提交连败提前收敛） | 待接入 | MS-12（①）/ MS-4（②） | ①`StreamIdleTimeout` 未接入（**契约已定义**（D4）：`harness.Config.StreamIdleTimeout`，0=不限、缺省 120s，接收段接入点已留；计时器待 MS-12）；②见 FR-1.3b（已落地） |
 | <a id="fr-2-2"></a>FR-2.2（内容检索 `find`） | 已落地 | MS-1 | 2026-09-23 落地（见 §2.3） |
 | <a id="fr-4-1"></a>FR-4.1/4.2（符号枚举读取 / 整体替换） | 待接入 | MS-8 | `hunt/symbolic` 声明不实现 |
 | <a id="fr-4-3"></a>FR-4.3（符号内插入 / 跨文件重命名） | 待接入 | MS-10 | `symbol_rename` 未实现 |
@@ -114,8 +114,8 @@
 | <a id="ac-7"></a>AC-7（崩溃重派 resume） | 待接入 | MS-7 | 依赖会话材料与恢复 |
 | <a id="ac-8"></a>AC-8（凭据不落事件/日志/patch/材料） | 待补 | §5 | 需 CI 级静态扫描，非单测能覆盖 |
 | <a id="ac-9"></a>AC-9（stdout 全为合法事件行） | 已落地 | MS-2 | 逐行合法 JSON ＋ 信封四字段（`ts` 为 RFC3339），无杂质。用例 `TestEventSink_StdoutIsPureNDJSON`、`TestHuntCmd_EventsGoToStdoutAndLogsGoToStderr` |
-| <a id="ac-17"></a>AC-17（压缩保真） | 待接入 | MS-11 | 压缩未接入 |
-| <a id="ac-18"></a>AC-18（压缩可观测可复现） | 待接入 | MS-11 | 同上 |
+| <a id="ac-17"></a>AC-17（压缩保真） | 待接入 | MS-11 | 压缩未接入；**契约已定义**（D4：`CompactionConfig` ＋ 压缩位在 `ContextBuilder` 内），实现待 MS-11 |
+| <a id="ac-18"></a>AC-18（压缩可观测可复现） | 待接入 | MS-11 | 同上；**契约已定义**（D4：`context_compacted` 载荷 `level`/`released_tokens`/`watermark`），实现待 MS-11 |
 | <a id="ac-20"></a>AC-20（交付形态 / fast-forward） | 已落地 | — | `TestEndToEnd_LocalRunProducesDeliveryCommit`；`find`/edit 相关注脚见 §2.3 |
 | <a id="ac-22"></a>AC-22（检查点自愈与止损） | 已落地 | MS-4 | 自愈（单次失败不中止、下一轮累积重提）＋ 连败上限（连续 3 次 → 退出 1）。用例 `TestCheckpoint_SingleFailureSelfHeals`、`TestCheckpoint_StreakLimitConvergesAsEnvError` |
 | <a id="ac-26"></a>AC-26（工具面恒定） | 已落地 | — | 规则已落地并有用例（`TestDefaultTools_FaceIsFixed` 等）；**尚未实现的原语（符号 3 ＋ `check`）只改调用结果、不改工具面** |
@@ -145,10 +145,10 @@
 | <a id="ia-2-2"></a>IA-2.2 | 已落地 | `TestContextBuilder_AssemblesPromptThenHistory` | — | — |
 | <a id="ia-2-3"></a>IA-2.3 | 已落地 | `TestOnTurn_FiltersRunBeforeRecording` | — | — |
 | <a id="ia-2-4"></a>IA-2.4 | 已落地 | 同 `TestOnTurn_FiltersRunBeforeRecording`（值拷贝断言之一） | — | — |
-| <a id="ia-2-5"></a>IA-2.5 | 待接入 | — | MS-11 | 压缩未接入，当前轮 messages 与 Bounty 正文永不裁剪待断言（AC-17） |
-| <a id="ia-2-6"></a>IA-2.6 | 待接入 | — | MS-11 | 水位线触发压缩（FR-14.1） |
-| <a id="ia-2-7"></a>IA-2.7 | 待接入 | — | MS-11 | 分层下压 L0→L4（FR-14.2、FR-14.4） |
-| <a id="ia-2-8"></a>IA-2.8 | 待接入 | — | MS-11 | 投影可复现（AC-18） |
+| <a id="ia-2-5"></a>IA-2.5 | 待接入 | — | MS-11 | 压缩未接入，当前轮 messages 与 Bounty 正文永不裁剪待断言（AC-17）；**契约已定义**（D4：`CompactionConfig`），实现待 MS-11 |
+| <a id="ia-2-6"></a>IA-2.6 | 待接入 | — | MS-11 | 水位线触发压缩（FR-14.1）；**契约已定义**（D4：水位来自 `providerconfig.Resolved.Watermarks` ＋ `CompactionConfig`），实现待 MS-11 |
+| <a id="ia-2-7"></a>IA-2.7 | 待接入 | — | MS-11 | 分层下压 L0→L4（FR-14.2、FR-14.4）；**契约已定义**（D4：`context_compacted` 载荷形状），实现待 MS-11 |
+| <a id="ia-2-8"></a>IA-2.8 | 待接入 | — | MS-11 | 投影可复现（AC-18）；**契约已定义**（D4），实现待 MS-11 |
 | <a id="ia-2-9"></a>IA-2.9 | 已落地 | `TestInputBudget`、`TestWatermarks` | — | — |
 | <a id="ia-2-10"></a>IA-2.10 | 已落地 | `TestBuild_InjectsRootConventions`、`TestBuild_CaseVariantIsNotRecognized`、`TestBuild_BlankContentIsTreatedAsAbsent`、`TestBuild_OversizeTruncatesWithNotice`、`TestBuild_WithoutBaseCommitFallsBackToWorktree` | — | 嵌套约定附注待排期（见 §5） |
 | <a id="ia-2-11b"></a>IA-2.11(b) skill 发现清单 | 已落地 | `TestBuild_ListsNameDescriptionAndPath`、`TestBuild_InvalidEntryIsSkippedWithNotice`、`TestBuild_NameMustMatchDirectory`、`TestBuild_IgnoresSkillFilesOutsideDirectory`、`TestBuild_TruncatesBeyondLimit`、`TestBuild_NoSkillsYieldsEmptyPart`、`TestParseFrontmatter`、`TestParseFrontmatter_LengthLimitsComeFromSpec` | — | 编号重复，限定词 = skill 发现清单 |
@@ -273,12 +273,13 @@
 |---|---|---|---|
 | <a id="l1-4"></a>L1-4 门禁清单来源裁决 | 待接入 | MS-5 | `Prepare` 里 `s.gates = nil`（一期暂空），来源裁决未接入；**契约已定义**（D2：`GateSource` ＋ 档位常量 `bounty`/`repo`/`none` ＋ `Config.Gates` 装配槽），实现待 MS-5 |
 | ~~契约：会话恢复接入位 ＋ 结果文件 `session_delta` 字段位~~（MS-7） | **契约已定义**（2026-09-23，未冻结期）：`hunt.Restored`（轮次 / 写操作序列 / 用量）＋ `SessionRecorder.Load()`（与 `Ops()` 分工：本次运行 vs 读回上次）；`Prepare` 在 `Bounty.Session != nil` 时接上读回入口（`Load` 实现是 **panic 哨兵**"恢复未实现：MS-7"——真去 resume 立刻炸、不当新任务跑）；结果文件加 `session_delta`（`{turns_from, turns_to, ops_count}`，`omitempty`，写入端未接）。**归属修正**：`session_delta` 原挂 MS-6（归属写错——`turns_from` 只在恢复时才有意义），改挂 **MS-7** |
+| ~~契约：流看门狗、压缩位与 config_snapshot 形状~~（MS-11 / MS-12） | **契约已定义**（2026-09-23，未冻结期）：`harness.Config.StreamIdleTimeout`（接收段不活动超时；0=不限、缺省 120s；接入点在接收循环、注释标明计时器留 MS-12）；`hunt.CompactionConfig`（三档水位 ＋ 冷却，水位来自 `providerconfig.Resolved.Watermarks`）＋ `context_compacted` 载荷（`level`/`released_tokens`/`watermark`）＋ `config_snapshot` 载荷（三个阈值及其来源）。**发出点均不接**（`config_snapshot` 的 `max_denied_streak` 来源未定死 / 压缩未实现）。实现待 MS-11 / MS-12 / MS-3 |
 | <a id="l1-5"></a>L1-5 扩展能力描述符 | 待接入 | MS-8 | 组装层注入 `ext.ExtHost` 未接入；**契约已定义**（D2：`Capabilities` / `Locate` / `Fingerprint` / `Close` ＋ `ext.Unimplemented{}` panic 哨兵装配），实现待 MS-8 |
 | <a id="l1-8"></a>L1-8 会话恢复（条件） | 待接入 | MS-7 | `XHUNTER_SESSION_ID` 非空时的 checkout tip ＋ 读回材料未接入；**接入点已就位**（D3：`Prepare` 在 `Bounty.Session != nil` 时调 `SessionRecorder.Load()`，`Load` / `Restored` 契约已定义），实现待 MS-7 |
 | <a id="l1-9"></a>L1-9 生效配置快照 | 已落地 | MS-2 | 装配完成后冻结一次，进 `hunt_start` 与结果文件 `effective_config`（含原语顺序与殿后 `checkpoint`）；门禁清单随 MS-5。证据 `TestEffectiveConfig_ListsPrimitivesInToolFaceOrder`、`TestPrepare_EmitsHuntStart` |
 | <a id="l2-事件通道"></a>L2-事件通道健康 | 已落地 | MS-2 | `OnTurn` 入口复查 `Sink.Failed()`：通道已断则本轮零工具执行，收敛 `event_channel_failed`（退出 1）。用例 `TestOnTurn_StopsBeforeWorkWhenChannelAlreadyFailed` |
-| <a id="l2-压缩"></a>L2-压缩 | 待接入 | MS-11 | `ContextBuilder` 内无压缩 |
-| <a id="l4-流看门狗"></a>L4-流看门狗 | 待接入 | MS-12 | 不活动超时 → `Cancel()` → 环境错误 未接入 |
+| <a id="l2-压缩"></a>L2-压缩 | 待接入 | MS-11 | `ContextBuilder` 内无压缩；**契约已定义**（D4：`CompactionConfig` ＋ `context_compacted` 载荷），实现待 MS-11 |
+| <a id="l4-流看门狗"></a>L4-流看门狗 | 待接入 | MS-12 | 不活动超时 → `Cancel()` → 环境错误 未接入；**契约已定义**（D4：`harness.Config.StreamIdleTimeout`，0=不限、缺省 120s，接入点已留），实现待 MS-12 |
 | <a id="l6-检查点"></a>L6-检查点决策 | 部分待接入 | MS-4 / MS-5 / MS-9 | 模型显式请求 ＋ 收尾已落地；门禁驱动（MS-5）、结构判据（MS-9）待接入 |
 | <a id="l6-结构检查"></a>L6-结构检查 | 待接入 | MS-9 | 判据未接入；「不可判定 → 不提交」已落地 |
 | <a id="l6-事件通道复查"></a>L6-事件通道复查 | 已落地 | MS-2 | 轮末守卫复查（取消之后、预算之前）：本轮发出时断则不再进入下一轮，收敛 `event_channel_failed`（退出 1）。用例 `TestOnTurn_StopsAfterTurnWhenChannelFailsDuringTurn`、`TestOnTurn_ChannelFailureDoesNotOverrideCancellation` |
@@ -302,7 +303,7 @@
 | 编号 | 状态 | 对应 MS-n | 缺口说明 |
 |---|---|---|---|
 | <a id="usage-1-2-bounty"></a>usage§1.2·Bounty生成器 | 待接入 | MS-12 | `xhunter run` 尚未接线；当前 CLI 只有 `models` / `version` 与 `--bounty`（后者为占位实现） |
-| <a id="usage-5-events"></a>usage§5·已发出事件 | 部分已发出 | MS-2 | 已发：`hunt_start`、`hunt_end`（带累计用量）、`tool_call`、`tool_result`、`assistant_text`、`usage`（每轮增量）、`heartbeat`（按间隔、带阶段）、`error`、`policy_denied`、`deliverable`、`degraded`（含 `scope: usage`）、`needs_input`、`assumption`；其余事件类型为契约目标，随各自里程碑接线：`check_result` / `gate_config_changed`（MS-5）、`context_compacted`（MS-11）、`config_snapshot`（随止损阈值与轮数硬顶，MS-3/MS-4） |
+| <a id="usage-5-events"></a>usage§5·已发出事件 | 部分已发出 | MS-2 | 已发：`hunt_start`、`hunt_end`（带累计用量）、`tool_call`、`tool_result`、`assistant_text`、`usage`（每轮增量）、`heartbeat`（按间隔、带阶段）、`error`、`policy_denied`、`deliverable`、`degraded`（含 `scope: usage`）、`needs_input`、`assumption`；其余事件类型为契约目标，随各自里程碑接线：`check_result` / `gate_config_changed`（MS-5）、`context_compacted`（MS-11；**形状已定义（D4）**）、`config_snapshot`（MS-3/MS-4；**形状已定义（D4）**） |
 | <a id="usage-6-fields"></a>usage§6·待接入字段 | 部分待接入 | MS-2 / MS-6 | 已接线：`needs` / `assumptions`（2026-09-23）、`effective_config`（2026-09-23）、`summary`（2026-09-23）、`unverified`（2026-09-23）。仍未接线：`gates`（MS-5）、`session_delta`（MS-7——**归属修正**：原挂 MS-6 是写错，`turns_from` 只在恢复时才有意义） |
 
 ### 2.3 已结清（本周期）

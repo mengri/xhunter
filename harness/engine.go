@@ -12,6 +12,9 @@ import (
 type Config struct {
 	MaxTurns      int // 轮次硬上限，兜住编排缺陷导致的死循环
 	MaxFailStreak int // 连续多少轮工具失败即止损
+	// StreamIdleTimeout 是**接收段的"不活动"超时**（FR-1.11①、架构 §6.3 L4）。读法：
+	// **0 = 不限；非 0 = 不活动上限**——别读成"没配就是 120s"（默认由 withDefaults 给）。
+	StreamIdleTimeout time.Duration
 }
 
 func (c Config) withDefaults() Config {
@@ -20,6 +23,10 @@ func (c Config) withDefaults() Config {
 	}
 	if c.MaxFailStreak <= 0 {
 		c.MaxFailStreak = 3
+	}
+	// 文档写定的默认：不活动 120s。装配层不设时走这里。
+	if c.StreamIdleTimeout <= 0 {
+		c.StreamIdleTimeout = 120 * time.Second
 	}
 	return c
 }
@@ -177,6 +184,8 @@ func (e *Engine) Run(ctx context.Context, in Input) (out Outcome) {
 		turn := &Turn{No: n, Messages: run.Messages}
 	stream:
 		for ev := range sess.Events() {
+			// 流看门狗（FR-1.11①、架构 §6.3 L4）的**接入点**在这里：不活动超时 → `sess.Cancel()`
+			// → 环境错误（退出 1）。计时器在 MS-12 落——本次只留接入点与口径，不实现 select 计时器。
 			if ctx.Err() != nil {
 				_ = sess.Cancel()
 				run.terminate(StatusCancelled, "cancelled", ExitCancelled)
