@@ -236,3 +236,44 @@ func TestResultFile_UsageReportedFalseWhenUpstreamSilent(t *testing.T) {
 		}
 	})
 }
+
+// unverified 与 needs / assumptions 同一口径的三态：有 → 数组；没有 → **写成 null**（不是 []、
+// 也不是缺字段）。
+func TestResultFile_UnverifiedIsThreeState(t *testing.T) {
+	bounty := hunt.Bounty{ID: "b1", Repo: git.RepoRef{Branch: "xhunter/x", BaseCommit: "abc"}}
+	out := harness.Outcome{Status: harness.StatusSucceeded, Reason: "no_tool_call", ExitCode: harness.ExitOK}
+
+	t.Run("有", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "r.json")
+		declared := hunt.Declared{Unverified: []string{"改了分支但没跑测试", "依赖了未确认的约定"}}
+		if err := writeRunOutputs(path, "", bounty, out, hunt.Delivery{}, declared, hunt.EffectiveConfig{}); err != nil {
+			t.Fatalf("写结果文件失败：%v", err)
+		}
+		got := readResultFile(t, path)
+		if got.Unverified == nil || len(*got.Unverified) != 2 || (*got.Unverified)[0] != "改了分支但没跑测试" {
+			t.Errorf("unverified = %v，期望两条", got.Unverified)
+		}
+	})
+
+	t.Run("无写成 null", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "r.json")
+		if err := writeRunOutputs(path, "", bounty, out, hunt.Delivery{}, hunt.Declared{}, hunt.EffectiveConfig{}); err != nil {
+			t.Fatalf("写结果文件失败：%v", err)
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("读结果文件失败：%v", err)
+		}
+		var probe map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &probe); err != nil {
+			t.Fatalf("解析结果文件失败：%v", err)
+		}
+		v, ok := probe["unverified"]
+		if !ok {
+			t.Fatal("unverified 字段必须存在——三态靠 null 表达，不是靠缺字段")
+		}
+		if string(v) != "null" {
+			t.Errorf("unverified = %s，期望 null（不是 []）", v)
+		}
+	})
+}

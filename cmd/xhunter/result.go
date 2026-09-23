@@ -13,7 +13,7 @@ import (
 // 结果文件与补丁是"交付记录"这一侧的产物：主交付是远端那条任务分支（FR-6.1），
 // 这里是附带的机器可读结论，供平台记账与评审（FR-1.5、使用手册 §6）。
 //
-// 只写当前真能给出的事实：`unverified` / `gates` / `session_delta` 尚未落地，就不在这里
+// 只写当前真能给出的事实：`gates` / `session_delta` 尚未落地，就不在这里
 // 摆空壳——空数组会被读成"没有门禁、没有假设"，那是另一句话。字段状态以使用手册 §6 的
 // 标注为准。
 
@@ -34,11 +34,12 @@ type resultFile struct {
 	// 小结）。没有答复就没有这个键（omitempty），不摆空壳。
 	Summary string `json:"summary,omitempty"`
 
-	// Needs / Assumptions 是模型在正文固定小节里的自陈（FR-6.3）。用指针不加 omitempty
+	// Needs / Assumptions / Unverified 是模型在正文固定小节里的自陈（FR-6.3/6.4）。用指针不加 omitempty
 	// 是三态要求：「没提供」要写成 null，而不是缺字段、更不是 []——空数组会被读成
 	// "没有需要补全的条件"，那是另一句话（使用手册 §6）。
 	Needs       *[]string        `json:"needs"`
 	Assumptions *[]string        `json:"assumptions"`
+	Unverified  *[]string        `json:"unverified"`
 	Usage       hunt.UsageReport `json:"usage"`
 	Error       *errorFile       `json:"error,omitempty"`
 
@@ -84,6 +85,7 @@ func writeRunOutputs(resultPath, patchPath string, bounty hunt.Bounty, out harne
 		Summary:      d.Summary,
 		Needs:        optionalList(declared.Needs),
 		Assumptions:  optionalList(declared.Assumptions),
+		Unverified:   optionalList(declared.Unverified),
 		Usage:        d.Usage,
 	}
 	if r.FilesChanged == nil {

@@ -227,6 +227,7 @@ xhunter version
   },
   "needs": ["..."],
   "assumptions": ["..."],
+  "unverified": ["..."],
   "summary": "...",
   "usage": {"reported": true, "input_tokens": 0, "output_tokens": 0, "cached_input_tokens": 0, "turns": 0, "elapsed_ms": 0},
   "error": {"kind": "prepare_failed", "message": "...", "retryable": true}

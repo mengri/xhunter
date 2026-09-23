@@ -5,23 +5,26 @@ import (
 	"unicode/utf8"
 )
 
-// Declared 是模型在正文里自陈的两类清单（FR-6.3）：缺什么条件、采取了哪些默认。
+// Declared 是模型在正文里自陈的三类清单（FR-6.3/6.4）：缺什么条件、采取了哪些默认、
+// 没验证到什么。
 //
 // 为什么解析落在业务层而不是 harness：小节名是**业务约定**——它们由内核条款陈述（见
 // kernelClauses），harness 不认识它们。解析只做「切行去前缀」，不解释语义：它是模型的
-// 自陈，不是判据。执行体据它决定终态，不据它推断对错。
+// 自陈，不是判据。执行体据它决定终态（只有 `needs` 非空才收敛为停下），不据它推断对错。
 type Declared struct {
 	Needs       []string // 「## 需要补全」的条目；非空即表示模型选择停下
-	Assumptions []string // 「## 假设」的条目
+	Assumptions []string // 「## 假设」的条目：模型采取过的默认值
+	Unverified  []string // 「## 未验证」的条目：没验证到的不确定项与未覆盖风险（只陈述，不停）
 }
 
-// 两个固定小节名。改这里就等于改内核条款的措辞——两处必须一起改。
+// 三个固定小节名。改这里就等于改内核条款的措辞——两处必须一起改。
 const (
 	needsSection       = "## 需要补全"
 	assumptionsSection = "## 假设"
+	unverifiedSection  = "## 未验证"
 )
 
-// ParseDeclared 从一段正文里切出两个固定小节的条目。
+// ParseDeclared 从一段正文里切出三个固定小节的条目。
 //
 // 三态与结果文件一致：小节不存在 → 对应切片为 nil（**不是**空切片）——「没提供」与
 // 「提供了但一条都没有」是两句话，序列化时前者才是 null。
@@ -54,7 +57,7 @@ func ParseDeclared(text string) Declared {
 func isHeading(line string) bool { return strings.HasPrefix(line, "#") }
 
 // sectionTarget 判断一个标题属于哪个固定小节；不属于则返回 nil——它同时表示「后面的
-// 内容不归这两类」，因此解析器遇到别的小节会自动收手。
+// 内容不归这三类」，因此解析器遇到别的小节会自动收手。
 //
 // 两侧都必须过 normalizeHeading：光去 `#` 会留下一个前导空格，标题与小节名就再也对不上
 // （这类不对称不会报错，只会静默地什么都切不出来）。
@@ -65,6 +68,8 @@ func sectionTarget(d *Declared, heading string) *[]string {
 		return &d.Needs
 	case strings.HasPrefix(title, normalizeHeading(assumptionsSection)):
 		return &d.Assumptions
+	case strings.HasPrefix(title, normalizeHeading(unverifiedSection)):
+		return &d.Unverified
 	}
 	return nil
 }

@@ -169,6 +169,7 @@ func (s *Session) AppendDeclared(text string) {
 	d := ParseDeclared(text)
 	s.declared.Needs = append(s.declared.Needs, d.Needs...)
 	s.declared.Assumptions = append(s.declared.Assumptions, d.Assumptions...)
+	s.declared.Unverified = append(s.declared.Unverified, d.Unverified...)
 }
 
 // Declared 给出本次运行累积的自陈清单（收尾后可读，供事件与结果文件使用）。

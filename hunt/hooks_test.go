@@ -112,6 +112,9 @@ func TestFirstPrompt_KeepsOrderAndAppendsKernelBlocks(t *testing.T) {
 	if !strings.Contains(got[0].Content, "PLUGIN_SYS") || !strings.Contains(got[0].Content, kernelClauseMarker) {
 		t.Errorf("system 段应含插件正文与内核条款：%q", got[0].Content)
 	}
+	if !strings.Contains(got[0].Content, "## 未验证") {
+		t.Errorf("内核条款必须陈述「## 未验证」这一节，否则模型不会写、采集再正确也拿不到东西：%q", got[0].Content)
+	}
 	if strings.Index(got[0].Content, "PLUGIN_SYS") > strings.Index(got[0].Content, kernelClauseMarker) {
 		t.Error("内核条款必须在插件正文之后（末尾追加）")
 	}

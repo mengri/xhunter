@@ -232,3 +232,72 @@ func TestFinalize_NoDeclarationStaysSucceeded(t *testing.T) {
 		t.Errorf("只有假设清单不该改终态：%s/%s", out.Status, out.Reason)
 	}
 }
+
+// 三个固定小节同时出现时各归各家、互不串味（顺序也打乱）。
+func TestParseDeclared_ThreeSectionsAreSeparated(t *testing.T) {
+	text := strings.Join([]string{
+		"## 假设",
+		"- 假定 A",
+		"## 未验证",
+		"- 改了分支 B 但没跑对应测试",
+		"- 依赖了一个未确认的约定",
+		"## 需要补全",
+		"- 缺 C",
+	}, "\n")
+
+	got := ParseDeclared(text)
+	if !reflect.DeepEqual(got.Needs, []string{"缺 C"}) {
+		t.Errorf("needs = %q，期望 [缺 C]", got.Needs)
+	}
+	if !reflect.DeepEqual(got.Assumptions, []string{"假定 A"}) {
+		t.Errorf("assumptions = %q，期望 [假定 A]", got.Assumptions)
+	}
+	want := []string{"改了分支 B 但没跑对应测试", "依赖了一个未确认的约定"}
+	if !reflect.DeepEqual(got.Unverified, want) {
+		t.Errorf("unverified = %q，期望 %q", got.Unverified, want)
+	}
+}
+
+// 只写「## 未验证」不得被误判成「需要补全」——它只陈述、不判定，更不是停止信号。
+func TestParseDeclared_UnverifiedAloneIsNotNeeds(t *testing.T) {
+	got := ParseDeclared("## 未验证\n- 某条边界没有覆盖\n")
+	if got.Needs != nil {
+		t.Errorf("只写未验证时 needs 必须是 nil（它不表示停止）：%#v", got.Needs)
+	}
+	if !reflect.DeepEqual(got.Unverified, []string{"某条边界没有覆盖"}) {
+		t.Errorf("unverified = %q", got.Unverified)
+	}
+}
+
+// 三态与另两类一致：小节不存在 → nil；小节在但无条目 → nil。
+func TestParseDeclared_UnverifiedThreeState(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		text string
+	}{
+		{"完全没有小节", "我改完了。"},
+		{"小节在但一条都没有", "## 未验证\n\n"},
+		{"空正文", ""},
+	} {
+		if got := ParseDeclared(tc.text).Unverified; got != nil {
+			t.Errorf("%s：未提供必须是 nil（不是空切片）：%#v", tc.name, got)
+		}
+	}
+}
+
+// 只写「## 未验证」不改变终态：它是陈述，不是「需要补全」那种停止信号。
+func TestFinalize_UnverifiedDoesNotBlock(t *testing.T) {
+	s := newFinalizeSession(&captureSink{})
+	s.AppendDeclared("## 未验证\n- 改了分支但没跑测试")
+
+	run := &harness.Run{}
+	run.SetTerminal(harness.Terminal{Status: harness.StatusSucceeded, Reason: "no_tool_call", Code: harness.ExitOK})
+	if err := s.Finalize(context.Background(), run); err != nil {
+		t.Fatalf("Finalize 失败：%v", err)
+	}
+
+	out := run.Outcome()
+	if out.Status != harness.StatusSucceeded || out.ExitCode != harness.ExitOK {
+		t.Errorf("只写「## 未验证」不该改终态：%s/%d，期望 succeeded/0", out.Status, out.ExitCode)
+	}
+}

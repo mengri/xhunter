@@ -98,7 +98,7 @@
 | <a id="fr-4-1"></a>FR-4.1/4.2（符号枚举读取 / 整体替换） | 待接入 | MS-8 | `hunt/symbolic` 声明不实现 |
 | <a id="fr-4-3"></a>FR-4.3（符号内插入 / 跨文件重命名） | 待接入 | MS-10 | `symbol_rename` 未实现 |
 | <a id="fr-5-2b"></a>FR-5.2b~5.2i（门禁全链） | 待接入 | MS-5 | `s.gates = nil`；`check` 声明不实现 |
-| <a id="fr-6-3"></a>FR-6.3/6.4（`needs` / `assumptions` / `unverified`） | 部分已落地 | MS-2（余） | **`needs` / `assumptions` 已落地**（2026-09-23）：采集机制 = 解析正文固定小节（轮边界登记、收尾收敛为 `blocked`）。**余 `unverified`**（FR-6.4 的第三类）：需新增内核小节与采集，未接入 |
+| <a id="fr-6-3"></a>FR-6.3/6.4（`needs` / `assumptions` / `unverified`） | 已落地 | MS-2 | 三类自陈均由正文固定小节采集（`## 需要补全` / `## 假设` / `## 未验证`）：轮边界登记（`AppendDeclared`）、收尾可读；`needs` 非空收敛 `blocked`（退出 0），`unverified` 只陈述、不改终态。结果文件 `needs` / `assumptions` / `unverified` 三态。用例 `TestParseDeclared_ThreeSectionsAreSeparated`、`TestParseDeclared_UnverifiedAloneIsNotNeeds`、`TestParseDeclared_UnverifiedThreeState`、`TestFinalize_UnverifiedDoesNotBlock`、`TestResultFile_UnverifiedIsThreeState` |
 | <a id="fr-9-4"></a>FR-9.4（两段式止损） | 待接入 | MS-3 | 无 `ObserveFailure` / `DeniedCount` |
 | <a id="fr-9-7"></a>FR-9.7（用量不可得时不得估算） | 已落地 | MS-2 | 上游未回报用量时不报数字：`usage` 事件三字段全零则不发、结果文件 `usage.reported: false` ＋ 一条 `degraded`（`scope: usage`）；预算仍按上报值计（不拿 0 触发/不触发）。用例 `TestOnTurn_NoUsageEventWhenUpstreamSilent`、`TestFinalize_DegradedOnceWhenUsageUnavailable`、`TestResultFile_UsageReportedFalseWhenUpstreamSilent` |
 | <a id="fr-10-1"></a>FR-10.1~10.3（心跳 / 终态事件） | 已落地 | MS-2 | 任务级心跳（间隔可配、随取消即停、带 `phase`/ `elapsed_ms`）与全部轮级/终态事件已发，`hunt_end` 为最后一条。用例 `TestHeartbeat_*`、`TestSession_PhaseTracksStages`、`TestFinalize_StopsHeartbeatBeforeHuntEnd`、`TestParseHeartbeatInterval_DefaultOverrideAndRejects`、`TestEndToEnd_HeartbeatEmittedAndHuntEndLast` |
@@ -303,7 +303,7 @@
 |---|---|---|---|
 | <a id="usage-1-2-bounty"></a>usage§1.2·Bounty生成器 | 待接入 | MS-12 | `xhunter run` 尚未接线；当前 CLI 只有 `models` / `version` 与 `--bounty`（后者为占位实现） |
 | <a id="usage-5-events"></a>usage§5·已发出事件 | 部分已发出 | MS-2 | 已发：`hunt_start`、`hunt_end`（带累计用量）、`tool_call`、`tool_result`、`assistant_text`、`usage`（每轮增量）、`heartbeat`（按间隔、带阶段）、`error`、`policy_denied`、`deliverable`、`degraded`（含 `scope: usage`）、`needs_input`、`assumption`；其余事件类型与字段为契约目标，待接线（`check_result`/`context_compacted`） |
-| <a id="usage-6-fields"></a>usage§6·待接入字段 | 部分待接入 | MS-2 / MS-6 | 已接线：`needs` / `assumptions`（2026-09-23）、`effective_config`（2026-09-23）、`summary`（2026-09-23）。仍未接线：`unverified`（MS-2）、`gates`（MS-5）、`session_delta`（MS-6） |
+| <a id="usage-6-fields"></a>usage§6·待接入字段 | 部分待接入 | MS-2 / MS-6 | 已接线：`needs` / `assumptions`（2026-09-23）、`effective_config`（2026-09-23）、`summary`（2026-09-23）、`unverified`（2026-09-23）。仍未接线：`gates`（MS-5）、`session_delta`（MS-6） |
 
 ### 2.3 已结清（本周期）
 
@@ -329,6 +329,7 @@
 | ~~终态可观测（`hunt_end` 累计用量 ＋ `usage.reported` ＋ `error` 事件）~~（MS-2） | **已落地**（2026-09-23）：用量对外口径上收为 `hunt.UsageReport`（含 `reported`），`hunt_end` 带累计用量、与结果文件 `usage` **同一份**；`Reported` 的判据只在 `Session.charge`（本轮增量有任一非零）；不可得时发一条 `degraded`（`scope: usage`）且结果文件 `usage.reported: false`；终态 `failed` 发结构化 `error`（`kind` / `retryable` / `context`），`kind` 与 `retryable` 口径上收为 `hunt.ErrorKind` / `hunt.RetryableForExitCode`（事件与结果文件同源），取消与 `blocked` 不发。用例：`TestHuntEnd_CarriesCumulativeUsage`、`TestHuntEnd_IsTheLastEvent`、`TestFinalize_EmitsErrorOnFailureMatchingExitCode`、`TestFinalize_NoErrorEventOnBlockedOrCancelled`、`TestFinalize_DegradedOnceWhenUsageUnavailable`（`hunt`）、`TestResultFile_UsageReportedFalseWhenUpstreamSilent`（`cmd/xhunter`），并扩 `TestEndToEnd_ResultFileWrittenOnFailure` / `TestEndToEnd_BudgetExhaustionStopsTheRun` |
 | ~~心跳接入~~（MS-2） | **已落地**（2026-09-23）：任务级心跳由 `Session` 掌管——`Prepare` 末尾启动、`Finalize` 的终态事件块之前停止（`hunt/heartbeat.go` 的 `startHeartbeat`），`stop` 幂等且阻塞到心跳 goroutine 退出，因此 `hunt_end` 仍是最后一条事件（时钟不会滴答到收尾之后）。间隔缺省 30s、`XHUNTER_HEARTBEAT_INTERVAL` 可覆盖（非法即退出 1）、随 ctx 取消即停（INV-8）；阶段由并发安全的 `Session.Phase()` 提供（bootstrap/assemble/infer/tools/finalize）。用例 `TestHeartbeat_EmitsAtInterval`、`TestHeartbeat_StopsOnContextCancel`、`TestHeartbeat_StopIsIdempotent`、`TestSession_PhaseTracksStages`、`TestFinalize_StopsHeartbeatBeforeHuntEnd`（`hunt`）、`TestParseHeartbeatInterval_DefaultOverrideAndRejects`、`TestEndToEnd_HeartbeatEmittedAndHuntEndLast`（`cmd/xhunter`） |
 | ~~事件通道健康复查~~（MS-2） | **已落地**（2026-09-23）：`EventSink` 加自述健康状态 `Failed()`（覆盖事件与心跳两条写路径），`OnTurn` 轮前（L2）与轮末（L6）复查出口断线即收敛 `event_channel_failed`（退出 1）——早停，不跑完剩余轮次；取消优先；进程末尾 `sink.Failed()` 收口保留为兜底。用例 `TestOnTurn_StopsBeforeWorkWhenChannelAlreadyFailed`、`TestOnTurn_StopsAfterTurnWhenChannelFailsDuringTurn`、`TestOnTurn_ChannelFailureDoesNotOverrideCancellation`（`hunt`）、`TestEventSink_FailedCoversHeartbeatWrites`（`cmd/xhunter`），并扩 `TestEndToEnd_BrokenEventChannelIsEnvError` |
+| ~~`unverified` 采集（FR-6.4 第三类）~~（MS-2） | **已落地**（2026-09-23）：新增固定小节 `## 未验证`（小节名的唯一来源是常量，解析与内核条款同改）；`Declared` 加 `Unverified`、`sectionTarget` 加第三分支、`AppendDeclared` 一并登记；结果文件加 `unverified`（三态，未提供 → `null`）。**只陈述、不判定**——它不改变终态（只有 `needs` 非空才收敛 `blocked`）。用例 `TestParseDeclared_ThreeSectionsAreSeparated`、`TestParseDeclared_UnverifiedAloneIsNotNeeds`、`TestParseDeclared_UnverifiedThreeState`、`TestFinalize_UnverifiedDoesNotBlock`（`hunt`）、`TestResultFile_UnverifiedIsThreeState`（`cmd/xhunter`） |
 
 ---
 
@@ -390,7 +391,7 @@
 | # | 名称 | 对应分期 | 依赖 | 体量 | 主要 FR / IA | 状态 |
 |---|---|---|---|---|---|---|
 | **MS-1** | 验收入口与契约对齐 | 一期收口 | — | 小 | FR-2.2、IA-3.16 | **已完成**（2026-09-23；三项全部落地，见 §2.3） |
-| **MS-2** | 运行可观测补齐（事件流 ＋ 生效配置快照） | 一期收口 | MS-1 | 中 | FR-10、FR-11.1/11.6、FR-6.3/6.4、IA-5.2/5.4 | **部分完成**（澄清回路采集、生效配置快照、`hunt_start`/`tool_call`/`assistant_text`/`usage`/`hunt_end` 累计用量/`usage.reported`/`error`/`heartbeat`/通道健康复查 已落地；余 `IA-5.2` 纯 NDJSON 端到端断言） |
+| **MS-2** | 运行可观测补齐（事件流 ＋ 生效配置快照） | 一期收口 | MS-1 | 中 | FR-10、FR-11.1/11.6、FR-6.3/6.4、IA-5.2/5.4 | **部分完成**（澄清回路采集（含 `unverified`）、生效配置快照、`hunt_start`/`tool_call`/`assistant_text`/`usage`/`hunt_end` 累计用量/`usage.reported`/`error`/`heartbeat`/通道健康复查 已落地；余 `IA-5.2` 纯 NDJSON 端到端断言） |
 | **MS-3** | 止损完备（两段式止损） | 一期收口 | MS-2 | 中 | FR-9.1/9.4、IA-4.8/4.9 | 未开始 |
 | **MS-4** | 检查点分档与提交健壮性 | 一期收口 | MS-1 | 中 | FR-1.3b/1.3c/1.11②、IA-11.8/11.10/11.11/11.13 | 部分完成（判据不可判定 → 不提交已落地） |
 | **MS-5** | 门禁落地（`check` 实现 ＋ 全链护栏） | 一期收口 | MS-4 | 大 | FR-5.2b~5.2i、IA-11.12 | 未开始 |
@@ -453,14 +454,14 @@
 - `tool_call`：执行前发（`call_id` / `tool` / `args`）。
 - `error`：各阶段失败的结构化事件，带 `retryable`。
 - 结果文件补 `effective_config`。
-- 澄清回路的三件产物（FR-6.3）：终态新增 `StatusBlocked`；事件 `needs_input`；结果文件 `needs` 与 `assumptions` / `unverified`。解析对象是正文里的固定小节（`## 需要补全` / `## 假设`），只做切行去前缀；轮边界与收尾都解析；三态：未提供 → `null` ＋ 原因（不写 `[]`）。另加 `usage.reported` 与 `degraded`（`scope: usage`）。
+- 澄清回路的三件产物（FR-6.3）：终态新增 `StatusBlocked`；事件 `needs_input`；结果文件 `needs` 与 `assumptions` / `unverified`。解析对象是正文里的固定小节（`## 需要补全` / `## 假设` / `## 未验证`），只做切行去前缀；轮边界与收尾都解析；三态：未提供 → `null` ＋ 原因（不写 `[]`）。另加 `usage.reported` 与 `degraded`（`scope: usage`）。
 
 **独立验收的证据**
 - `cmd/xhunter/e2e_test.go` 扩一条事件序列断言：成功运行含 `hunt_start` / `tool_call` / `tool_result` / `usage` / `deliverable` / `hunt_end`，且 `hunt_end` 是最后一条。
 - `TestEventSink_StdoutIsPureNDJSON`（IA-5.2 待补项）。
-- `TestEventSink_HeartbeatStopsOnCancel`。
-- 结果文件断言：`effective_config` 存在且含原语清单顺序。
-- 澄清回路：`TestFinalize_NeedsInputConvergesToBlocked`、`TestFinalize_SectionsParsedFromLastAssistantText`、`TestFinalize_UnprovidedSectionIsNullNotEmpty`。
+- 心跳：`TestHeartbeat_EmitsAtInterval`、`TestHeartbeat_StopsOnContextCancel`、`TestHeartbeat_StopIsIdempotent`、`TestSession_PhaseTracksStages`、`TestFinalize_StopsHeartbeatBeforeHuntEnd`、`TestEndToEnd_HeartbeatEmittedAndHuntEndLast`。
+- 结果文件断言：`TestResultFile_EffectiveConfigIsWritten`（`effective_config` 含原语清单顺序）、`TestResultFile_SummaryIsWritten`、`TestResultFile_UsageReportedFalseWhenUpstreamSilent`。
+- 澄清回路：`TestParseDeclared_SectionsAndEntries`、`TestParseDeclared_AbsentSectionIsNilNotEmpty`、`TestParseDeclared_ThreeSectionsAreSeparated`、`TestParseDeclared_UnverifiedAloneIsNotNeeds`、`TestParseDeclared_UnverifiedThreeState`、`TestFinalize_NeedsInputConvergesToBlocked`、`TestFinalize_UnverifiedDoesNotBlock`、`TestResultFile_DeclarationsAreThreeState`、`TestResultFile_UnverifiedIsThreeState`。
 
 **依赖**：MS-1。**不做**：压缩事件（MS-11）、门禁事件（MS-5）。
 
