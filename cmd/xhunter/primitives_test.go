@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"xhunter/git"
 	"xhunter/harness"
 	"xhunter/hunt"
 	"xhunter/llm"
@@ -214,3 +216,51 @@ func TestEventSink_RemembersFirstWriteFailure(t *testing.T) {
 type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("管道断了") }
+
+// git 能力**不作为原语暴露**——用类型级证据，而不是靠人记得：
+//  1. 工具面名字集 ∩ git 词汇 = 空集；
+//  2. 原语工厂的入参只有 workspace.Workspace：原语在构造期**拿不到** git.GitWorktree；
+//  3. hunt.Primitive 的方法集里没有任何接受/返回 git.GitWorktree 的入口。
+func TestDefaultTools_HasNoGitPrimitive(t *testing.T) {
+	ws, err := defaultWorkspaces().Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("打开工作区失败：%v", err)
+	}
+	prims := defaultTools(ws, nil)
+
+	gitWords := []string{"git", "commit", "push", "checkout", "branch", "diff", "patch", "merge", "rebase", "clone", "remote", "fetch"}
+	for _, p := range prims {
+		name := strings.ToLower(p.Decl().Name)
+		for _, w := range gitWords {
+			if strings.Contains(name, w) {
+				t.Errorf("工具面出现 git 相关名字 %q（含 %q）：git 能力不作为原语暴露", name, w)
+			}
+		}
+	}
+
+	// 原语工厂的入参只有 workspace.Workspace：构造期拿不到 git.GitWorktree。
+	fac := reflect.TypeOf(hunt.ToolFactory(nil))
+	if fac.Kind() != reflect.Func || fac.NumIn() != 1 {
+		t.Fatalf("ToolFactory 形状变了：%v", fac)
+	}
+	if in := fac.In(0); in != reflect.TypeOf((*workspace.Workspace)(nil)).Elem() {
+		t.Errorf("ToolFactory 入参 = %v，期望 workspace.Workspace（原语构造期拿不到 git）", in)
+	}
+
+	// hunt.Primitive 方法集里没有任何接受/返回 git.GitWorktree 的入口。
+	gitType := reflect.TypeOf((*git.GitWorktree)(nil)).Elem()
+	primType := reflect.TypeOf((*hunt.Primitive)(nil)).Elem()
+	for i := 0; i < primType.NumMethod(); i++ {
+		m := primType.Method(i)
+		for j := 0; j < m.Type.NumIn(); j++ {
+			if m.Type.In(j) == gitType {
+				t.Errorf("Primitive.%s 接受 git.GitWorktree——git 能力会因此可达", m.Name)
+			}
+		}
+		for j := 0; j < m.Type.NumOut(); j++ {
+			if m.Type.Out(j) == gitType {
+				t.Errorf("Primitive.%s 返回 git.GitWorktree——git 能力会因此可达", m.Name)
+			}
+		}
+	}
+}

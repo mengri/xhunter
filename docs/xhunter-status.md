@@ -251,12 +251,12 @@
 | <a id="ia-11-5"></a>IA-11.5 | 已落地 | `TestCommit_RejectsNonFastForward` | — | — |
 | <a id="ia-11-6"></a>IA-11.6 | 已落地 | `TestDiff_ListsFilesChangedSinceBaseline`、`TestPatch_AppliesCleanlyToBaseline`、`TestEndToEnd_LocalRunProducesDeliveryCommit` | MS-6 | 排除会话材料目录 `.xhunter/<session_id>/**` 待接入 |
 | <a id="ia-11-7"></a>IA-11.7 | 已落地 | `TestClean_RemovesWorktreeAndIsIdempotent` | — | — |
-| <a id="ia-11-8"></a>IA-11.8 | 待补 | — | MS-4 | 调用顺序 ＋ 工具面不含 git 原语的断言 |
+| <a id="ia-11-8"></a>IA-11.8 | 已落地 | `TestWiring_PrepareBaselineRunsBeforeAnyTool`、`TestCheckpoint_CommitOnlyAtTurnBoundaryAndFinalize`、`TestDefaultTools_HasNoGitPrimitive` | MS-4 | `PrepareBaseline` 是第一个动作（先于 Open / 构造原语 / 构造正文）；Commit 只在轮边界与收尾；工具面不含 git 原语（类型级证据：工厂入参只有 `workspace.Workspace`、`Primitive` 方法集不涉 `git.GitWorktree`） |
 | <a id="ia-11-9"></a>IA-11.9 | 已落地 | `TestCheckpoint_SingleFailureSelfHeals`、`TestCheckpoint_StreakLimitConvergesAsEnvError`、`TestCheckpoint_SuccessResetsStreak` | MS-4 | 自愈（单次失败只记 warn、下一轮重提）＋ 连败上限（连续 3 次 → `checkpoint_failed_streak`，退出 1） |
-| <a id="ia-11-10"></a>IA-11.10 | 待补 | — | MS-4 | 时间语义断言（提交的是本轮已应用的改动） |
+| <a id="ia-11-10"></a>IA-11.10 | 已落地 | `TestCheckpoint_CommitsOnlyThisTurnsChanges` | MS-4 | 第 N 轮的检查点提交发生在第 N 轮工具之后、第 N+1 轮工具之前；末轮未落检查点的改动由收尾交付提交带上（交付口径） |
 | <a id="ia-11-11"></a>IA-11.11 | 已落地 | `TestCheckpoint_NoAutoCheckpointOffStructuralPoint`、`TestCheckpoint_StructuralFailDoesNotCommit`、`TestCheckpoint_StructuralPassCommits`、`TestCheckpoint_UndecidableReportsDegradedOnce`、`TestCheckpoint_LogsNoOpWhenNothingWasCommitted` | MS-4 / MS-9 | 三态（pass/fail/undecidable）与不可判定如实上报已落地；真实判据随符号扩展接入（MS-9） |
 | <a id="ia-11-12"></a>IA-11.12 | 待接入 | — | MS-5 | 门禁驱动的检查点（依赖 `check`） |
-| <a id="ia-11-13"></a>IA-11.13 | 部分待补 | `TestSanitizeIntent` | MS-4 | 提交信息合成、一次兑现、空提交抑制的用例待补 |
+| <a id="ia-11-13"></a>IA-11.13 | 已落地 | `TestCheckpoint_ModelRequestIsConsumedOnceAndSkipsEmptyCommit`、`TestCheckpointMessage_Composition`、`TestSanitizeIntent` | MS-4 | 一次请求只兑现一次（重复请求不覆盖首次理由、消费后意图清空）；无改动不产生空提交但意图照样消费；提交信息由执行体合成（前缀/分隔符固定，模型改不了） |
 | <a id="ia-12-1"></a>IA-12.1 | 已落地 | `TestWiring_SatisfiesContracts` | — | — |
 | <a id="ia-12-2"></a>IA-12.2 | 已落地 | `TestDefaultTools_FaceIsFixed`、`TestDefaultTools_ShapeIsDeclared` | — | — |
 | <a id="ia-12-3"></a>IA-12.3 | 已落地 | `TestDefaultPromptPlugins_OrderIsThePromptOrder`、`TestDefaultPromptPlugins_NoDuplicate` | — | — |
@@ -332,6 +332,7 @@
 | ~~MS-2 收口验收（纯 NDJSON ＋ 事件序列 ＋ 增量语义 ＋ 插件失败）~~ | **已落地**（2026-09-23）：`TestEventSink_StdoutIsPureNDJSON`（stdout 逐行合法 JSON ＋ 信封四字段 ＋ `ts` RFC3339）、`TestEndToEnd_EventSequenceIsComplete`（首尾、`tool_call`↔`tool_result` 配对、`deliverable` 在 `hunt_end` 前）、`TestPolicy_ChargeReceivesIncrements`（`Policy.Charge` 收增量、非增长轮不上报）、`TestPrepare_PluginFailureConvergesAsEnvError`（插件失败 → `prepare_failed`/退出 1）。MS-2 由此收口 |
 | ~~结构判据三态与"不可判定"如实上报~~（MS-4） | **已落地**（2026-09-23）：`structuralPoint() bool`（恒 false）换成三态 `structuralVerdict`（pass/fail/undecidable）；默认实现是 **undecidable**（符号扩展未接入——我们没**判过**，不是"没通过"），日志如实说「结构判据不可判定」、并发一条 `degraded`（`scope: checkpoint`，每次运行最多一条）；pass 照常提交、fail 说「未落在结构完整点」。判据留了**包内可替换位置**（`Session.structuralJudge`，未加公开配置字段）。用例 `TestCheckpoint_NoAutoCheckpointOffStructuralPoint`、`TestCheckpoint_StructuralFailDoesNotCommit`、`TestCheckpoint_StructuralPassCommits`、`TestCheckpoint_UndecidableReportsDegradedOnce` |
 | ~~检查点连败上限~~（MS-4 / FR-1.3b / IA-11.9 / AC-22） | **已落地**（2026-09-23）：`Session` 记**连续**提交失败数（成功即归零，含 `Created=false` 的空操作；只统计阶段性检查点提交，交付提交不计入）；达包内常量 `checkpointFailStreakLimit=3` 时由 `OnTurn` 守卫统一收敛为 `checkpoint_failed_streak`（退出 1），本轮结束即收敛、不跑完剩余轮次。守卫次序固定为「取消 → 通道 → 提交连败 → 预算」。用例 `TestCheckpoint_StreakLimitConvergesAsEnvError`、`TestCheckpoint_SingleFailureSelfHeals`、`TestCheckpoint_SuccessResetsStreak` |
+| ~~检查点时序、不可见性与意图兑现断言~~（MS-4 / IA-11.8 / IA-11.10 / IA-11.13） | **已落地**（2026-09-23）：IA-11.8（`TestWiring_PrepareBaselineRunsBeforeAnyTool`、`TestCheckpoint_CommitOnlyAtTurnBoundaryAndFinalize`、`TestDefaultTools_HasNoGitPrimitive`——git 不可见性用类型级证据）、IA-11.10（`TestCheckpoint_CommitsOnlyThisTurnsChanges`）、IA-11.13（`TestCheckpoint_ModelRequestIsConsumedOnceAndSkipsEmptyCommit`、`TestCheckpointMessage_Composition`）。MS-4 由此收口 |
 
 ---
 
@@ -347,7 +348,7 @@
 | 压缩 | `IA-2.5`、`IA-2.6`、`IA-2.7`、`IA-2.8`、`L2-压缩`、`FR-14.1`、`AC-17`、`AC-18` |
 | 门禁 | `IA-3.16`（`check` 声明不实现）、`IA-11.12`、`L1-4`、`L7-gates`、`FR-5.2b`、`产品§6` |
 | 符号能力 | `IA-3.5`、`IA-7.1`~`IA-7.7`、`L1-5`、`FR-4.1`、`FR-4.3`、`FR-13.1`、`产品§6` |
-| git 剩余语义 | `IA-11.6`（排除材料目录）、`IA-11.8`、`IA-11.10`、`IA-11.12`、`IA-11.13`、`L6-检查点` |
+| git 剩余语义 | `IA-11.6`（排除材料目录）、`IA-11.12`、`L6-检查点` |
 | 流看门狗 | `L4-流看门狗`、`FR-1.11`（①） |
 | 结构检查 | `IA-11.11`、`L6-结构检查`、`FR-1.3d` |
 | 止损两段式 | `IA-4.8`、`IA-4.9`、`H4-裁决点`、`FR-9.4` |
@@ -363,9 +364,6 @@
 | 凭据静态扫描 | `IA-6.8`、`IA-8.4`、`AC-8` |
 | 恢复正确性 | `AC-7`、`IA-6.2`、`IA-6.3` |
 | 嵌套约定附注 | `IA-2.10` |
-| 提交信息合成 / 一次兑现 / 空提交抑制 | `IA-11.13` |
-| 调用顺序与工具面不可见性 | `IA-11.8` |
-| 时间语义 | `IA-11.10` |
 | 「工具面恒定」对照 | `IA-7.1` |
 | Provider 方法集断言 | `IA-8.3` |
 
@@ -393,7 +391,7 @@
 | **MS-1** | 验收入口与契约对齐 | 一期收口 | — | 小 | FR-2.2、IA-3.16 | **已完成**（2026-09-23；三项全部落地，见 §2.3） |
 | **MS-2** | 运行可观测补齐（事件流 ＋ 生效配置快照） | 一期收口 | MS-1 | 中 | FR-10、FR-11.1/11.6、FR-6.3/6.4、IA-5.2/5.4 | **已完成**（2026-09-23；事件流、生效配置快照、澄清回路三类自陈与收口验收（纯 NDJSON／事件序列／增量语义／插件失败）全部落地，见 §2.3） |
 | **MS-3** | 止损完备（两段式止损） | 一期收口 | MS-2 | 中 | FR-9.1/9.4、IA-4.8/4.9 | 未开始 |
-| **MS-4** | 检查点分档与提交健壮性 | 一期收口 | MS-1 | 中 | FR-1.3b/1.3c/1.11②、IA-11.8/11.10/11.11/11.13 | **进行中**（结构判据三态、不可判定如实上报、连败上限（FR-1.3b）已落地；余 IA-11.8/11.10/11.13 用例） |
+| **MS-4** | 检查点分档与提交健壮性 | 一期收口 | MS-1 | 中 | FR-1.3b/1.3c/1.11②、IA-11.8/11.10/11.11/11.13 | **已完成**（2026-09-23；结构判据三态、连败上限、时序/不可见性/意图兑现断言全部落地，见 §2.3） |
 | **MS-5** | 门禁落地（`check` 实现 ＋ 全链护栏） | 一期收口 | MS-4 | 大 | FR-5.2b~5.2i、IA-11.12 | 未开始 |
 | **MS-6** | 会话材料落盘 | M1.5 前置 | MS-4 | 中 | FR-12.2/12.2b/12.3、IA-6.1/6.1b/6.1c | 未开始 |
 | **MS-7** | 会话恢复（resume） | M1.5 | MS-6 | 大 | FR-12.1/12.6、AC-7、IA-6.2/6.3/6.4 | 未开始 |
@@ -505,8 +503,8 @@
 - 结构判据三态：`TestCheckpoint_NoAutoCheckpointOffStructuralPoint`（不可判定）、`TestCheckpoint_StructuralFailDoesNotCommit`（未通过）、`TestCheckpoint_StructuralPassCommits`（通过）、`TestCheckpoint_UndecidableReportsDegradedOnce`（降级每次运行最多一条）。
 - `TestCheckpoint_LogsNoOpWhenNothingWasCommitted`（模型请求路径，已有）。
 - 连败上限：`TestCheckpoint_StreakLimitConvergesAsEnvError`（真实引擎：连败 3 次即收敛、infer 次数==3）、`TestCheckpoint_SingleFailureSelfHeals`、`TestCheckpoint_SuccessResetsStreak`。
-- `TestCheckpoint_ModelRequestIsConsumedOnceAndSkipsEmptyCommit`（IA-11.13 补全）＋ 提交信息合成断言（`TestSanitizeIntent` 已有）。
-- `TestWiring_PrepareBaselineRunsBeforeAnyTool`、`TestDefaultTools_HasNoGitPrimitive`（IA-11.8）。
+- 意图兑现与提交信息合成（IA-11.13）：`TestCheckpoint_ModelRequestIsConsumedOnceAndSkipsEmptyCommit`、`TestCheckpointMessage_Composition`、`TestSanitizeIntent`（净化，已有）。
+- 时序与不可见性（IA-11.8 / IA-11.10）：`TestWiring_PrepareBaselineRunsBeforeAnyTool`、`TestCheckpoint_CommitOnlyAtTurnBoundaryAndFinalize`、`TestDefaultTools_HasNoGitPrimitive`、`TestCheckpoint_CommitsOnlyThisTurnsChanges`。
 
 **依赖**：MS-1（真实判据随 MS-9）。**不做**：门禁驱动检查点（MS-5）。
 
