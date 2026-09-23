@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"xhunter/git"
@@ -130,6 +131,14 @@ func (g *Git) Commit(ctx context.Context, repo git.RepoRef, msg string) (git.Com
 	if _, err := g.run(ctx, g.root, "add", "-A"); err != nil {
 		return git.Commit{}, envFault("commit_failed", "暂存改动失败："+err.Error())
 	}
+	// 材料目录**强制加入**：仓库忽略 `.xhunter/` 是常见做法，而 `add -A` 不会加入被忽略的路径——
+	// 那样材料会写在工作区、却不进任何提交，"唯一状态源"悄悄失效且不报错（IA-6.1c）。材料目录
+	// 尚未落盘（Open 失败等）不是错误：跳过即可，不把整个提交判死。
+	if md := strings.TrimSpace(repo.MaterialDir); md != "" && g.worktreeHas(md) {
+		if _, err := g.run(ctx, g.root, "add", "-f", "--", md); err != nil {
+			return git.Commit{}, envFault("commit_failed", "强制加入材料目录失败："+err.Error())
+		}
+	}
 	// `diff --cached --quiet`：退出码 0 表示没有已暂存的改动。
 	if _, code, err := g.runCode(ctx, g.root, "diff", "--cached", "--quiet"); err != nil {
 		return git.Commit{}, envFault("commit_failed", "检查暂存区失败："+err.Error())
@@ -211,6 +220,12 @@ func diffArgs(extra string, repo git.RepoRef) []string {
 		args = append(args, "--", ":(exclude)"+md)
 	}
 	return args
+}
+
+// worktreeHas 报告工作树里是否存在某个相对路径：材料目录可能尚未落盘（Open 失败走降级口径）。
+func (g *Git) worktreeHas(rel string) bool {
+	_, err := os.Stat(filepath.Join(g.root, rel))
+	return err == nil
 }
 
 // Clean 回收临时工作树。可重复调用：没有工作树时是空操作。

@@ -1102,7 +1102,7 @@ Bounty(session) ──► H6.Session
 |---|---|---|
 | IA-6.1 | 会话材料自含续跑所需全部信息：对话历史 + 工具名 + 完整参数 + 结果摘要 + turn 序号 + 用量 + 能力指纹 | （实现状态见 xhunter-status.md 状态索引 · IA-6.1） |
 | IA-6.1b | **按任务隔离**：材料路径为 `.xhunter/<session_id>/session.jsonl`；两任务并行同一仓库时互不覆盖 | （实现状态见 xhunter-status.md 状态索引 · IA-6.1b） |
-| IA-6.1c | **提交强制加入**（`add -f`）：仓库 `.gitignore` 忽略 `.xhunter/` 时材料仍随检查点提交 | （实现状态见 xhunter-status.md 状态索引 · IA-6.1c） |
+| IA-6.1c | **提交强制加入**（`add -f`）：仓库 `.gitignore` 忽略 `.xhunter/` 时材料仍随检查点提交（`MaterialDir` 非空且存在时才加；目录尚未落盘不判死） | `TestCommit_ForceAddsMaterialEvenWhenGitignored`、`TestCommit_MissingMaterialDirDoesNotFail`、`TestCommit_WithoutMaterialDirIsUnchanged` |
 | IA-6.2 | **恢复过程零工具执行**：不重放写操作 | （实现状态见 xhunter-status.md 状态索引 · IA-6.2） |
 | IA-6.3 | 恢复从**下一轮**继续，不重做已完成轮次 | （实现状态见 xhunter-status.md 状态索引 · IA-6.3） |
 | IA-6.4 | 材料带 `schema_version`；不兼容 → 环境错误（退出码 1），不自动迁移 | （实现状态见 xhunter-status.md 状态索引 · IA-6.4） |

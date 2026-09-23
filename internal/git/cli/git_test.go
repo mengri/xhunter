@@ -416,6 +416,83 @@ func TestNew_NormalizesConfig(t *testing.T) {
 	}
 }
 
+// 材料随提交**强制加入**：仓库忽略 `.xhunter/`（常见做法）时，`add -A` 不会加入它——那样材料写在
+// 工作区却不进任何提交，"唯一状态源"悄悄失效且不报错（IA-6.1c）。
+func TestCommit_ForceAddsMaterialEvenWhenGitignored(t *testing.T) {
+	requireGit(t)
+	f := newFixture(t)
+	const session = "s-mat"
+	repo := f.repo("xhunter/s11")
+	repo.MaterialDir = ".xhunter/" + session
+	g := New(Config{WorkDir: f.work})
+	root, err := g.PrepareBaseline(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("获取基线失败：%v", err)
+	}
+
+	// 仓库忽略引擎控制目录（仓库作者没理由不忽略它）。
+	writeFile(t, filepath.Join(root, ".gitignore"), ".xhunter/\n")
+	writeFile(t, filepath.Join(root, "biz.txt"), "biz\n")
+	writeFile(t, filepath.Join(root, ".xhunter", session, "session.jsonl"), `{"type":"meta"}`+"\n")
+
+	if _, err := g.Commit(context.Background(), repo, "改动"); err != nil {
+		t.Fatalf("提交失败：%v", err)
+	}
+
+	// 看**提交内容**（不只看工作区）：材料文件在里面。
+	committed := runGit(t, root, "ls-tree", "-r", "--name-only", "HEAD")
+	if !strings.Contains(committed, ".xhunter/"+session+"/session.jsonl") {
+		t.Errorf("提交里应含材料文件（add -f）：\n%s", committed)
+	}
+	if !strings.Contains(committed, "biz.txt") {
+		t.Errorf("提交里应含业务文件：\n%s", committed)
+	}
+	// 远端 tip 也含（推送真的带上去了）。
+	tip := runGit(t, f.remote, "ls-tree", "-r", "--name-only", "refs/heads/"+repo.Branch)
+	if !strings.Contains(tip, ".xhunter/"+session+"/session.jsonl") {
+		t.Errorf("远端 tip 应含材料文件：\n%s", tip)
+	}
+}
+
+// MaterialDir 为空时行为不变："无改动不产生空提交"仍成立。
+func TestCommit_WithoutMaterialDirIsUnchanged(t *testing.T) {
+	requireGit(t)
+	f := newFixture(t)
+	repo := f.repo("xhunter/s12") // 无 MaterialDir
+	g := New(Config{WorkDir: f.work})
+	if _, err := g.PrepareBaseline(context.Background(), repo); err != nil {
+		t.Fatalf("获取基线失败：%v", err)
+	}
+	cm, err := g.Commit(context.Background(), repo, "无改动")
+	if err != nil {
+		t.Fatalf("提交失败：%v", err)
+	}
+	if cm.Created {
+		t.Error("无改动不该产生空提交")
+	}
+}
+
+// 材料目录尚未创建时，强制加入**跳过**、提交照常成功（不因它判死）。
+func TestCommit_MissingMaterialDirDoesNotFail(t *testing.T) {
+	requireGit(t)
+	f := newFixture(t)
+	repo := f.repo("xhunter/s13")
+	repo.MaterialDir = ".xhunter/absent" // 尚未落盘
+	g := New(Config{WorkDir: f.work})
+	root, err := g.PrepareBaseline(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("获取基线失败：%v", err)
+	}
+	writeFile(t, filepath.Join(root, "biz.txt"), "biz\n")
+	cm, err := g.Commit(context.Background(), repo, "改动")
+	if err != nil {
+		t.Fatalf("材料目录不存在不该让提交失败：%v", err)
+	}
+	if !cm.Created {
+		t.Error("有业务改动应产生提交")
+	}
+}
+
 // 交付 diff / patch 排除**本次会话的材料目录**，但保留同目录下的其它路径（如 skills.draft）：
 // 材料随检查点进分支是对的，但它不是交付内容（FR-6.1）；技能草稿要进补丁供人 review（FR-15.3、AC-25）。
 func TestDiff_ExcludesMaterialDirButKeepsSkillsDraft(t *testing.T) {

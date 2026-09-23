@@ -118,6 +118,14 @@ func TestEndToEnd_LocalRunProducesDeliveryCommit(t *testing.T) {
 		t.Errorf("交付提交里的文件内容 = %q，期望 hi", got)
 	}
 
+	// 两个方向同时成立才是 MS-6 想要的边界：材料**随分支保留**（崩溃后可恢复），但**不进交付物**
+	// （上面的 files_changed/deliverable 已断言不含材料）。这里断言分支 tip 里含材料文件。
+	sessionID := fx.base[:12] // 未显式给 bounty_id → 会话标识缺省取基线前 12 位
+	tree := gitIn(t, fx.remote, "ls-tree", "-r", "--name-only", tip)
+	if !strings.Contains(tree, ".xhunter/"+sessionID+"/session.jsonl") {
+		t.Errorf("分支 tip 应含材料文件（add -f）：\n%s", tree)
+	}
+
 	// 附带交付：deliverable 列出**交付**文件——材料目录（`.xhunter/<session_id>/**`）按 FR-6.1
 	// 被排除，所以清单里就是那一个业务文件，不多不少。
 	files, _ := types["deliverable"]["files"].([]any)
