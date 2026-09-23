@@ -142,7 +142,7 @@
 
 具体是两道闸，都在**进入首轮推理之前**：
 
-1. **构造期／初始化期**：`harness.New` 缺模型即返回错误；`hunt.NewSession` 的装配参数在**该用它的地方显式失败**且报出缺哪一项——`Prepare` 缺 git / opener / policy 当场失败（退出 2），缺上下文组装器只记 warn（降级为「无历史」）；**缺策略时工具调用默认拒绝**，绝不「跳过裁决」（INV-4）。
+1. **构造期／初始化期**：`harness.New` 缺模型即返回错误；`hunt.NewSession` 的装配参数在**该用它的地方显式失败**且报出缺哪一项——`Prepare` 缺 git / opener / policy 当场失败（退出 1），缺上下文组装器只记 warn（降级为「无历史」）；**缺策略时工具调用默认拒绝**，绝不「跳过裁决」（INV-4）。
 2. **初始化期**：`Prepare` 依次「取基线 → 打开工作区 → 定格工具面 → 构造两段提示词 → 组装首轮消息」，**任一步失败即终止**——循环根本不开始。因此不存在"跑到一半才发现工作区不可用"的中间态。
 
 **不变量的落点（同上，换成装配口径）**：
@@ -170,7 +170,7 @@
 | `hunt.Config.SystemPlugins` | `prompt/agentsmd`（项目约定）· `prompt/skills`（技能清单）→ system 段 |
 | `hunt.Config.UserPlugins` | `prompt/task`（任务陈述）→ user 段 |
 | `hunt.Config.Filters` | 一期为空：结果加工链留空即原样透传 |
-| `hunt.Config.Policy` | `internal/policy`：路径边界 ＋ 三重预算（token / 轮数 / 墙钟，0 = 不限） |
+| `hunt.Config.Policy` | `internal/policy`：路径边界 ＋ 三重预算（token / 轮数 / 墙钟）。**三项可选，不配即不限**；这里的 `0 = 不限` 是**字段零值**语义——投递层不配就是不限，显式写 `0` 会被拒（见使用手册 §3） |
 | `harness.Config` | 轮数硬上限、连续失败止损（缺省即可用）；与 `Policy` 的分工见 §7.4 |
 
 各阶段的职责与落点见 §6.3（运行段 L1~L7）。
@@ -201,7 +201,7 @@
 
 #### C. 单步驱动——可行，但**不进一期**
 
-技术前提是循环要能拆成"可暂停的状态机"（`Step` / `Resume`）；**三组 handler 各自是独立函数**已经是它的前提——阶段边界清楚，跨阶段状态只挂在 `Run`（任务级）与 `Turn`（轮级）上。此前必须先解决两个语义问题：**墙钟预算的计时语义**（等"下一步"的时间不能计入预算，需要"停表"概念）与**权限询问的归属**（UI 形态下 `Policy` 可接人工弹窗——决定仍经 `Policy`，只是实现把决定权交给了人，与 INV-4 不冲突；FR-7.2 禁止的是**模型向人提问**，两者不是一回事）。另需先补 `Provider` 侧的权限询问事件（一期未接入，见 §7.4）。单步驱动属于**本地开发工具**形态，不是交付引擎形态。
+技术前提是循环要能拆成"可暂停的状态机"（`Step` / `Resume`）；**三组 handler 各自是独立函数**已经是它的前提——阶段边界清楚，跨阶段状态只挂在 `Run`（任务级）与 `Turn`（轮级）上。此前必须先解决一个语义问题：**墙钟预算的计时语义**（等"下一步"的时间不能计入预算，需要"停表"概念）。**权限询问不在此列**——无人类场景下不存在这条路径（§10.3）；需要人工确认的场景应当放在**投递之前**（审阅 Bounty 与授权范围），而不是塞进运行段。单步驱动属于**本地开发工具**形态，不是交付引擎形态。
 
 #### D. 驱动者无关性
 
@@ -232,7 +232,7 @@ G2 排队            │   ┌─ L2 准备 ←────────┐    �
 **联合状态机**（◇= 平台侧职责，□= Xhunter 侧职责）：
 
 ```
-◇ created ──► ◇ queued ──► □ running ──► □ terminal(succeeded|failed|cancelled)
+◇ created ──► ◇ queued ──► □ running ──► □ terminal(succeeded|blocked|failed|cancelled)
                    ▲            │                │
                    │            │ 流静默超限      │ exit 0
                    └──── ◇ orphaned              ▼
@@ -250,7 +250,7 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 | **G2 投递/排队** | ◇ 平台 | 投递准备：**任务正文（命令行）+ 部署事实（环境变量：仓库 / 分支 / 基线 / 模型接入）**；队列与调度；**崩溃重派次数上限也在此**（建议 ≤3，超限退化 failed） | FR-1.1、FR-1.4、AC-7 |
 | **G3 启动契约** | ◇+□ | 进程启动：stdin 关闭、stdout=事件流、stderr=日志、环境变量注入凭据；Xhunter 输出 `hunt_start` 后进入 L1 | 使用手册 §2/§5、FR-8.4、INV-7 |
 
-失败收敛：G1 生成不出合法 Bounty → 不启动（本地驱动报错退出；平台侧标记 failed）。**部署事实校验（仓库地址、基线提交、模型接入三项齐全）是 L1 之前的第一道闸**，在组装层里、任何动作之前完成（缺一项即退出码 2，并指出缺的是哪一项）。
+失败收敛：G1 生成不出合法 Bounty → 不启动（本地驱动报错退出；平台侧标记 failed）。**部署事实校验（仓库地址、基线提交、模型接入三项齐全）是 L1 之前的第一道闸**，在组装层里、任何动作之前完成（缺一项即退出码 1，并指出缺的是哪一项）。
 
 ### 6.3 运行段 R（L1~L7）
 
@@ -258,26 +258,26 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 
 | 序 | 动作 | 落点 | 依据 | 说明 |
 |---|---|---|---|---|
-| 0 | 进程预检 | 组装层 | FR-9.5 | Provider 上限类能力校验；缺失→退出 2 |
+| 0 | 进程预检 | 组装层 | FR-9.5 | Provider 上限类能力校验；缺失→退出 1 |
 | 1 | 取基线 → 建/推任务分支 → checkout | `Prepare` → `git.GitWorktree.PrepareBaseline` | FR-1.3、INV-11 | 先于一切可能写工作区的动作 |
 | 2 | 打开工作区 | `Prepare` → `workspace.WorkspaceOpener.Open` | — | 根不存在 / 不是目录在此被拒；失败即终止，循环根本不开始 |
 | 3 | 构造原语并定格工具面 | `Prepare` → `Config.Tools(ws)` → `run.Tools` | FR-4.11、FR-1.11④ | 工作区是运行期产物，所以是"打开之后再构造"；此后整任务读同一份声明 |
-| 4 | 门禁清单来源裁决 | `Prepare`（**一期暂空**） | FR-5.2c | Bounty 下发 > 基线 `.xhunter/gates.yml` > 无 |
+| 4 | 门禁清单来源裁决 | `Prepare`（**一期暂空**） | FR-5.2c | Bounty 下发 > 基线 `gates.yml`（仓库根） > 无 |
 | 5 | 扩展能力描述符 | 组装层注入 `ext.ExtHost`（**一期未接入**） | FR-13.4 | 不可用 → 符号路径不可用，工具名字不变 |
 | 6 | 构造两段提示词并定格 | `Prepare` → `buildPromptStage` ×2 → `Context.SetPrompt` | FR-2.6、FR-7.8、FR-15.2/15.3 | 按**装配顺序**调用两段插件，产出 **system / user 两段**；取一次、整任务内冻结 |
 | 7 | 组装首轮消息 | `Prepare` → `Context.Assemble()` → `run.Messages` | FR-7.1 | 提示词 ＋ 历史（首轮历史为空） |
-| 8 | 会话恢复（条件） | **一期未接入** | FR-12.1、FR-13.7 | 投递给出 `XHUNTER_SESSION_ID` 才执行：checkout 分支 tip ＋ 读回材料；指纹不一致拒绝（退出 2） |
+| 8 | 会话恢复（条件） | **一期未接入** | FR-12.1、FR-13.7 | 投递给出 `XHUNTER_SESSION_ID` 才执行：checkout 分支 tip ＋ 读回材料；指纹不一致拒绝（退出 1） |
 | 9 | 生效配置快照 | **一期未接入** | FR-11.6 | 装配清单进结果文件（§4） |
 
-事件：`hunt_start`、heartbeat(bootstrap)。失败：环境错误 → `Finalize`（退出 2）。
+事件：`hunt_start`、heartbeat(bootstrap)。失败：环境错误 → `Finalize`（退出 1）。
 
 #### L2 轮前准备（每轮）
 
 | 动作 | 落点 | 依据 | 说明 |
 |---|---|---|---|
 | 取消检查 | harness 循环入口 ＋ `OnTurn` 守卫 | FR-1.7、INV-8 | 取消 → `cancelled`（退出 3） |
-| 事件通道健康 | **一期未接入**（sink 写失败目前直接上抛） | FR-10.4 | writeErr → 环境错误（退出 2，AC-19） |
-| 预算判定 | `OnTurn` → `Policy.Exhausted(turn)` | FR-9.2 | 耗尽 → 失败（退出 1，含维度） |
+| 事件通道健康 | **一期未接入**（sink 写失败目前直接上抛） | FR-10.4 | writeErr → 环境错误（退出 1，AC-19） |
+| 预算判定 | `OnTurn` → `Policy.Exhausted(turn)` | FR-9.2 | 耗尽 → **被引擎中止**（退出 2，含维度） |
 | 消息组装 | `OnTurn` 末尾 `Context.Assemble()` → `run.Messages`（首轮由 `Prepare` 给） | FR-7.1/7.6 | 提示词取 `Prepare` 冻结的那一份，历史来自 `ContextBuilder` |
 | 压缩 | `ContextBuilder` 内（**一期未接入**） | FR-14.1 | 三档水位 ＋ 冷却；硬上限 → 错误 |
 
@@ -294,12 +294,11 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 
 | 事件 | 处理（落点） | 依据 |
 |---|---|---|
-| text | 累积到 `turn.Text`（harness）；需要外部可见时由业务经 `EventSink` 上报 `assistant_text` | FR-10 |
+| text | 累积到 `turn.Text`（harness）；由业务经 `EventSink` 上报 `assistant_text`（**必发**：提交物的一部分），并进会话材料 | FR-10 |
 | tool_use | **收进 `turn.Calls`，不执行** | 接收段零副作用 |
 | usage | 累加到 `run.Usage`（harness）；业务在 `OnTurn` 里把**增量**交给 `Policy.Charge` | FR-9、FR-11 |
 | error | 不可重试 → 终态（环境错误）；可重试记日志后继续 | FR-11.2 |
 | end | 进入轮边界（`OnTurn`） | — |
-| permission_request | **一期未接入**（`llm.Event` 尚无此形态） | INV-4 |
 | **流看门狗** | **一期未接入**（不活动超时 → `Cancel()` → 环境错误） | FR-1.11①、INV-3 |
 
 约束：收流循环可被 ctx 打断（INV-8），打断时**必须调用 `sess.Cancel()` 并收敛为 cancelled**（退出 3）；取消时已收未执行的调用**不执行**；stdout 写失败记 writeErr，轮末收敛（FR-10.4）。
@@ -313,25 +312,24 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 | ③ | 结果加工 | — | `Config.Filters` 按序跑（§7.3 扩展点）：改的是"即将发给模型的文本" |
 | ④ | 事件上报 | FR-10、FR-5.2 | `tool_result` / `policy_denied` / `check_result`——**时点在流之后**（使用手册 §5） |
 | ⑤ | 落记录 | FR-12.2 | `Context.Append` ＋ `Session.RecordTurn`：结果按 `CallID` 配对，成为下一轮的输入 |
-| ⑥ | `every_write` 逐写提交 | FR-1.3c | **一期未接入**：唯一不在轮边界收敛的检查点 |
 
 #### L6 轮收敛（每轮边界；落在 `OnTurn` 尾部 ＋ harness 判定）
 
 | 动作 | 落点 | 依据 | 说明 |
 |---|---|---|---|
-| 检查点决策（**本轮单一提交点**） | `Session.checkpoint` → `git.Commit` | FR-1.3c | 优先级：模型显式请求 > 有改动兜底（门禁驱动、结构检查待接入）；**提交的是本轮已应用的改动**；单次失败不终止——下一轮累积重提 |
+| 检查点决策（**本轮单一提交点**） | `Session.checkpoint` → `git.Commit` | FR-1.3c | 触发条件只有两条：**模型显式请求** 或 **落在结构完整点**（门禁驱动待接入、结构判据随扩展）；都不满足则不提交。**提交的是本轮已应用的改动**；单次失败不终止——下一轮累积重提 |
 | 结构检查 | **一期未接入** | FR-1.3d | 只读定位判断"语法完整 / 区间封闭"，三态判定 |
-| 止损 | harness（`Config.MaxFailStreak`）＋ `Policy` | FR-9.4 | 连续失败达阈值即收敛为失败（退出 1） |
-| 事件通道复查 | **一期未接入** | FR-10.4 | → 环境错误（退出 2） |
-| 提交连败复查 | **一期未接入** | FR-1.3b、FR-1.11② | 连续 3 次提交失败 → 本轮结束即收敛（退出 2），不跑完剩余轮次 |
-| 终止判定 | harness | FR-6、使用手册 §7 | 本轮无工具调用 → 成功路径（进入 `Finalize` 过交付闸门：全程无写操作则判 `no_output` 失败）；否则回 L2 |
+| 止损 | harness（`Config.MaxFailStreak`）＋ `Policy` | FR-9.4 | 连续失败达阈值即收敛（退出 2） |
+| 事件通道复查 | **一期未接入** | FR-10.4 | → 环境错误（退出 1） |
+| 提交连败复查 | **一期未接入** | FR-1.3b、FR-1.11② | 连续 3 次提交失败 → 本轮结束即收敛（退出 1），不跑完剩余轮次 |
+| 终止判定 | harness | FR-6、使用手册 §7 | 本轮无工具调用 → **模型正常完成对话**（`status` 由模型在最后答复里声明，默认 `succeeded`；退出码 0）；否则回 L2 |
 
 #### L7 终态收敛（任务一次，落在 `hunt.Session.Finalize`；G 后任何阶段的失败/取消全部汇入此处）
 
 | 动作 | 依据 | 说明 |
 |---|---|---|
 | 中途收敛衔接 | INV-3 | harness 把任何终止（取消、推理失败、流错误、止损、轮数上限）都先收敛成显式终态，再照常进入 `Finalize`——这是结构保证，不依赖每个 return 处小心处理 |
-| 交付闸门 | FR-6 | 成功终态但全程零写操作 → 覆盖为 `no_output` 失败（下游不该拿到一个空交付物） |
+| 终态采纳 | FR-10.2 | **模型声明的 `status` 原样采纳**（引擎不替模型下结论）；有客观证据时按证据覆盖（`required` 门禁未过 → `failed`），机制性终止由引擎强制 |
 | `gates.required` 补跑 | FR-5.2f | **一期未接入**（门禁清单暂空）；时点在交付提交之前 |
 | delivery.commit | FR-6.1 | 失败路径也尽力提交；提交失败只降级为"仅产出补丁"，不判死 |
 | deliverable.diff | FR-6.1 | 排除会话材料路径 `.xhunter/<session_id>/**`（MaterialDir）；**同目录下的其他路径（如 `.xhunter/skills.draft/**`）不排除**——它们属于交付内容，要进 diff 供人 review（FR-15.3、AC-25） |
@@ -343,7 +341,7 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 
 | 步骤 | 职责方 | 动作 | 依据 |
 |---|---|---|---|
-| **D1 验收** | ◇ 平台 | 退出码→处置（使用手册 §7 映射表）：0→取 patch 进 MR；1/3→按失败/取消流程；2→重派（回到 G2）。MR 评审证据 = 任务分支提交链 + patch + 结果文件（gates 证据 + `effective_config` 快照） | FR-6、FR-11.6、AC-20 |
+| **D1 验收** | ◇ 平台 | 退出码→处置（使用手册 §7 映射表）：0→**再看 `status`**（由模型声明）：`succeeded` 走正常验收、`blocked` 走澄清回路（照 `needs` 补齐条件后带同一 session 重投）；1/3→按失败/取消流程；2→重派（回到 G2）。**合入与否由平台与人决定，不在 Xhunter 契约内**（§1.3 非目标）。MR 评审证据 = 任务分支提交链 + patch + 结果文件（gates 证据 + `effective_config` 快照） | FR-6、FR-11.6、AC-20 |
 | **D2 合并/放弃** | ◇ 人 | merge 形态（ff/squash/rebase）= 宿主仓库政策，**不在 Xhunter 契约内**；Xhunter 保证的只是：分支 tip 可 fast-forward、patch 可应用（AC-1）、绝不 force push | FR-8.3 |
 | **D3 归档清理** | ◇ 平台 | 事件流脱敏+滚动清理；会话材料 `.xhunter/<id>/` 随分支保留；分支删除属仓库所有者（Xhunter 永不删分支，FR-8.3） | FR-12.3 |
 | **D4 演化回灌** | ◇ 人 + 下一任务 | MR 合并的 AGENTS.md 修改与 `skills.draft/` 成为**下一任务的新基线**——下一任务 `Prepare` 里的插件读到的就是它们。单任务是线，跨任务是环 | FR-2.6、FR-15.3 |
@@ -356,10 +354,11 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 | L1 完成后、首个检查点前 | ◇ 流静默 | 重派（session 指向空材料=等价新任务） | 临时工作区丢弃无损；材料为空则从基线重跑 |
 | L2~L6 中途（已有检查点） | ◇ 流静默 | 重派→resume：checkout 分支 tip + 读回材料，**未重做已完成轮次**；在途一轮由模型重做（代价有界） | AC-7；检查点自愈（累积重提） |
 | L7 中途（交付提交后、hunt_end 前） | ◇ 流静默 | 重派→resume：tip 已含交付提交，材料完整；模型复查后无新调用→再收敛（`ErrNoChanges` 不重复提交） | 交付幂等：diff 可再生、提交幂等 |
-| L4 流内挂起（Provider 断流） | □ 流看门狗（一期未接入） | Cancel→收敛退出 2→◇ 可重派 | 流内无副作用（工具在 `OnTurn` 才执行），无半写状态 |
+| L4 流内挂起（Provider 断流） | □ 流看门狗（一期未接入） | Cancel→收敛退出 1→◇ 可重派 | 流内无副作用（工具在 `OnTurn` 才执行），无半写状态 |
 | 用户取消（SIGTERM） | □ 取消检查（`ctx`） | 优雅退出：材料落盘→cleanup→exit 3；检查点保留 | AC-6；◇ 决定重开新任务或废弃 |
-| 退出 1（预算/止损/无产出） | ◇ | **不重派**（重派同样耗尽） | 结果文件含耗尽维度与 unverified |
-| 退出 2（环境） | ◇ | 重派（≤N 次，建议 3，超限退化 failed） | 环境修复后可续（resume）或重来（无材料时） |
+| **退出 2（被引擎中止：预算 / 止损 / 轮数硬顶）** | ◇ | **不重派**——重跑同样会停在这里 | 结果文件含耗尽维度与未验证项 |
+| 退出 1（环境） | ◇ | 重派（≤N 次，建议 3，超限退化 failed） | 环境修复后可续（resume）或重来（无材料时） |
+| **运行中发现缺条件**（`needs_input`） | □ **模型判断**（继续还是停下）＋ 业务执行（轮边界/收尾解析到「## 需要补全」即收敛） | 收敛为 **`blocked`（退出码 0）** ＋ 需要补全的清单 → ◇ **人**补齐条件 → 生成新 Bounty，带**同一 session** 重投 → resume（checkout tip ＋ 回读材料，不重做已完成轮次） | 工作区与材料完好；**写小节 = 停止信号**，引擎不规定何时停；这是**干预**不是重派——**平台按 `status` 分类**（合入决策归平台与人）；只看退出码 0 会把它当"已完成" |
 
 ### 6.6 不变量落点
 
@@ -368,7 +367,7 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 | INV-1 无供应商名 | 全程（`llm` 契约与 `harness` 都不出现供应商名字） |
 | INV-2 工具执行不委托 Provider | L5：执行在业务 handler 里；`llm.Provider` 只有 `Infer` / `Capabilities`，**没有执行方法** |
 | INV-3 显式终态 | harness 的单一收敛出口（`Finalize` 无论成败必跑）＋ L2 取消检查 ＋ L6 止损 ＋ §6.5 恢复矩阵 |
-| INV-4 权限经 Policy | L5 `Policy.Decide`（权限询问应答一期未接入） |
+| INV-4 权限经 Policy | L5 `Policy.Decide`——**唯一裁决点在调用点**，不存在权限询问路径（§10.3） |
 | INV-5/6 事件契约 | 各阶段只经 `EventSink` 产出；L5 的时点变化见使用手册 §5 |
 | INV-7 凭据不入上下文 | G3 环境注入；L5 门禁子进程环境最小集（FR-5.2i） |
 | INV-8 可取消 | L2 取消检查 ＋ L4 打断必调 `sess.Cancel()` |
@@ -401,11 +400,11 @@ Prepare ──► ┌──  infer ──► receive ──► OnTurn  ──┐
 
 | 条件 | 终态 | 说明 |
 |---|---|---|
-| 本轮无 tool_call | 成功（过交付闸门） | 唯一"正常完成"路径；全程无写操作时由 `Finalize` 判 `no_output` 失败 |
+| 本轮无 tool_call | **正常完成**（退出码 0） | 唯一"模型正常完成对话"路径；`status` 由模型声明（引擎不推断），未声明时按 `succeeded` |
 | 轮数达 `Config.MaxTurns` | 失败 | 机制性硬顶，兜住编排缺陷导致的死循环 |
 | 连续失败轮数达 `Config.MaxFailStreak` | 失败 | 机制性止损：不管原因，只在同一堵墙前反复撞时抽身 |
-| `OnTurn` 返回错误 | 失败 | `failed`（退出 1） |
-| `Prepare` 返回错误 / 推理失败 / 流错误 | 失败 | 环境错误（退出 2） |
+| `OnTurn` 返回错误 | 失败 | `failed`（退出 2——引擎侧错误，重跑同一结果） |
+| `Prepare` 返回错误 / 推理失败 / 流错误 | 失败 | 环境错误（退出 1） |
 | 取消（`ctx` 结束） | 取消 | 退出 3 |
 | panic | 环境错误 | 收敛为终态，不让进程带着半截状态崩掉 |
 | 预算耗尽（业务口径） | 失败 | 维度名由 `Policy.Exhausted` 给出（tokens / turns / wall_clock） |
@@ -470,11 +469,11 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 | 可替换 | 早期工具输出 → L2 可寻址摘要 |
 | 可丢弃 | 推理过程、重复失败的重试细节（留结论）、已被后续覆盖的中间态 |
 
-**"写操作记录永不丢"是硬要求**：它是"只碰必要字节"与交付物可解释性的基础，也是失败路径下生成 assumptions / unverified 的来源。
+**"写操作记录永不丢"是硬要求**：它是"只碰必要字节"与交付物可解释性的基础。注意分工：**事实类**（哪些门禁没跑、哪些调用失败过）能从它推出；**判断类**（模型做了哪些保守默认、缺哪些条件）只能由模型自陈——两者不可互相替代。
 
 **结构化工作日志是投影，不是总结**：字段固定为「任务与验收标准 / 已完成改动 / 已确认事实 / 失败尝试与原因 / 未决问题与假设」，由 H6 的 session 记录**投影**得出——零模型调用、内容与顺序可复现、可脱离模型单测（NFR-8）。L4 若启用，摘要文本同样"生成一次即落盘、恢复时读回"。
 
-**交付物不依赖上下文（FR-14.6）**：patch、`files_changed`、assumptions、unverified 全部由执行体从 session 记录生成。模型压缩后"忘记"改过什么，不影响交付物完整性。
+**交付物不依赖上下文（FR-14.6）**：patch、`files_changed`、`gates` 全部由执行体从 session 记录生成——模型压缩后"忘记"改过什么，不影响交付物完整性。而 `assumptions` / `needs` 是**模型的判断**，只能自陈，因此**在模型说出的当轮就登记进材料**（不靠收尾从上下文里捞），压缩因此丢不掉它们。
 
 **截断策略必须区分"头尾保留"与"整体替换"**：小超限用头尾保留 + 省略标记；已明显是原始流 dump 时整体替换为提示，不得让不可信内容进入上下文。
 
@@ -501,8 +500,8 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 |---|---|---|---|
 | 路径边界 | 原语 ＋ 参数（路径） | allow / deny | 已实现：绝对路径 / `..` 逃逸 / `.xhunter/**`（`skills.draft/**` 除外）一律拒绝；**未知原语默认拒绝** |
 | 破坏性操作 | 原语 ＋ 参数 | allow / deny | 由"原语名 ＋ 路径"表达（如符号重命名的写判定） |
-| **影响面** | 原语 ＋ 寻址方式 ＋ 改动规模 | allow / deny | **待接入**：需要符号原语的只读定位先行（随扩展 M2） |
-| **权限询问应答** | Provider 的 PermissionRequest | allow / deny / rewrite | **待接入**：`llm.Event` 尚无该形态 |
+| **影响面** | 原语 ＋ 寻址方式 ＋ 改动规模 | — | **不做**：无人 review 的终局要求判据来自证据（门禁、读回校验），"改得多就保守拒绝"是偏好而非判据；改动规模只上报，不裁决 |
+| **权限询问应答** | — | — | **不适用**：无人类场景下不存在这条路径，裁决只发生在调用点（§10.3） |
 | 预算 | 累计用量（增量由执行体转交） | continue / terminate | 已实现：三档独立判定（token / 轮数 / 墙钟），0 = 不限 |
 | 止损 | 失败序列 | continue / switch / terminate | **待接入**：`ObserveFailure` / `DeniedCount` |
 
@@ -510,7 +509,7 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 
 **用量为什么由执行体转交、而不是引擎直给**：`run.Usage` 是累计值，而策略要的是增量；执行体在轮边界自己记水位（`Session.charged`），把差值交给 `Charge`。否则累计值会被反复当作增量上报，预算被自己的重报耗尽。
 
-**权限应答是整个设计里最容易被忽略、却最关键的一环**（见 §10.3）：无头环境下没有人类可以回答，必须由策略顶替，且**禁止无条件放行**（INV-4）。
+**"没有权限询问"本身就是一道防线**（见 §10.3）：模型想做什么只能通过工具调用表达，于是每次动手都要先过 `Policy.Decide`——不存在"没人回答就默认放行"的口子。
 
 ### 7.5 H5 Stream —— 事件与持久化（`hunt.EventSink`）
 
@@ -519,9 +518,9 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 - **事件行是外部契约**：`{"type": "<事件名>", ...payload}`——载荷**摊平到顶层**、键名小写，与使用手册 §5 一一对应。**事件类型只增不改**（INV-5）。
 - **内部事件 → 外部协议映射**（见 §9）：内部可细、外部须稳。
 - **落盘**：周期性写入当前状态与 session 增量，应对不可捕获的强杀信号（FR-12.3b）——**一期未接入**（`SessionRecorder` 目前只记内存）。
-- **心跳**：任务级，与 runtime 心跳解耦（FR-10.1）；`Heartbeat(phase)` 已能发事件，但**调用点一期未接入**。
+- **心跳**：任务级，与 runtime 心跳解耦（FR-10.1）；间隔默认 30s、`XHUNTER_HEARTBEAT_INTERVAL` 可覆盖；`Heartbeat(phase)` 已能发事件，但**调用点一期未接入**。
 - **通道隔离**：事件流走 stdout，人类日志走 stderr，绝不混用（FR-11.4）。
-- **通道断裂即终止**（FR-10.4）：写 stdout 失败（EPIPE / 磁盘满）意味着消费者已不在或无法接收，此时**记录原因并终止**（环境错误，退出码 2）。
+- **通道断裂即终止**（FR-10.4）：写 stdout 失败（EPIPE / 磁盘满）意味着消费者已不在或无法接收，此时**记录原因并终止**（环境错误，退出码 1）。
 
 ### 7.6 H6 Session —— 会话材料与检查点恢复（`hunt.SessionRecorder`）
 
@@ -539,7 +538,7 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 
 1. 获取基线（按 SHA 浅克隆，不可得则完整克隆）→ **在基线 commit 上创建并推送任务分支**（已存在且 tip 为基线或其后代即幂等）→ **checkout 分支 tip（最后一个检查点）**——该状态即上次工作区，**无需重新执行任何写操作**
 2. 读回**会话材料**（`.xhunter/<session_id>/`，随检查点提交进分支，git 保证完整性）→ 台账出已完成轮次与写操作序列
-3. **零工具执行**：恢复过程不调用任何原语；材料损坏或 `schema_version` 不兼容 → 退出码 2，平台 fallback 重跑（FR-12.6）
+3. **零工具执行**：恢复过程不调用任何原语；材料损坏或 `schema_version` 不兼容 → 退出码 1，平台 fallback 重跑（FR-12.6）
 4. 回灌上下文（过 `ContextBuilder` 的压缩）→ 设为 `run.Messages`，从**下一轮**继续——不重做已完成轮次
 
 **代价（明确接受）**：检查点之间的改动（最多在途一轮）不在工作区里，由模型在续跑轮重做。用"最多一轮的 token"换掉"重放器 + 忠实性证明"。
@@ -575,9 +574,9 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 
 门禁**不是新工具**，而是 `check` 原语的具名条目——原语面是 9 个（5 基础 ＋ 3 符号 ＋ 1 门禁，另有控制原语 `checkpoint`），门禁不占新的工具名。
 
-**清单来源（按优先级，FR-5.2b）**：① **Bounty 下发**（平台显式配置，可覆盖或禁用仓库声明）② **仓库声明** `.xhunter/gates.yml` ③ 无 → 不设门禁。
+**清单来源（按优先级，FR-5.2b）**：① **Bounty 下发**（平台显式配置，可覆盖或禁用仓库声明）② **仓库声明**：仓库根的 `gates.yml`（不是 `.xhunter/` 下的引擎私有文件——别的工具也可以读它）③ 无 → 不设门禁。
 
-**仓库声明必须从基线 commit 读取**（`git show <base_commit>:.xhunter/gates.yml`），**不从工作区读取**（FR-5.2g）——要防的是**模型在任务中途削弱自己的门禁**：工作区可被 `edit`，而基线 commit 被任务分支钉住、不可改。**读取基线 = 冻结配置语义**。策略层另拒绝模型写该路径（纵深防御，FR-8.7）。门禁名随上下文注入模型。
+**仓库声明从基线 commit 读取**（`git show <base_commit>:gates.yml`），**不从工作区读取**（FR-5.2g）。理由不是"防谁篡改"，而是**判据必须在运行开始前定死**：门禁是这次交付的验收标准，让它运行中途变，这次结论就不可复现。**文件本身不限制修改**——模型写它照样进交付 diff 供人 review，只是本次不生效。门禁名随上下文注入模型。
 
 **格式**：
 
@@ -595,7 +594,7 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 | `argv` | **数组直启，不经 shell**——`;`、`&&`、`$()` 不被解释 |
 | `timeout` | 单门禁超时，独立于墙钟预算 |
 | `required` | 是否"必须通过才算交付成功"（见下） |
-| `expect` | **通过判据**：`exit_zero` / `empty_output`（如 `gofmt -l` 无输出即通过）/ `regex` / `max_warnings` |
+| `expect` | **通过判据对象**（`kind` 必填）：`exit_zero` ｜ `empty_output`（如 `gofmt -l` 无输出即通过）｜ `regex`（**找到至少一处匹配即通过**）｜ `max_count`（匹配次数 ≤ `max`）；`pattern` 为 **RE2 语法**，`max_count` / `regex` 时必填；`stream` 缺省 `stdout`（`stdout` ｜ `stderr` ｜ `both`）。**判据一律在全量输出上计算**——交给模型的输出会截断（FR-5.3），截断不得影响判定 |
 
 **`expect` 不是装饰**：`gofmt -l` 的通过判据是"输出为空"而非"退出码 0"；lint 是"警告数 ≤ N"。若一律按退出码判定，格式门禁会永远"通过"，等于没有。
 
@@ -603,7 +602,7 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 
 | 情形 | 含义 | 处理 |
 |---|---|---|
-| **执行失败**：命令不存在、无法创建进程、超时 | 环境或配置问题——**不是质量结论** | **环境错误（退出码 2）**，平台修好可重派 |
+| **执行失败**：命令不存在、无法创建进程、超时 | 环境或配置问题——**不是质量结论** | **环境错误（退出码 1）**，平台修好可重派 |
 | **判定不通过**：退出码非 0、输出越阈值 | 质量确实不达标 | 终态失败（若 `required`），并**抑制自动检查点**（FR-5.2c） |
 
 把两者混同的后果很具体：门禁命令名写错会被当成"代码质量差"，任务反复失败却永远修不好。
@@ -624,18 +623,18 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 
 **执行约束**：非交互环境 + 关闭子进程 stdin（FR-8.6）；输出截断（保留头尾）；工作目录为工作区根；**一期不强制网络隔离**，靠约定（`GOFLAGS=-mod=vendor`、离线安装）+ 超时兜底。
 
-**与交付状态的关系**（FR-6.5 的具体化）：**任一 `required` 门禁未通过，或从未运行 → 终态为失败（退出码 1），但改动照常交付**。"从未运行"也计入不通过——否则模型只要不跑门禁就能拿到成功状态。
+**与交付状态的关系**（FR-6.5 的具体化）：**任一 `required` 门禁未通过，或从未运行 → `status=failed`（**退出码仍为 0**——对话正常走完，失败是**证据**给的），但改动照常交付**。"从未运行"也计入不通过——否则模型只要不跑门禁就能拿到成功状态。
 
 **上报**：事件 `check_result` 的字段以**使用手册 §5**（外部事件契约 SSOT）为准，本文不另行定义；结果文件除 `gates` 汇总外，还须**列出未运行的门禁**（`passed: null`）。
 
-**任务本身就是改门禁时（FR-5.2h）**：默认"从基线读取"意味着新清单本次不生效，下次成为新基线后才生效（与 CI 惯例一致）。需要新清单本次生效时，**只能由 Bounty 显式授予**（`gates_source: "working_tree"`），并受三条护栏约束：**元门禁**（schema 合法 + 每个 `argv` 可启动）、**强度不得降低**（同名 `required` 门禁的 `argv`/`expect` 不得改动，只允许新增）、**显式上报**（`gate_config_changed` 事件 + 结果文件标注清单来源）。**模型拿不到豁免**：`gates_source` 只存在于 Bounty。
+**任务本身就是改门禁时（FR-5.2h）**：默认"从基线读取"意味着新清单本次不生效，下次成为新基线后才生效（与 CI 惯例一致）。需要新清单本次生效时，**只能由 Bounty 显式授予**（`gates_source: "working_tree"`），并受三条护栏约束：**元门禁**（schema 合法 + 每个 `argv` 可启动 + **`expect` 可判定**：`kind` 已知、字段齐备、`pattern` 能编译）、**强度不得降低**（同名 `required` 门禁的 `argv`/`expect` 不得改动，只允许新增）、**显式上报**（`gate_config_changed` 事件 + 结果文件标注清单来源）。清单文件不限制模型写，因此**三条护栏在豁免生效时是唯一防线**。**模型拿不到豁免**：`gates_source` 只存在于 Bounty。
 
 **执行主体：模型主调用 + 收尾自动补跑**（两级）：
 
 | 层 | 谁执行 | 时机 | 理由 |
 |---|---|---|---|
 | **主路径** | **模型**经 `check` 工具 | 模型判断"改完一批相关文件、值得验证"时 | 门禁（尤其测试）昂贵，模型的语义判断能避免在每次编辑后跑测试；这也让它与"检查点落在语义边界"一致 |
-| **兜底** | **执行体自动**（`Finalize`） | **收尾前**，对尚未通过的 `required` 门禁各跑一次 | ① "required 未运行"本身即判交付失败——模型若从未调用，整段工作白跑；② 此时工作区就是**最终交付物**，结论才有针对性 |
+| **兜底** | **执行体自动**（`Finalize`） | **收尾前**，对尚未通过的 `required` 门禁各跑一次 | ① 判据是证据：`required` 未运行意味着这次交付没有质量证据，照判失败——不是"为了不白跑"，而是"没有证据就算没通过"；② 此时工作区就是**最终交付物**，结论才有针对性 |
 
 **不做"每轮自动跑门禁"**：中间状态多为半成品，门禁必然失败 → 反而抑制检查点、增加丢失窗口，且墙钟成本可能翻倍。**自动化的价值在"交付前的那一道"，不在过程中的每一次。**
 
@@ -657,9 +656,8 @@ type Provider interface {
 }
 
 type Session interface {
-    Events() <-chan Event        // 流式：text / thinking / tool_use / permission_request / usage / end
-    Decide(reqID string, d Decision) error   // 应答权限询问（双向通道）
-    Cancel() error
+    Events() <-chan Event   // 流式：text / thinking / tool_use / usage / end
+    Cancel() error          // 控制面：中止一次挂起的流，不必"被问到"才能生效
 }
 ```
 
@@ -667,7 +665,7 @@ type Session interface {
 
 | 要点 | 原因 |
 |---|---|
-| `Events()` 与 `Decide()` 分离 | 权限询问需要**双向**通道，不是单向流 |
+| 只有 `Events` / `Cancel` 两个方法 | 单向的数据面 ＋ 一个可从消费之外触达的控制面；**没有权限应答通道**——无人值守下不存在"等人回答"这一步（§10.3） |
 | `Caps` 能力声明 | 不同 Provider 支持并行工具调用、结构化输出、思考块的能力不同，编排需据此降级 |
 | 不使用具体供应商类型 | 结构上保证 Harness 不依赖任何一家 |
 | 流式而非一次性 | 中断、预算、心跳都依赖增量进度 |
@@ -675,50 +673,48 @@ type Session interface {
 **能力声明的最小集合**：
 
 ```go
+// 只声明**当前真正被用到**的能力；行为类字段等有消费方再加。
 type Caps struct {
-    ParallelToolCalls   bool
-    StructuredOutput    bool
-    ThinkingBlocks      bool
-    PermissionCallback  bool   // 是否支持运行时权限询问
-    UsageReporting      bool   // 是否回报 token 用量
-    MaxContextTokens    int    // 来自预置配置，不探测、不估算（FR-9.5）
+    MaxContextTokens int    // 来自投递（环境变量），不探测、不估算（FR-9.5）
 }
 ```
 
-**能力类字段分两类，降级规则不同**：
+**只声明用到的能力，不预埋降级逻辑**：
 
-| 类别 | 字段 | 缺失时 |
-|---|---|---|
-| **上限类** | `MaxContextTokens` | **不得估算**：必须来自预置配置（内置模型目录 → 用户配置覆盖），都没有则启动期显式失败（FR-9.5） |
-| 行为类 | `ParallelToolCalls`、`StructuredOutput`、`ThinkingBlocks`、`PermissionCallback` | 降级（不支持并行则串行、不支持权限回调则走预裁决） |
-| 用量类 | `UsageReporting` | 本地估算，误差自校正 |
+| 类别 | 现状 |
+|---|---|
+| **上限类** | `MaxContextTokens`：**不得估算**——必须来自 `XHUNTER_MODEL_CONTEXT_TOKENS`，缺失则启动期显式失败（FR-9.5） |
+| 行为类（并行工具调用 / 结构化输出 / 思考块） | **代码里没有这些字段**，因为**没有消费方**：引擎一期串行执行工具、工具调用本身就是结构化的、中立事件没有思考块槽位（协议包刻意不接收）。等到有消费方再加，**加的时候连降级规则一起写**——预埋没人读的字段，读者会以为那条降级路径存在 |
+| 用量类（「上游不回用量」） | **不估算、如实上报**（FR-9.7）：上游未回报用量时，事件流发 `degraded`（`scope: "usage"`）、结果文件标 `usage.reported: false`。**不得用拍出来的数字去触发或不触发 token 预算** |
 
 **不允许"缺了就静默不工作"**；也确实不允许"缺了就静默猜一个"。上限猜错的两个方向都有代价：偏高在任务中途硬失败，偏低静默拉低所有同类任务的效率。
 
-**上限精确、用量近似**：窗口上限是配置出来的确定值，而"当前用了多少"只能估算（需要在下发请求前就知道大小，无法依赖供应商回报）。因此硬上限取配置窗口的 90%，**这 10% 之差正是用于吸收 token 估算误差的安全边际**（FR-9.6）。
+**上限精确、用量近似**：窗口上限是配置出来的确定值，而"当前占了多少上下文"只能估算（需要在下发请求前就知道大小，无法依赖供应商回报）。因此硬上限取配置窗口的 90%，**这 10% 之差正是用于吸收 token 估算误差的安全边际**（FR-9.6）。
 
-### 8.1 Provider 配置（供应商是部署期决策，不是编译期决策）
+**两个"用量"别混**：① **上报口径的用量**（token 预算与结果文件）来自**上游回报**，**不估算**——不可得就如实标注（FR-9.7）；② **上下文占用的估算**（压缩触发）必须本地估，因为下发请求前拿不到确切换算大小，上面那 10% 安全边际就是为它留的。前者宁缺毋假，后者必须有数。
 
-Provider Adapter 是唯一知道供应商的地方（INV-1），但它**不把供应商写进代码**。连接参数与能力上限来自配置（公开包 `providerconfig/`，形态见 `xhunter-usage.md` §4）：
+**用量的口径由中立契约统一**（三家协议各自翻译，翻译规则写在各自包注释的「用量口径」里）：**输入 = 全部输入**（含缓存读、也含缓存写）、**输出 = 全部生成**（含思考 token）、**缓存读是输入的子集**（`cached ≤ input`）。取"全部输入"而不是服务端原生的"非缓存部分"，是因为预算是"消耗了多少"——缓存命中同样占窗口、同样计入速率额度。**输出侧没有缓存**：被缓存的是请求前缀，命中永远记在下一次请求的输入上。
+
+### 8.1 模型接入（供应商是部署期决策，不是编译期决策）
+
+Provider Adapter 是唯一知道供应商的地方（INV-1），但它**不把供应商写进代码**。连接参数与能力上限来自**环境变量**（公开包 `providerconfig/` 给出变量名与解析规则，形态见 `xhunter-usage.md` §4）：
 
 ```
-用户配置（覆盖片段） ─┐
-                     ├─► Merge ─► 生效配置 ─► Resolve(provider, model) ─► Caps
-内置模型目录 ────────┘
+XHUNTER_* ─► FromEnv ─► Resolved（协议 · 端点 · 鉴权头 · 模型上限） ─► Caps
 ```
 
 推论：
 
-1. `limit.context` → `Caps.MaxContextTokens`，`limit.output` → 压缩公式的输出预留，**直接落实 FR-9.5 与 FR-9.6**；
-2. 新增供应商或模型 = 改配置，不改核心——与"扩展把符号能力外挂"是**同一手法**：把编译期决策降级为部署期选择；
-3. 凭据是配置里的 `{env:VAR}` **引用**，值仍在环境变量中（FR-1.2、FR-8.4）；配置结构里没有任何字段承载凭据明文；
-4. 未命中目录且未配置 → 启动期失败（退出码 2），与既有的 `MaxContextTokens <= 0` 检查合流。
+1. `XHUNTER_MODEL_CONTEXT_TOKENS` → `Caps.MaxContextTokens`，`XHUNTER_MODEL_OUTPUT_TOKENS` → 压缩公式的输出预留，**直接落实 FR-9.5 与 FR-9.6**；
+2. 新增供应商或模型 = 设一组环境变量，不改核心——与"扩展把符号能力外挂"是**同一手法**：把编译期决策降级为部署期选择；
+3. 凭据值只从环境变量来（`XHUNTER_API_KEY`，或 `XHUNTER_HEADERS` 里的 `{env:VAR}` 引用）；代码、事件流、日志与交付物里没有任何字段承载凭据明文（FR-1.2、FR-8.4）；
+4. 缺上限或缺端点 → 启动期失败（退出码 1），与既有的 `MaxContextTokens <= 0` 检查合流。
 
 **分层与落点**（协议实现只管协议，装配归组装层）：
 
 ```
-配置（SDK + baseURL + 凭据引用 + 模型上限）
-   │  组装层：按 SDK 取针对性工厂（厂商特有的连线方式在这里落地）
+环境变量（协议 + 端点 + 鉴权 + 模型上限）
+   │  providerconfig.FromEnv：解析与校验（缺项一次报出，退出 1）
    ▼
 providerconfig.Resolved ──► provider/<protocol> 的构造函数 ──► 协议客户端
                                                               │
@@ -731,8 +727,8 @@ providerconfig.Resolved ──► provider/<protocol> 的构造函数 ──► 
 | `provider/openaichat/` | **一个协议**：OpenAI 兼容对话补全（按角色平铺消息 + 分片流式） |
 | `provider/openairesponses/` | **一个协议**：OpenAI Responses（类型化条目 + 语义事件流，以 `response.completed` 收尾） |
 | `provider/anthropicmessages/` | **一个协议**：Anthropic Messages（顶层系统提示 + 内容块，以 `message_stop` 收尾） |
-| `providerconfig/` | **配置模型与解析**：连接事实（`Resolved`）出自这里，由组装层消费，因此它是公开契约而非内部实现 |
-| 组装层（`cmd/xhunter`） | **厂商表**：SDK 值 → 针对性工厂。唯一知道"有哪些协议、哪个值对应哪一个、针对已知厂商怎么连线（默认端点、凭据头的名称与前缀、必填的协议头）"的地方 |
+| `providerconfig/` | **接入事实的环境变量契约**：变量名、解析与校验规则、`Resolved`；由组装层消费，因此它是公开契约而非内部实现 |
+| 组装层（`cmd/xhunter`） | **协议表**：协议取值 → 针对性工厂。唯一知道"有哪些协议、哪个取值对应哪一个"的地方——端点与鉴权形状不在这里，它们都是环境变量 |
 
 协议实现都以普通构造函数对外，参数是已经解析好的连接事实；线格式类型一律不导出。
 
@@ -740,7 +736,7 @@ providerconfig.Resolved ──► provider/<protocol> 的构造函数 ──► 
 
 **协议版本基线写在包注释里**：每个协议包的包注释都有一段「协议版本基线」，写清**端点**、**版本标识**（如 `anthropic-version: 2023-06-01`；对话补全与 Responses 无版本头，记形状本身）、**形状基线**（具体的字段与事件序列）、**结束语义**（谁容忍缺失、谁严格要求）、**什么情况下才需要动这个包**。改动协议前先读那一段，就不必重新翻协议文档。
 
-**端点不预设、鉴权可配置**：实现里不含任何厂商地址（`baseURL` 一律来自配置）；鉴权形状由配置的请求头决定（值支持 `{env:VAR}` 引用，可带前缀），`apiKey` 只是"补一个标准 Bearer"的便捷形式。因此接一家厂商是写配置，接一种**协议**才是写代码。
+**端点不预设、鉴权可配置**：实现里不含任何厂商地址（端点一律来自 `XHUNTER_BASE_URL`）；鉴权形状由环境变量给出的请求头决定（`XHUNTER_HEADERS` 的值支持 `{env:VAR}` 引用，可带前缀），`XHUNTER_API_KEY` 只是"补一个标准 Bearer"的便捷形式。因此接一家厂商是设环境变量，接一种**协议**才是写代码。
 
 | 在边界内（协议实现独占） | 在边界外（中立类型） |
 |---|---|
@@ -749,15 +745,15 @@ providerconfig.Resolved ──► provider/<protocol> 的构造函数 ──► 
 四条结构约束：
 
 1. **上游线格式类型不导出**——请求与分片的结构体只在协议包内可见，于是"顺手引用某个上游字段"这件事在类型层面就不成立，挽具不会随时间被磨掉；
-2. **协议实现不含装配知识**——它不知道配置里的哪个 SDK 值会选中自己，不做注册、也不提供工厂；构造参数是已经解析好的连接事实（端点、模型、鉴权头值、上限）。因此协议包不依赖配置模型，可以脱离本项目的配置体系被独立复用；
-3. **装配归组装层**——"SDK 值 → 协议实现 + 厂商特有的连线方式"集中在组装层的厂商表：通用形态（OpenAI 兼容）与已知厂商（鉴权头的名称与前缀、端点约定、需要补的请求头）各占一个针对性工厂。接一家新厂商 = 加一条，协议实现与 Harness 都不动；空值与 `builtin` 落到通用形态。**协议之间不互相引用**，共享件下沉到 `provider/adapter`——互相引用会构成导入循环，编译期即失败；
-4. **启动期失败**——缺模型上限、缺端点、凭据引用解析为空、SDK 在厂商表里没有对应工厂，都在构造期返回环境错误（退出码 2），不留到运行中途：无人值守时中途失败意味着已消耗的轮次与预算全部作废。最后一类的错误信息要指出答案在组装层（协议实现不做注册），并列出已装配的项——"配置里写错协议名"与"组装层没加这一条"是两种故障，应当能直接区分。
+2. **协议实现不含装配知识**——它不知道哪个协议取值会选中自己，不做注册、也不提供工厂；构造参数是已经解析好的连接事实（端点、模型、鉴权头值、上限）。因此协议包不依赖任何配置模型，可以脱离本项目的接入体系被独立复用；
+3. **装配归组装层**——"协议取值 → 协议实现"集中在组装层的协议表（`protocolFactories`）。接一种新**协议** = 加一条绑定，协议实现与 Harness 都不动；接一家新**厂商** = 设一组环境变量，连组装层都不动。**协议之间不互相引用**，共享件下沉到 `provider/adapter`——互相引用会构成导入循环，编译期即失败；
+4. **启动期失败**——缺模型上限、缺端点、引用解析为空、组装层的协议表里没有该取值，都在构造期返回环境错误（退出码 1），不留到运行中途：无人值守时中途失败意味着已消耗的轮次与预算全部作废。最后一类的错误信息要指出答案在组装层（协议实现不做注册），并列出已装配的项——"环境变量里写错了协议名"与"组装层还没接这种协议"是两种故障，应当能直接区分。
 
 **事件序列即协议状态**：流的结束以通道关闭表达，而"正常结束"与"中断"的区别由最后一条事件表达（`EvError` 带结构化错误与可重试性）。适配器因此不需要另给返回码，调用方也不会漏查——半截响应被静默当成完整回答，是比直接失败危险得多的错误。同理，**形状不成立的调用照常上报**（参数不是合法 JSON、工具名不认识、字段未知），由绑定层作为失败结果回灌：丢掉它，模型永远不知道自己发错了什么。
 
-**目录快照的来源与边界**：来源①是本地快照 `~/.xhunter/models.json`，**安装时**从 LiteLLM 价格与上下文窗口目录拉取并转换，`xhunter models update` 手动刷新。**运行期只读本地快照、不联网**。快照同时携带每 token 单价，供 H4 的费用预算维度使用（FR-9.1）。
+**没有目录、也没有配置文件**：模型接入事实只有环境变量一处来源。曾经的"本地目录快照 + 用户配置覆盖"三层解析已经移除——它带来的是"哪一层优先"的解释成本与"配置说是 A、运行用了 B"的漂移面，而一台机器上的接入事实本来就是固定的。
 
-**校验的层次**：配置文件既可以是完整定义，也可以是覆盖片段，因此**结构校验在解析时、生效校验在合并之后**——覆盖片段允许只给一半字段，但生效配置必须齐备。
+**校验只有一处**：`FromEnv` 在启动期一次完成全部校验（缺项、取值非法、请求头形状、引用可展开）。只有一份事实，也就只有一个校验点，不存在"解析放行、合并之后才发现缺件"的两段式。
 
 ---
 
@@ -778,13 +774,13 @@ providerconfig.Resolved ──► provider/<protocol> 的构造函数 ──► 
 | 外部事件 | 产生位置（实现侧，非契约） | 说明 |
 |---|---|---|
 | `hunt_start` | `Prepare` / 组装层 | |
-| `assistant_text` | 收流（如需外部可见） | 流式增量合并后输出 |
+| `assistant_text` | 收流 | 流式增量合并后输出——**必发**：最终答复是交付物的一部分（任务可能只要那份小结） |
 | `tool_call` | `OnTurn` 执行前 | |
 | `tool_result` | `OnTurn` 执行后（`emitToolResult`） | 载荷含 `tool` / `ok` / `summary`（失败再加 `error` / `message`） |
 | `policy_denied` | `Policy.Decide` 拒绝分支 | 必须上报，不得静默 |
 | `assumption` | 业务（暂未产出） | 替代追问的假设外化 |
 | `check_result` | `check` 原语（一期未接入） | 具名门禁结果 |
-| `usage` | `OnTurn` / 收尾 | 用量 |
+| `usage` | `OnTurn`（每轮末，**增量**）／`hunt_end`（收尾，**累计**） | 用量 |
 | `heartbeat` | `EventSink.Heartbeat`（调用点一期未接入） | 阶段 ＋ 已用时 |
 | `context_compacted` | `ContextBuilder`（一期未接入） | 命中层级 + 释放 token 量（FR-14.7） |
 | `degraded` | 提示词插件 / 符号降级 | 非致命降级：跳过了什么、为什么 |
@@ -844,7 +840,6 @@ flowchart TD
     A5b --> B1
     B8 -->|是| C1
 
-    B2 -.->|permission_request| D1["H4 裁决 → Decide<br/>连续拒绝计数"]
     B5 -.->|deny| D2["policy_denied 上报<br/>+ 拒绝原因回灌"]
     B6 -.->|崩溃 / 强杀| D3["落盘 → 平台重派"]
     D3 -.->|回到 resume| A4
@@ -857,7 +852,7 @@ flowchart TD
 **读图三要点**：
 
 1. **启动阶段只有一个分歧点**——`session` 是否为空。跨机器 failover（崩溃 → 平台重派）走的也是 `resume` 这条路，因此它不是异常分支，而是设计内的正常路径。
-2. **主循环里箭头顺序即约束**：`轮边界收调用 → 裁决 → 执行（含只读定位） → 落盘`。裁决先于落盘（INV-10），因此策略能在写入之前拦下调用；符号原语的只读定位属于执行的一部分，其算出的**影响面**目前只有原语自己看得到——按影响面裁决待 M2。
+2. **主循环里箭头顺序即约束**：`轮边界收调用 → 裁决 → 执行（含只读定位） → 落盘`。裁决先于落盘（INV-10），因此策略能在写入之前拦下调用；符号原语的只读定位属于执行的一部分，其算出的**改动规模只如实上报**（作为变更说明的证据），**不参与裁决**。
 3. **收尾不是"成功专属"**——校验未通过时同样走到 C1，patch 照常交付、状态标失败（FR-6.5）；崩溃路径则回到 `resume`，与启动阶段共用同一条恢复管线。
 
 ### 10.2 主循环一轮
@@ -886,39 +881,28 @@ Prepare（业务，循环前一次）
      └─ 返回「是否继续」；本轮无 tool_call → harness 收敛为成功
 
 Finalize（业务，循环后一次，成败都跑）
-  ├─ 交付闸门（全程零写操作 → no_output 失败）
+  ├─ 采纳模型声明的终态 status（引擎不覆盖；证据判失败除外）
   ├─ Git.Commit（交付提交）→ Git.Diff（deliverable）
   ├─ SessionRecorder.Snapshot → Git.Clean
   └─ Sink.Emit(hunt_end) → 终态 ＋ 退出码
 ```
 
-### 10.3 权限询问应答（无人类场景的关键路径）
+### 10.3 权限裁决只在调用点（没有「权限询问」这条路径）
 
-> **一期状态**：`Provider` 侧还没有权限询问事件（`llm.Event` 无该形态），这条路径**尚未接入**；下面是它的形状与职责划分。
+**无人类，就没有可问的对象。** 因此这条路径不是"待接入"，而是**不存在**：
 
-模型在运行中可能发起权限询问（是否允许执行某操作）。**无头环境下没有人类可以回答，必须由 Policy 顶替。**
+- **线上也没有它**：三家协议的流式事件里都没有"请求授权"的形态——模型要动手，就是发一个工具调用；
+- **模型没有向人提问的途径**：内核条款禁止提问、请求确认、等待输入，也不得请求权限（FR-7.2）；
+- **唯一的裁决点在调用点**：`Policy.Decide` 在每次工具调用被执行之前裁一次（L5 ②），拒绝即回灌原因并上报 `policy_denied`（INV-4）。
 
 ```
-Provider ──permission_request{tool, input}──► Policy（业务侧）
-                                                    │
-                                          ┌─────────┴─────────┐
-                                          ▼                   ▼
-                                     allow                deny
-                                          │                   │
-                                          │                   └─► 上报 policy_denied
-                                          │                       ＋ 回灌拒绝原因给模型
-                                          ▼
-                              把决定回填给 Provider（流内必答）
-                                          │
-                                          ▼
-                                  Provider 继续本轮推理
+工具调用 ──► Policy.Decide（原语 ＋ 参数） ──┬─ allow ──► 执行 → 唯一写盘入口
+                                          └─ deny  ──► 原因回灌模型 ＋ policy_denied 上报
 ```
 
-**设计要点**：
+**为什么刻意不留这条路**：任何"运行期问一句"的机制，在无人值守下只能落到两种结局——没人回答就默认放行，或者没人回答就卡住。前者等于把权限面交给供应商行为（与 INV-2 同源的错误），后者是标准的死锁源。需要人工确认的场景（敏感仓库、危险操作）应当放在**投递之前**：由人审阅 Bounty 与授权范围，而不是把它塞进运行段。
 
-1. **应答必须是裁决结果，不能是无条件放行。** 无条件 allow 会让策略层形同虚设——模型的每一次越界都变成既成事实。
-2. **拒绝要回灌原因**，让模型能换策略，而不是反复撞同一堵墙。
-3. **连续拒绝计数**进入终止条件（阈值触发即失败退出）。
+**连带的口径**：`llm.Session` 只有 `Events` / `Cancel`——取消不必"被问到"才能生效；`llm.Caps` 里也没有 `PermissionCallback`。
 
 ### 10.4 会话恢复（session 非空）
 
@@ -935,7 +919,7 @@ Bounty(session) ──► H6.Session
                   H1.Loop 进入 assemble，从断点续跑
 ```
 
-恢复失败（任一步骤）：退出码 2，平台侧 fallback 到全新任务重跑（FR-12.6）。
+恢复失败（任一步骤）：退出码 1，平台侧 fallback 到全新任务重跑（FR-12.6）。
 
 ### 10.5 原语的寻址与裁决
 
@@ -961,7 +945,7 @@ Bounty(session) ──► H6.Session
   结果 →（Filters 加工）→ 回灌模型 ＋ tool_result 事件
 ```
 
-**顺序要点**：裁决先于落盘（INV-10），且**寻址由原语自己解释**——不被"分发层"这个中间概念约束：符号能力缺失时是否降级、降级到什么路径，由原语决定并如实上报（FR-4.12、FR-4.13）。影响面裁决（需要只读定位先行）待 M2 接入。
+**顺序要点**：裁决先于落盘（INV-10），且**寻址由原语自己解释**——不被"分发层"这个中间概念约束：符号能力缺失时是否降级、降级到什么路径，由原语决定并如实上报（FR-4.12、FR-4.13）。改动规模只上报、不裁决——不做影响面阈值（终局无人 review，判据来自证据而非规模偏好）。
 
 ---
 
@@ -974,7 +958,7 @@ Bounty(session) ──► H6.Session
 | INV-1 | Harness 代码中不出现任何模型供应商的名字 |
 | INV-2 | 工具执行永远在核心侧（业务 handler），**不委托 Provider** |
 | INV-3 | 任何路径都能收敛到显式终态，无静默挂起 |
-| INV-4 | 权限询问必须经 Policy 裁决，禁止无条件放行 |
+| INV-4 | **权限裁决只出自 Policy，且只在调用点**：不存在"权限询问"路径，因此也没有"无条件放行"可放的地方（§10.3） |
 | INV-5 | 外部事件协议只能追加，不可修改或删除已发布字段 |
 | INV-6 | stdout 仅有外部事件，日志一律走 stderr |
 | INV-7 | 凭据不进入上下文、事件流与 patch |
@@ -1012,7 +996,7 @@ Bounty(session) ──► H6.Session
 | IA-1.8 | **工具调用不由引擎执行**：引擎只收 `turn.Text` / `turn.Calls`，只读 `turn.Results` / `turn.Failed` | 代码检查：`harness` 里没有任何执行或写盘调用 |
 | IA-1.9 | **收尾在每条退出路径上都跑**（含 panic、初始化失败、轮数上限） | `TestEngine_PanicBecomesEnvFailureAndFinalStillRuns`、`TestEngine_PrepareFailureStopsBeforeInference` |
 | IA-1.10 | 缺 provider → 构造期错误，不是运行期失败 | `TestNew_RequiresProvider` |
-| IA-1.11 | 推理失败 / 流内错误 → 环境错误（退出 2），且流错误不进入轮边界 | `TestEngine_InferFailureIsEnvError`、`TestEngine_StreamErrorIsEnvError` |
+| IA-1.11 | 推理失败 / 流内错误 → 环境错误（退出 1），且流错误不进入轮边界 | `TestEngine_InferFailureIsEnvError`、`TestEngine_StreamErrorIsEnvError` |
 | IA-1.12 | `OnTurn` 报错 → `failed/1`，原因标明阶段与原因 | `TestEngine_OnTurnErrorIsFailed` |
 
 ### 12.2 H2 — `hunt.ContextBuilder`
@@ -1056,21 +1040,22 @@ Bounty(session) ──► H6.Session
 | IA-3.12 | 输出超限时标注截断位置与总量，并给出可直接照抄的续读起点；**行号是文件真实行号**（按行范围读取从请求起点起算，不从 1 重来） | `TestRead_OversizeTruncatesWithContinuationHint`、`TestRead_LineRangeIsHonoured`（basic）、`TestRead_ReportsFirstLineOfRange`（osfs） |
 | IA-3.13 | **原语不自己判路径、不自己落盘**：越界路径 / 非法模式由工作区拒绝，原语只产出编辑计划 | `TestWrite_InvalidPathPropagates`、`TestGlob_InvalidPatternPropagates`、`TestRead_MissingFileIsError` |
 | IA-3.14 | 新建只建新文件：目标已存在 → `file_exists`（可重试 ＋ 指向 `edit`），且不产出编辑 | `TestWrite_ExistingFileIsRejectedWithGuidance` |
-| IA-3.15 | 未实现的原语给出**可解释结果**而非执行失败：`not_implemented` ＋ 不可重试 ＋ 零编辑 | `TestFind_ReportsNotImplemented`、`TestSymbolics_ReportNotImplemented`、`TestCheck_ReportsNotImplemented` |
+| IA-3.15 | 未实现的原语给出**可解释结果**而非执行失败：`not_implemented` ＋ 不可重试 ＋ 零编辑 | `TestSymbolics_ReportNotImplemented`、`TestCheck_ReportsNotImplemented` |
+| IA-3.19 | **内容检索**（FR-2.2）：命中带**文件与真实行号**；`path` / `scope` 收窄范围、范围之外不得命中；**「未找到」是结论而非错误**（成功结果 ＋ 说清范围与扫描量）；命中超上限时只显示前 N 处而**总量照报**；跳过的大文件与读取失败一律如实附注（不得静默），零编辑 | `TestFind_MatchesWithLineNumbers`、`TestFind_NoMatchIsSuccessWithExplicitText`、`TestFind_ScopeLimitsSearch`、`TestFind_PathLimitsToSingleFile`、`TestFind_TruncatesHitsButReportsTotal`、`TestFind_RequiresLiteral`（basic） |
 | IA-3.16 | **门禁不是任意命令执行**：`check` 的参数面精确等于 `{name}`，`required` 只有 `name` | `TestCheck_DeclSurfaceIsExactlyTheGateName` |
 | IA-3.17 | 符号原语只走符号寻址：参数面里没有内容寻址槽位（无降级形态） | `TestSymbolics_SurfaceHasNoContentAddressingSlot`、`TestSymbolics_DeclShapes` |
 | IA-3.18 | **装配缺件显式失败**：`Prepare` 缺 git / opener / policy 时返回指明缺件的错误（不是 panic、也不是静默放行）；`policy` 缺失时工具调用**默认拒绝**且不产生任何落盘 | `TestPrepare_IncompleteAssemblyFailsLoudly`、`TestExecuteCall_MissingPolicyFailsClosed`（hunt） |
 
 ### 12.4 H4 — `hunt.Policy`
 
-**契约**：`Decide(ctx, Call) (Decision, error)` / `Charge(llm.Usage)` / `Exhausted(TurnNo) (bool, string)`（`Answer` / `ObserveFailure` / `DeniedCount` 待接入）。无人类场景下它是唯一顶替人的位置，默认拒绝。
+**契约**：`Decide(ctx, Call) (Decision, error)` / `Charge(llm.Usage)` / `Exhausted(TurnNo) (bool, string)`（`ObserveFailure` / `DeniedCount` 待接入）。无人类场景下它是唯一顶替人的位置，默认拒绝。
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
-| IA-4.1 | 裁决输入是「原语 ＋ 参数（路径）」；影响面维度待接入（FR-8.7、AC-16） | 代码检查 |
+| IA-4.1 | 裁决输入是「原语 ＋ 参数（路径）」——**没有改动规模维度**（不做影响面阈值；规模只上报） | 代码检查 |
 | IA-4.2 | 拒绝必须携带原因，且原因随结果回灌给模型；同时上报 `policy_denied` | `TestExecuteCall_PolicyDenialIsReported`（hunt） |
 | IA-4.3 | 被拒操作**零落盘** | `TestExecuteCall_PolicyDenialIsReported`、`TestExecuteCall_MissingPolicyFailsClosed`（hunt） |
-| IA-4.4 | 权限询问禁止无条件放行（INV-4） | **待接入**（Provider 侧尚无该事件） |
+| IA-4.4 | **不存在权限询问路径**：`llm.Session` 只有 `Events` / `Cancel`，`llm.Event` 没有"请求授权"形态；裁决只发生在调用点 | 代码检查（接口面） |
 | IA-4.5 | 读与门禁放行、写按路径裁决、**未知原语默认拒绝** | `TestDecide_ReadAndGateAllowed`、`TestDecide_WriteAllowed`、`TestDecide_UnknownPrimitiveDenied` |
 | IA-4.6 | 路径边界：绝对路径 / `..` 逃逸 / `.xhunter/**` 拒绝，`skills.draft/**` 放行 | `TestDecide_PathEscapeDenied`、`TestDecide_WriteToControlDirDenied`、`TestDecide_WriteToSkillsDraftAllowed` |
 | IA-4.7 | 三重预算独立判定，耗尽给出维度名；0 = 不限 | `TestChargeAndExhausted_Tokens`、`TestExhausted_Turns`、`TestExhausted_WallClock`、`TestExhausted_ZeroMeansUnlimited` |
@@ -1087,7 +1072,7 @@ Bounty(session) ──► H6.Session
 |---|---|---|
 | IA-5.1 | 事件行形状：一行一条 JSON、`type` 在顶层、载荷**摊平**（与使用手册 §5 一一对应） | `TestEventSink_EmitsFlatJSONLine` |
 | IA-5.2 | stdout 只有外部事件行，合法 NDJSON；日志一律 stderr | **待补**（端到端断言，AC-9） |
-| IA-5.3 | **事件写入失败 → 上抛**，不得静默继续（FR-10.4、AC-19）：出口记住第一次失败，装配层据此以退出码 2 收敛并记原因 | `TestEventSink_RemembersFirstWriteFailure`、`TestEndToEnd_BrokenEventChannelIsEnvError`（cmd，读端已关的管道） |
+| IA-5.3 | **事件写入失败 → 上抛**，不得静默继续（FR-10.4、AC-19）：出口记住第一次失败，装配层据此以退出码 1 收敛并记原因 | `TestEventSink_RemembersFirstWriteFailure`、`TestEndToEnd_BrokenEventChannelIsEnvError`（cmd，读端已关的管道） |
 | IA-5.4 | 心跳按任务输出（非 runtime），携带阶段与已用时 | **待接入**（`Heartbeat` 已实现，调用点未接入） |
 | IA-5.5 | **每次工具调用恰好一条 `tool_result`**（成功、原语报错、执行失败、落盘失败、名字不认识、参数绑定失败、检查点都有），且必带 `call_id` / `tool` / `ok` / `summary` / `duration_ms`，失败再加 `error` / `message` | `TestExecuteCall_EveryOutcomeEmitsOneToolResult`、`TestExecuteCall_SuccessRecordsOpsAndSummary`（hunt） |
 | IA-5.6 | 失败信息自含足以远程定位的上下文 | 代码检查（FR-11.5） |
@@ -1105,11 +1090,11 @@ Bounty(session) ──► H6.Session
 | IA-6.1c | **提交强制加入**（`add -f`）：仓库 `.gitignore` 忽略 `.xhunter/` 时材料仍随检查点提交 | **待接入** |
 | IA-6.2 | **恢复过程零工具执行**：不重放写操作 | **待接入**（恢复未实现） |
 | IA-6.3 | 恢复从**下一轮**继续，不重做已完成轮次 | **待接入**（FR-12.1） |
-| IA-6.4 | 材料带 `schema_version`；不兼容 → 环境错误（退出码 2），不自动迁移 | **待接入**（FR-12.6） |
+| IA-6.4 | 材料带 `schema_version`；不兼容 → 环境错误（退出码 1），不自动迁移 | **待接入**（FR-12.6） |
 | IA-6.5 | 材料含扩展能力指纹；不一致**只记录、不阻断** | **待接入**（FR-13.7） |
 | IA-6.5b | **材料不可被模型篡改**：写 `.xhunter/**` 被策略拒绝；模型无 git 操作能力 | `TestDecide_WriteToControlDirDenied`（策略侧）；git 侧靠工具面不含 git 原语 |
 | IA-6.6 | `Snapshot` 不阻断主流程；失败只记录 | 代码检查（`Session.snapshot` 只记 warn，FR-12.3b） |
-| IA-6.7 | 写操作记录是交付物存在性判定的唯一依据（交付闸门） | 代码检查（`Finalize` 以 `len(s.ops)` 判定） |
+| IA-6.7 | **无"按写操作数量判失败"的闸门**：交付物是否存在，看结果文件里的改动清单与最终答复（`summary`） | 代码检查（`Finalize` 不设该闸门）；用例：`TestFinalize_TextOnlyDeliverySucceeds`（全程零写、只有小结 → 成功） |
 | IA-6.8 | 凭据不得进入材料（与事件流同规则） | **待补**（断言扫描，FR-8.4、AC-8） |
 
 ### 12.7 H7 — `ext.ExtHost`
@@ -1130,8 +1115,8 @@ Bounty(session) ──► H6.Session
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
-| IA-8.1 | `MaxContextTokens` 缺失 → 启动期环境错误，**不得估算继续** | `TestProviderFor_PropagatesMissingContextWindow`、`TestNew_FailsAtStartupWhenFactsAreMissing` |
-| IA-8.2 | `Events()` 与 `Decide()` 分离（双向通道） | 接口形状 |
+| IA-8.1 | 模型上限缺失 → 启动期环境错误，**不得估算继续** | `TestFromEnv_ReportsAllIssuesAtOnce`（providerconfig）、`TestProviderFor_PropagatesMissingContextWindow`、`TestNew_FailsAtStartupWhenFactsAreMissing` |
+| IA-8.2 | `Session` 只有 `Events` / `Cancel`：数据面单向、控制面可从消费之外触达；**不含权限应答通道** | 代码检查：`llm.Session` 的方法集 |
 | IA-8.3 | 工具执行不委托 Provider（INV-2） | 代码检查：`llm.Provider` 的方法集只有 `Infer` / `Capabilities`（**待补**：把方法集断言写成用例） |
 | IA-8.4 | 核心代码不出现供应商名字（INV-1） | **待补**（源码静态扫描，原先在 `harness` 侧，重构后需重建） |
 | IA-8.5 | 协议实现不含供应商硬编码：端点、鉴权头、上限全部来自构造参数 | `TestNew_BuildsEndpointAndDeclaresWindow`、`TestNew_BuildsEndpointAndPassesHeadersThrough`、`TestNew_AppliesProtocolHeadersAndLetsConfigOverride` |
@@ -1139,11 +1124,11 @@ Bounty(session) ──► H6.Session
 | IA-8.7 | **流中断不得静默**（→ `EvError` 带可重试性）；**协议层不解释参数**，形状不成立的调用由绑定层拒绝并回灌 | `TestInfer_TruncatedStreamIsExplicit`、`TestInfer_DoesNotInterpretArguments`、`TestBindToolCall_RejectsShapesThatWouldExecuteTheWrongThing` |
 | IA-8.8 | 工具调用按位置配对拼装：参数分片跨块到达、同一响应多个调用都不串台 | `TestInfer_AssemblesRawToolCallsAcrossChunks`、`TestInfer_AssemblesRawFunctionCallFromDeltas`、`TestInfer_AssemblesRawToolUseFromJSONDeltas` |
 | IA-8.9 | 工具有声明才下发参数形状；无声明时不下发空壳（协议要求必填的除外） | `TestInfer_SendsProtocolRequest`、`TestToWireTools_PassesSchemaThrough` |
-| IA-8.10 | **协议实现不含装配知识**：不知道配置里的哪个 SDK 值会选中自己，不做注册、不提供工厂，构造签名不依赖配置模型 | 代码检查：`provider/<protocol>` 不 import `providerconfig` |
-| IA-8.11 | **装配集中在组装层**：SDK 值 → 针对性工厂的映射只出现在 `cmd/xhunter`；未装配的 SDK 在启动期失败，错误指向组装层并列出已装配项 | `TestProviderFor_UnknownSDKTellsWhereToAddAFactory`、`TestProviderFor_BuildsEveryKnownProtocol` |
-| IA-8.12 | **端点与鉴权都由配置决定**：缺 `baseURL` 启动期失败；`headers` 支持 `{env:VAR}` 引用（含带前缀写法），`apiKey` 只是便捷形式 | `TestProviderFor_RequiresEndpointFromConfig`、`TestProviderFor_ResolvesEnvRefInHeaders`、`TestProviderFor_ResolvesAPIKeyIntoBearerHeader`、`TestProviderFor_VendorSpecificFactoryIsJustAnotherEntry` |
+| IA-8.10 | **协议实现不含装配知识**：不知道哪个协议取值会选中自己，不做注册、不提供工厂，构造签名不依赖接入事实模型 | 代码检查：`provider/<protocol>` 不 import `providerconfig` |
+| IA-8.11 | **装配集中在组装层**：协议取值 → 针对性工厂的映射只出现在 `cmd/xhunter`；未装配的协议在启动期失败，错误指向组装层并列出已装配项 | `TestProviderFor_UnknownProtocolTellsWhereToAddOne`、`TestProviderFor_BuildsEveryKnownProtocol` |
+| IA-8.12 | **端点与鉴权都由环境变量决定**：缺 `XHUNTER_BASE_URL` 启动期失败；`XHUNTER_HEADERS` 支持 `{env:VAR}` 引用（含带前缀写法），`XHUNTER_API_KEY` 只是便捷形式 | `TestProviderFor_RequiresEndpoint`、`TestFromEnv_HeadersExpandEnvRefs`、`TestProviderFor_APIKeyBecomesBearerHeader`、`TestProviderFor_NoCredentialMeansNoAuthHeader`、`TestProviderFor_NewProtocolIsJustAnotherEntry` |
 | IA-8.13 | **一个协议一个包**：协议包与共用件包之间互不包含对方的具体协议 | 结构自证：互相引用会构成导入循环，编译即失败 |
-| IA-8.14 | 组装不持有全局状态：厂商表每次新建，可用项不随调用顺序漂移 | 代码检查：`vendorFactories()` 返回新表 |
+| IA-8.14 | 组装不持有全局状态：协议表每次新建，可用项不随调用顺序漂移 | 代码检查：`protocolFactories()` 返回新表 |
 | IA-8.15 | **协议版本基线写在包注释里**（端点 / 版本标识 / 形状基线 / 结束语义 / 何时需要动本包） | 代码检查（三个协议包的包注释） |
 | IA-8.16 | **自持传输层**：不使用厂商 SDK，核心二进制保持零第三方运行时依赖（NFR-1） | 代码检查：`go.mod` 无 `require`；协议实现自解分帧 |
 | IA-8.17 | 未知角色显式报错，不得原样透传（拼错的角色名会变成对端的静默行为差异） | `TestInfer_RejectsUnknownRole`、`TestToWireMessages_UnknownRoleIsRejected` |
@@ -1151,49 +1136,32 @@ Bounty(session) ──► H6.Session
 | IA-8.16 | **Responses 协议的形状**：对话是类型化条目数组（消息 / 函数调用 / 结果各占一条）、工具声明不带"函数"外层包装、用量取自收尾事件 | `TestInfer_SendsProtocolRequest`、`TestInfer_AssemblesRawFunctionCallFromDeltas`、`TestInfer_FallsBackToItemArguments`（`provider/openairesponses`） |
 | IA-8.17 | **收尾语义按协议各自定义**：Anthropic 无 `message_stop`、Responses 无 `response.completed` → 显式截断；`response.incomplete`（输出被截断）算正常结束 | `TestInfer_TruncatedWithoutMessageStopIsExplicit`、`TestInfer_TruncatedWithoutCompletedIsExplicit`、`TestInfer_IncompleteIsNormalEnd` |
 | IA-8.18 | 上游错误按协议分类可重试性（限流/过载可重试，请求不合法/鉴权失败不可重试） | `TestInfer_ErrorEventIsClassified`（两个协议各一） |
+| IA-8.19 | **用量口径三家一致**：`InputTokens` 是全部输入、`CachedInputTokens` 是其中从缓存读取的部分且**恒为它的子集**、`OutputTokens` 是全部生成（输出侧没有缓存概念）。翻译规则按协议各自成立：对话补全与 Responses 的输入原生即含缓存（缓存数取 `*_tokens_details.cached_tokens` 子集）；**Messages 的三个输入字段并列、必须相加**（`input + cache_read + cache_creation`），只取 `input_tokens` 会让缓存命中越多、上报的输入越小 | `TestInfer_ReportsCachedInputTokens`、`TestInfer_MissingCacheDetailsReportsZero`（对话补全、Responses 各一）、`TestInfer_InputIncludesCacheReadAndCreation`、`TestInfer_NoCacheReportsNativeInput`（Messages）、`TestEndToEnd_LocalRunProducesDeliveryCommit`（缓存读一路带到结果文件） |
 
 ### 12.9 `providerconfig`
 
+**契约**（`access.go`）：`FromEnv(lookup func(string) (string, bool)) (Resolved, error)`。接入事实**只来自环境变量**——没有配置文件、没有内置目录、没有合并与回退。`Resolved` 是组装层消费的连接事实（协议 / 端点 / 鉴权头 / 模型 / 上限）。
+
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
-| IA-9.1 | 凭据只能是 `{env:VAR}` 引用，字面量被拒（FR-1.2、FR-8.4） | `TestValidateShape_RejectsLiteralAPIKey` |
-| IA-9.2 | 覆盖片段合法：只给 `context` 不给 `output` 时解析放行 | `TestParse_AcceptsPartialOverlay` |
-| IA-9.3 | 生效校验在合并之后：上限缺失即报错，目录补齐后通过 | `TestValidateResolved_RejectsMissingLimits` |
-| IA-9.4 | 未知字段被拒——拼错的字段名不得静默忽略 | `TestParse_RejectsUnknownField` |
-| IA-9.5 | OpenAI 兼容适配器必须提供 `baseURL` | `TestParse_RequiresBaseURLForOpenAICompatible` |
-| IA-9.6 | 用户配置覆盖目录、目录兜底，**字段级合并**（覆盖片段只给连接参数也可解析；`Resolve` 与 `Merge` 同一套合并逻辑） | `TestResolve_UserConfigWinsOverCatalog`、`TestResolve_OverlayFragmentInheritsCatalogLimits`、`TestResolve_MergesFieldByField`、`TestMerge_FieldLevelOverride` |
-| IA-9.7 | 未命中目录**不采用保守默认**，返回 `ErrNotConfigured` | `TestResolve_NotConfiguredIsExplicit` |
-| IA-9.8 | 可用输入预算 = `context − 固定开销 − output`；非正即显式失败 | `TestInputBudget` |
+| IA-9.1 | **接入事实只来自环境变量**：四项必填（`XHUNTER_MODEL` / `XHUNTER_BASE_URL` / `XHUNTER_MODEL_CONTEXT_TOKENS` / `XHUNTER_MODEL_OUTPUT_TOKENS`），缺一即启动期失败；协议可省（缺省对话补全），凭据与请求头可省 | `TestFromEnv_ResolvesFullFacts`、`TestFromEnv_ProtocolDefaults`、`TestFromEnv_APIKeyIsOptional` |
+| IA-9.2 | **一次报出全部问题**，而非逐个发现（修一次配置就能重派） | `TestFromEnv_ReportsAllIssuesAtOnce` |
+| IA-9.3 | 取值非法即失败：非数字 / 零 / 负数 / 输出预留不小于窗口 | `TestFromEnv_RejectsBadLimitValues` |
+| IA-9.4 | 未知协议显式失败，并列出可用取值 | `TestFromEnv_UnknownProtocolIsExplicit` |
+| IA-9.5 | 请求头必须是 JSON 对象；值里的 `{env:VAR}` 在启动期展开，引用未设置即失败（凭据值不落任何文件，FR-1.2、FR-8.4） | `TestFromEnv_HeadersExpandEnvRefs`、`TestFromEnv_ReportsBadHeaders`、`TestExpandEnvRef` |
+| IA-9.6 | 未提供请求头即无额外头（合法），返回 nil 而不制造"声明了但为空"的假象 | `TestFromEnv_NoHeadersIsNil` |
+| IA-9.7 | 协议取值清单一处定义、导出复用（校验与诊断读同一份，不会各自漂移） | `TestFromEnv_UnknownProtocolIsExplicit`（断言列出全部取值） |
+| IA-9.8 | 可用输入预算 = `窗口上限 − 固定开销 − 输出预留`；非正即显式失败 | `TestInputBudget` |
 | IA-9.9 | 水位线以**可用输入预算**为基数，四舍五入 | `TestWatermarks` |
-| IA-9.10 | 一次报出全部结构问题，而非逐个发现 | `TestValidateShape_ReportsAllIssues` |
-
-### 12.10 `modelcatalog`
-
-| 编号 | 验收项 | 判定方式 |
-|---|---|---|
-| IA-10.1 | 上游说明性条目（`sample_spec`）被跳过，且其**字符串型数值字段不会导致整份目录解析失败** | `TestConvert_FiltersAndNormalizes` |
-| IA-10.2 | 无关模式（embedding / image_generation / …）被跳过并计数；**缺供应商归属的条目单独计数**（诊断要能回答「哪一类没进来」） | `TestConvert_FiltersAndNormalizes` |
-| IA-10.3 | 缺上限的条目被跳过（无法满足 FR-9.5） | 同上 |
-| IA-10.4 | 带 provider 前缀的键名去前缀（`gemini/gemini-2.0-flash` → `gemini-2.0-flash`） | 同上 |
-| IA-10.5 | 同名冲突按"信息更全者胜"取舍，且结果确定 | 同上 |
-| IA-10.6 | 只给"总窗口"的条目：上下文取事实值，输出预留取策略默认值并**逐条打标** | 同上 |
-| IA-10.7 | 价格按 美元/token → **纳美元/token** 换算 | `TestConvert_CostUnits` |
-| IA-10.8 | 转换产物必须能通过生效校验（否则它就是不可用的目录） | `TestConvert_OutputPassesResolvedValidation` |
-| IA-10.9 | 转换结果为空即显式报错（格式变更不得静默产出空目录） | `TestConvert_EmptyResultIsExplicitError` |
-| IA-10.10 | 快照原子写入（临时文件 + 改名），不留残file | `TestSave_LeavesNoTempFiles` |
-| IA-10.11 | 更新失败（HTTP 错误 / 坏 JSON / 空目录）**不得破坏已有快照** | `TestUpdate_FailureModes` |
-| IA-10.12 | 快照缺省时给出可操作提示（`ErrNoSnapshot`：请执行 `xhunter models update`） | `TestUpdate_FetchesConvertsAndSaves` |
-| IA-10.13 | 元数据完整：来源地址、抓取时间、字节数、sha256、转换统计 | 同上 |
-| IA-10.14 | 目录与用户覆盖片段合并后可直接解析出模型事实（来源①+②） | `TestSnapshot_MergesWithUserConfig` |
-| IA-10.15 | **默认目录口径一致**：`Load` / `Save` 的空目录参数解析为 `~/.xhunter`（与 `Update` 一致），运行期不得去读工作目录下的同名文件；显式目录按原样使用 | `TestLoadAndSave_EmptyDirMeansDefaultDirNotWorkingDir`、`TestLoad_ExplicitDirIsUsedAsGiven` |
+| IA-9.10 | `{env:VAR}` 引用形式与解析规则（含带前缀写法） | `TestEnvRefName`、`TestExpandEnvRef` |
 
 ### 12.11 `GitWorktree`
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
 | IA-11.1 | `PrepareBaseline`：获取基线（按 SHA 浅取，不可得则完整 fetch）→ **创建并推送任务分支** → checkout + 干净校验 | `TestPrepareBaseline_FreshTaskCreatesAndPushesBranch`（cli）、`TestEndToEnd_LocalRunProducesDeliveryCommit`（cmd） |
-| IA-11.2 | **幂等（续跑）**：分支已存在且 tip 为基线或其后代 → 成功（checkout 到分支 tip）；分叉即环境错误（退出码 2） | `TestPrepareBaseline_ResumeChecksOutBranchTip`、`TestPrepareBaseline_DivergedBranchIsEnvError`（cli） |
-| IA-11.3 | 基线不可达 / 远端不可达 / 缺部署事实 → 环境错误（退出码 2），且失败路径不留临时工作树 | `TestPrepareBaseline_FailsAtStartupOnUnusableFacts`（cli） |
+| IA-11.2 | **幂等（续跑）**：分支已存在且 tip 为基线或其后代 → 成功（checkout 到分支 tip）；分叉即环境错误（退出码 1） | `TestPrepareBaseline_ResumeChecksOutBranchTip`、`TestPrepareBaseline_DivergedBranchIsEnvError`（cli） |
+| IA-11.3 | 基线不可达 / 远端不可达 / 缺部署事实 → 环境错误（退出码 1），且失败路径不留临时工作树 | `TestPrepareBaseline_FailsAtStartupOnUnusableFacts`（cli） |
 | IA-11.4 | `Commit`：提交累积自上一个检查点的全部改动并推送；**无改动不产生空提交**（FR-1.3c）且结果里如实报告 `Created=false`（日志不得因此假称「已创建检查点」） | `TestCommit_PushesFastForwardAndSkipsEmptyCommit`、`TestCheckpoint_LogsNoOpWhenNothingWasCommitted`（hunt）、`TestEndToEnd_LocalRunProducesDeliveryCommit`（cmd） |
 | IA-11.5 | 远端 tip 不是本地父提交 → 拒绝推送并返回环境错误，**绝不 force push**（FR-8.3、AC-20） | `TestCommit_RejectsNonFastForward`（断言远端 tip 未被改写） |
 | IA-11.6 | `Diff` 产出改动文件清单、`Patch` 产出**可应用到基线的统一 diff**（FR-6.1、AC-1）；失败不阻断收尾（`Finalize` 只记 warn）。**排除会话材料目录 `.xhunter/<session_id>/**` 待接入**（会话材料尚未落盘） | `TestDiff_ListsFilesChangedSinceBaseline`、`TestPatch_AppliesCleanlyToBaseline`（`git apply` 验证）、`TestEndToEnd_LocalRunProducesDeliveryCommit`（deliverable 事件 ＋ 补丁应用到基线） |
@@ -1201,7 +1169,7 @@ Bounty(session) ──► H6.Session
 | IA-11.8 | **调用时机与不可见性（INV-11）**：`PrepareBaseline` 是 `Prepare` 的第一个动作，先于任何工具执行；`Commit` 只在轮边界与收尾被调用；两者**都不作为原语暴露**给模型 | **待补**（断言调用顺序 ＋ 工具面不含 git 原语） |
 | IA-11.9 | **检查点自愈与止损（AC-22）**：单次提交失败不中止（下一轮累积重提）；连续失败达上限 → 环境错误 | 自愈部分：代码检查（`checkpoint` 失败只记 warn）；**连败上限待接入** |
 | IA-11.10 | **时间语义**：检查点提交的是**本轮已应用的改动**（执行在 `OnTurn` 内、提交紧随其后），不含下一轮内容；末轮改动由收尾交付 | **待补** |
-| IA-11.11 | **密度可配（FR-1.3c、AC-22）**：`interval` / `final_only` / `every_write` 各档行为 | **待接入**（当前只有"有改动即提交"这一档） |
+| IA-11.11 | **自动检查点只落在结构完整点上**（FR-1.3c/1.3d）：无结构判据（扩展未接入）**不提交**，并如实记录跳过原因；**模型显式请求不受此限** | `TestCheckpoint_NoAutoCheckpointOffStructuralPoint`、`TestCheckpoint_LogsNoOpWhenNothingWasCommitted`（hunt） |
 | IA-11.12 | **门禁驱动的检查点**：门禁通过后立即提交（提交信息含原因）；门禁未通过则抑制自动检查点 | **待接入**（依赖 `check`） |
 | IA-11.13 | **模型请求的检查点（控制原语的消费端）**：模型经 `checkpoint` 表达意图 → 本轮提交，提交信息标明"模型请求"并带上理由；**理由只作素材**——只取首行、剥控制与格式字符、按上限截断，前缀与分隔符由执行体固定；**一次请求只兑现一次**；**无改动则不产生空提交**，但意图照样被消费 | 净化：`TestSanitizeIntent`（hunt）；**提交信息合成、一次兑现、空提交抑制的用例待补** |
 
@@ -1213,10 +1181,10 @@ Bounty(session) ──► H6.Session
 | IA-12.2 | 工具面由装配层定格：名字与顺序固定、声明合法（名字非空、说明非空、schema 是合法 JSON） | `TestDefaultTools_FaceIsFixed`、`TestDefaultTools_ShapeIsDeclared` |
 | IA-12.3 | 两段插件清单的顺序**即**正文拼接顺序，且不重复 | `TestDefaultPromptPlugins_OrderIsThePromptOrder`、`TestDefaultPromptPlugins_NoDuplicate` |
 | IA-12.4 | 后端实现可构造且满足契约；坏根在打开期被拒（不等到第一次读写） | `TestBackends_SatisfyContracts`、`TestBackends_RejectBadRoot` |
-| IA-12.5 | 部署事实缺失 → 启动期退出码 2，并指出缺哪一项 | `TestBountyFromEnv_RequiresRepoFacts`、`TestSelectionFromEnv_Validate`、`TestProviderFor_UnknownSDKTellsWhereToAddAFactory` |
+| IA-12.5 | 部署事实缺失 → 启动期退出码 1，并指出缺哪一项 | `TestBountyFromEnv_RequiresRepoFacts`、`TestFromEnv_ReportsAllIssuesAtOnce`（providerconfig）、`TestProviderFor_UnknownProtocolTellsWhereToAddOne` |
 | IA-12.6 | **端到端**：本地驱动跑通一次（基线 → 至少一轮 → 工具落盘 → 轮边界检查点 → 交付 = 分支 tip → `hunt_end`），退出码与事件序列符合契约；事件只走 stdout、收尾清理工作树 | `TestEndToEnd_LocalRunProducesDeliveryCommit`（真 git 夹具 + 本地假上游） |
 | IA-12.7 | 装配结果无运行期注册面：改装配只改装配代码，框架侧无注册 API | 代码检查（`harness` 只有 `New(provider, ...)`；`hunt.Config` 是构造参数） |
-| IA-12.9 | **结果文件**（FR-1.5）：`--result` 指定的文件在**无论成败**时都写出，含终态/退出码/仓库事实/交付提交/改动清单/用量；失败带 `error{kind,message,retryable}`；写失败即环境错误（退出 2） | `TestEndToEnd_LocalRunProducesDeliveryCommit`、`TestEndToEnd_ResultFileWrittenOnFailure`（cmd） |
+| IA-12.9 | **结果文件**（FR-1.5）：`--result` 指定的文件在**无论成败**时都写出，含终态/退出码/仓库事实/交付提交/改动清单/用量；失败带 `error{kind,message,retryable}`；写失败即环境错误（退出 1） | `TestEndToEnd_LocalRunProducesDeliveryCommit`、`TestEndToEnd_ResultFileWrittenOnFailure`（cmd） |
 | IA-12.8 | **信号接线**：SIGINT / SIGTERM 取消运行段的 `ctx`（循环停止发起新的推理与工具调用、`Finalize` 照常收敛、退出码 3）；启动期仍走默认处置 | `TestSignalContext_CancelsOnSignal`、`TestSignalContext_StopCancelsContext`；进程级 AC-6 断言**待补** |
 
 ---
@@ -1250,9 +1218,9 @@ Bounty(session) ──► H6.Session
 | 压缩（§7.2、IA-2.5~2.8） | `ContextBuilder` 只有「组装」没有「下压」：水位、分层下压、结构化工作日志投影 |
 | 门禁（§7.8、IA-11.12） | 清单来源裁决、`check` 实现、收尾补跑、检查点联动、结果缓存 |
 | 符号能力（§7.7） | `ext.ExtHost` 无实现；`hunt/symbolic` 声明不实现 |
-| git 剩余语义（IA-11.8~11.13） | 四个动作已落地；检查点密度分档、连败上限、门禁驱动检查点与调用顺序断言待补 |
-| 流看门狗与权限询问（§6.3 L4、§10.3） | `llm.Event` 尚无权限询问形态；不活动超时未接入 |
-| 检查点密度与结构检查（IA-11.11、§6.3 L6） | 只有"有改动即提交"一档；`every_write` / `interval` / `final_only` 与结构判定待接入 |
+| git 剩余语义（IA-11.8~11.13） | 四个动作已落地；连败上限、门禁驱动检查点与调用顺序断言待补 |
+| 流看门狗（§6.3 L4） | 不活动超时未接入 |
+| 结构检查（IA-11.11、§6.3 L6） | 判据随符号扩展接入；**接入前自动检查点不产生**（判据不可判定 → 不提交）已落地，判据本身待接入 |
 | 生效配置快照（§4、FR-11.6） | 结果文件已落地（IA-12.9），但 `effective_config` 装配快照与 `gates` 未进文件 |
 | ~~事件信封四字段（IA-5.7）~~ | **已落地**：出口统一盖章（`type` / `bounty_id` / `trace_id` / `ts`） |
 
@@ -1265,7 +1233,7 @@ Bounty(session) ──► H6.Session
 | 进程级信号（其余信号形态） | SIGTERM 的进程级断言已落地（`TestEndToEnd_SigtermConvergesToCancelled`，AC-6）；SIGKILL / 中断时机的更多组合仍可补 |
 | 扩展崩溃隔离（IA-7.6） | 需要真实子进程的扩展宿主测试（M2 引入扩展后补） |
 | 凭据静态扫描（IA-6.8、IA-8.4） | 需要 CI 级扫描规则，非单测能覆盖（AC-8） |
-| ~~事件写入失败（IA-5.3 / AC-19）~~ | **已落地**：断管（读端已关的管道）→ 退出 2 并记原因（`TestEndToEnd_BrokenEventChannelIsEnvError`） |
+| ~~事件写入失败（IA-5.3 / AC-19）~~ | **已落地**：断管（读端已关的管道）→ 退出 1 并记原因（`TestEndToEnd_BrokenEventChannelIsEnvError`） |
 | 恢复正确性（AC-7） | 需要断言：恢复后工作区 == 最后检查点、**未重做已完成轮次**、恢复过程**零写操作执行** |
 | ~~装配层端到端（IA-12.6）~~ | **已落地**：`TestEndToEnd_LocalRunProducesDeliveryCommit`（真 git 夹具 + 本地假上游，不联网） |
 | 嵌套约定附注（IA-2.10） | 算出"路径链上最近且未注入过的那份约定"需要一份**约定清单（路径 ＋ 正文）**，而当前插件契约只交正文（`PromptPart.Body`）。补法是给 system 段的结果带上它；等真有消费方时再加，眼下先不摆无人读的契约 |

@@ -19,25 +19,21 @@ import (
 // 在 git 适配器落地前后都稳定成立。
 func TestHuntCmd_EventsGoToStdoutAndLogsGoToStderr(t *testing.T) {
 	tmp := t.TempDir()
-	// 目录快照与本次用例无关：把 HOME 指到空目录，避免受开发机上已安装的 models.json 影响。
-	t.Setenv("HOME", filepath.Join(tmp, "home"))
 
 	taskPath := filepath.Join(tmp, "task.txt")
 	if err := os.WriteFile(taskPath, []byte("fix the bug\n"), 0o644); err != nil {
 		t.Fatalf("写任务文件失败：%v", err)
-	}
-	cfgPath := filepath.Join(tmp, "provider.json")
-	if err := os.WriteFile(cfgPath, []byte(localProviderConfig), 0o644); err != nil {
-		t.Fatalf("写 provider 配置失败：%v", err)
 	}
 
 	t.Setenv("XHUNTER_BOUNTY_ID", "b-42")
 	t.Setenv("XHUNTER_TRACE_ID", "trace-envelope")
 	t.Setenv("XHUNTER_REPO_URL", filepath.Join(tmp, "no-such-repo.git"))
 	t.Setenv("XHUNTER_REPO_BASE_COMMIT", "0123456789abcdef0123456789abcdef01234567")
-	t.Setenv("XHUNTER_PROVIDER", "localgw")
+	// 模型接入事实同样走环境变量；协议缺省即对话补全。
 	t.Setenv("XHUNTER_MODEL", "test-model")
-	t.Setenv("XHUNTER_PROVIDER_CONFIG", cfgPath)
+	t.Setenv("XHUNTER_BASE_URL", "http://127.0.0.1:1/v1")
+	t.Setenv("XHUNTER_MODEL_CONTEXT_TOKENS", "200000")
+	t.Setenv("XHUNTER_MODEL_OUTPUT_TOKENS", "8192")
 
 	stdout, stderr := swapStdStreams(t)
 	code := run([]string{"--bounty", taskPath})
@@ -84,16 +80,6 @@ func TestHuntCmd_EventsGoToStdoutAndLogsGoToStderr(t *testing.T) {
 		t.Errorf("诊断信息应走 stderr：%q", stderrText)
 	}
 }
-
-const localProviderConfig = `{
-  "provider": {
-    "localgw": {
-      "npm": "@ai-sdk/openai-compatible",
-      "options": {"baseURL": "http://127.0.0.1:1/v1"},
-      "models": {"test-model": {"limit": {"context": 200000, "output": 8192}}}
-    }
-  }
-}`
 
 // swapStdStreams 把 os.Stdout / os.Stderr 换成临时文件，返回文件供稍后读取。
 // 还原放在 cleanup 里：任何断言失败都要把进程的流恢复原状，否则测试输出会消失。

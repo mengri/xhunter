@@ -260,6 +260,7 @@ func TestCheckpoint_LogsNoOpWhenNothingWasCommitted(t *testing.T) {
 				Policy: allowAll{}, Sink: sink,
 			})
 			s.ops = []WriteOp{{File: "a.txt"}} // 有改动，检查点才会走到提交
+			s.RequestCheckpoint("模型认为这里自洽")    // 模型显式请求：不依赖结构判据
 			s.checkpoint(context.Background(), &harness.Turn{No: 1})
 
 			found := false
@@ -278,12 +279,38 @@ func TestCheckpoint_LogsNoOpWhenNothingWasCommitted(t *testing.T) {
 	}
 }
 
+// 自动检查点只在结构完整点上产生：判据不可判定（扩展未接入）时**不提交**——
+// 宁可不留检查点，也不把语法残缺的中间态钉在分支上（残次品不是可用的检查点）。
+func TestCheckpoint_NoAutoCheckpointOffStructuralPoint(t *testing.T) {
+	sink := &captureSink{}
+	g := &recordingCommitGit{created: true}
+	s := NewSession(Config{
+		Bounty: Bounty{ID: "b", Task: "t", Repo: gitRepoRef()},
+		Git:    g, Policy: allowAll{}, Sink: sink,
+	})
+	s.ops = []WriteOp{{File: "a.txt"}} // 有改动，但没人请求、也不在结构点上
+	s.checkpoint(context.Background(), &harness.Turn{No: 1})
+
+	if g.calls != 0 {
+		t.Errorf("不该调用提交：calls=%d", g.calls)
+	}
+	joined := strings.Join(sink.logs, "\n")
+	if !strings.Contains(joined, "未落在结构完整点") {
+		t.Errorf("应如实记录跳过原因：%v", sink.logs)
+	}
+	if strings.Contains(joined, "已创建检查点") {
+		t.Errorf("不得谎报已创建：%v", sink.logs)
+	}
+}
+
 // recordingCommitGit 记录一次提交的返回值，用于断言日志口径。
 type recordingCommitGit struct {
 	stubBaselineGit
 	created bool
+	calls   int
 }
 
 func (g *recordingCommitGit) Commit(context.Context, git.RepoRef, string) (git.Commit, error) {
+	g.calls++
 	return git.Commit{SHA: "sha", Branch: "b", Created: g.created}, nil
 }

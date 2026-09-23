@@ -70,9 +70,20 @@ type eventDelta struct {
 }
 
 // eventUsage 分两处出现：输入用量在 message_start，输出用量在 message_delta。
+//
+// 本协议的输入三项是**并列**关系、不是包含关系：`input_tokens` 只算最后一个缓存
+// 断点之后的 token，缓存读与缓存写各占一个字段。因此"全部输入"必须三项相加——
+// 少加一项，缓存命中越多、上报的输入越小，预算与账目都会偏低。
 type eventUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+}
+
+// totalInput 是本次请求的全部输入（含缓存读与缓存写）。
+func (u eventUsage) totalInput() int {
+	return u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
 }
 
 // upstreamError 是流内错误（有些上游用 200 开头、再在流里报错）。

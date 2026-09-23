@@ -105,9 +105,8 @@ func TestEdit_MissingLiteralIsError(t *testing.T) {
 	}
 }
 
-// 声明形状。注意：`literal` 目前**不在 required 里**，而实现缺它就返回 bad_selector
-// （见产品设计 §6 的"已知不一致"）。这里只钉住参数面与 path/content 必填，
-// 刻意不把"literal 可省"写成断言，免得测试替这个 bug 背书。
+// 声明形状：`literal` **必须在 required 里**——实现缺它就返回 bad_selector，schema 漏了它
+// 模型照 schema 省略就会拿到一个本可避免的错误（产品设计 §6 曾把这条列为"已知不一致"）。
 func TestEdit_DeclShape(t *testing.T) {
 	d := EditTool(nil).Decl()
 	if d.Name != string(Edit) {
@@ -118,8 +117,10 @@ func TestEdit_DeclShape(t *testing.T) {
 		t.Errorf("参数面 = %v，期望 [content literal path]", got)
 	}
 	required := strings.Join(s.Required, ",")
-	if !strings.Contains(required, "path") || !strings.Contains(required, "content") {
-		t.Errorf("required = %v，至少应含 path 与 content", s.Required)
+	for _, want := range []string{"path", "literal", "content"} {
+		if !strings.Contains(required, want) {
+			t.Errorf("required = %v，应含 %s（实现缺它即报错，schema 不能漏）", s.Required, want)
+		}
 	}
 	if s.AdditionalProperties == nil || *s.AdditionalProperties {
 		t.Errorf("必须禁止额外字段：%s", d.Schema)

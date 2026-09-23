@@ -67,13 +67,28 @@ type Message struct {
 	Results []ToolResult
 }
 
-// Usage 是 token 用量与轮级统计。协议实现只填 token 两项；轮数与耗时由循环
-// （harness.Engine）在收尾时补齐——它才知道一共跑了几轮、花了多久。
+// Usage 是 token 用量与轮级统计。
+//
+// 口径（三家协议统一到这三项，翻译由各协议包负责）：
+//   - InputTokens：本次请求的**全部输入** token——含从缓存读取的，也含写入缓存的。
+//     取"全部"而不是服务端原生的"非缓存部分"，是因为预算是"消耗了多少"：缓存命中
+//     同样占窗口、同样计入速率额度，只有全量口径才是保守正确的。
+//   - OutputTokens：模型生成的全部 token（含思考/推理 token——上游也按输出计价）。
+//   - CachedInputTokens：其中**从缓存读取**的输入 token，是 InputTokens 的**子集**
+//     （恒有 0 ≤ CachedInputTokens ≤ InputTokens）。缓存命中的直接证据，也是按
+//     折扣价算账的唯一输入。
+//
+// 输出侧没有缓存：被缓存的是请求前缀，命中永远记在**下一次请求的输入**上，本次输出
+// 全额计价。写入缓存的 token（cache write）当前并入 InputTokens、不单列——要精算写
+// 溢价（缓存写比普通输入贵）时，再补一个同样是子集的字段。
+//
+// 轮数与耗时由循环（harness.Engine）在收尾时补齐——它才知道一共跑了几轮、花了多久。
 type Usage struct {
-	InputTokens  int
-	OutputTokens int
-	Turns        int
-	Elapsed      time.Duration
+	InputTokens       int
+	OutputTokens      int
+	CachedInputTokens int
+	Turns             int
+	Elapsed           time.Duration
 }
 
 // ============================================================ 事件与错误
@@ -113,11 +128,13 @@ func (f *Fault) Error() string { return f.Kind + ": " + f.Message }
 
 // ============================================================ 契约
 
-// Caps 是 Provider 声明的能力。上限类字段必须来自预置配置，不得估算；
-// 行为类字段缺失即由使用方降级。
+// Caps 是 Provider 声明的能力。
+//
+// 这里**只声明当前真正被用到的能力**：加了没人读的字段，读者会以为存在对应的降级
+// 逻辑。上限类字段必须来自投递（环境变量），不得估算；行为类字段（并行工具调用、
+// 结构化输出、思考块……）等到真有消费方时再加，加的时候连降级规则一起写。
 type Caps struct {
-	MaxContextTokens  int
-	ParallelToolCalls bool
+	MaxContextTokens int
 }
 
 // Request 是一次推理的输入。

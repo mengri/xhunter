@@ -12,6 +12,9 @@
 //     事件序列 message_start → content_block_start → content_block_delta
 //     （text_delta / input_json_delta.partial_json / thinking_delta）→ content_block_stop
 //     → message_delta（stop_reason + usage.output_tokens）→ message_stop；另有 ping 与 error
+//   - 用量口径：全部输入 = input_tokens + cache_read_input_tokens +
+//     cache_creation_input_tokens（三者并列，少加一项就会低估输入）；缓存读取
+//     cache_read_input_tokens；输出取 message_delta 的**累计值**（本包做差后上报）
 //   - 结束语义：严格以 message_stop 收尾；没有它就按截断上报——容忍缺失会把半截响应
 //     伪装成完整回答，比直接失败危险得多
 //   - 需要动本包的场合：内容块种类增加、事件名或载荷变化、版本头升级到不兼容形态
@@ -113,8 +116,7 @@ func New(cfg Config) (*Client, error) {
 		client:    client,
 		maxOutput: cfg.MaxOutputTokens,
 		caps: llm.Caps{
-			MaxContextTokens:  cfg.MaxContextTokens,
-			ParallelToolCalls: true,
+			MaxContextTokens: cfg.MaxContextTokens,
 		},
 	}, nil
 }
@@ -221,7 +223,11 @@ func (s *session) run() {
 		case "message_start":
 			// 输入用量在这里就齐了；输出用量这里只是起始值，等 message_delta 报增量。
 			if ev.Message != nil && ev.Message.Usage != nil {
-				u := llm.Usage{InputTokens: ev.Message.Usage.InputTokens}
+				usage := ev.Message.Usage
+				u := llm.Usage{
+					InputTokens:       usage.totalInput(),
+					CachedInputTokens: usage.CacheReadInputTokens,
+				}
 				if !s.emit(llm.Event{Kind: llm.EvUsage, Usage: u}) {
 					return
 				}

@@ -83,12 +83,24 @@ type toolCallDelta struct {
 }
 
 type chunkUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
+	PromptTokens        int                 `json:"prompt_tokens"`
+	CompletionTokens    int                 `json:"completion_tokens"`
+	PromptTokensDetails *promptTokenDetails `json:"prompt_tokens_details"`
+}
+
+// promptTokenDetails 是输入侧的明细。本协议里 prompt_tokens **已经包含**缓存部分，
+// 因此缓存数只能是它的子集——这一点与 Messages 协议相反（那边三个字段并列），
+// 照搬会把输入算成两倍。
+type promptTokenDetails struct {
+	CachedTokens int `json:"cached_tokens"`
 }
 
 func (u chunkUsage) usage() llm.Usage {
-	return llm.Usage{InputTokens: u.PromptTokens, OutputTokens: u.CompletionTokens}
+	out := llm.Usage{InputTokens: u.PromptTokens, OutputTokens: u.CompletionTokens}
+	if u.PromptTokensDetails != nil {
+		out.CachedInputTokens = u.PromptTokensDetails.CachedTokens
+	}
+	return out
 }
 
 // upstreamError 是流内错误（有些上游用 200 开头、再在流里报错）。

@@ -70,8 +70,15 @@ type eventResponse struct {
 }
 
 type eventUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens        int                `json:"input_tokens"`
+	OutputTokens       int                `json:"output_tokens"`
+	InputTokensDetails *inputTokenDetails `json:"input_tokens_details"`
+}
+
+// inputTokenDetails 是输入侧的明细。本协议里 input_tokens **已经包含**缓存部分，
+// 缓存数只能是它的子集（与对话补全一致、与 Messages 协议相反）。
+type inputTokenDetails struct {
+	CachedTokens int `json:"cached_tokens"`
 }
 
 // upstreamError 出现在两处：流内的 error 事件，以及 response.failed 里的 response.error。

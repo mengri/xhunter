@@ -26,6 +26,18 @@ import tempfile
 # 工作目录由脚本位置推导（scripts/check.py 的上一级），而不是硬编码——
 # 硬编码会让这份"规范验证入口"换一台机器就跑不了。
 WORK_REL = str(pathlib.Path(__file__).resolve().parent.parent)
+
+# 工作目录在 WSL 里的位置。Windows 侧的映射盘（网络盘）在 resolve() 之后会变成 UNC
+# （`\\localhost\\work\\…`），而它在 WSL 里是原生挂载路径——两者没有通用的自动换算，
+# 所以这里**显式列出**并**逐个验证**：猜不中时明确报错说该配哪一行，而不是把坏路径拼进
+# bash 命令（那是「cd: \\localhostwork…」这种看不懂的失败的来源）。
+_Q = chr(39)   # 单引号
+_BS = chr(92)  # 反斜杠
+
+WSL_PATH_MAP = [
+    ("W:\\", "/work"),               # 本机：映射盘 W: 与 WSL 的 /work 是同一份文件
+    (r"\\localhost\work", "/work"),  # 同一份文件在 UNC 下的形态
+]
 WIN_GO_CANDIDATES = [
     r"C:\Users\黄孟柱\.g\go\bin\go.exe",
     r"C:\Program Files\Go\bin\go.exe",
@@ -50,6 +62,37 @@ def decode(raw: bytes) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
+_Q = chr(39)   # 单引号
+_BS = chr(92)  # 反斜杠
+
+def shquote(s: str) -> str:
+    """把路径安全地放进 bash 命令：单引号包裹，内部的单引号按 POSIX 规则转义。"""
+    return _Q + s.replace(_Q, _Q + _BS + _Q + _Q) + _Q
+
+
+def to_wsl_path(win_path: str) -> str | None:
+    """把 Windows 侧路径换算成 WSL 里的路径；换算不了返回 None。
+
+    先查 WSL_PATH_MAP（映射盘 / UNC），再退化为普通盘符的 /mnt/<drive>。
+    换算结果仍然要经 wsl_dir_exists 验证——映射表写错了不该表现为「目录里什么都没有」。
+    """
+    raw = win_path.replace("/", "\\")
+    for win, wsl in WSL_PATH_MAP:
+        if raw.upper().startswith(win.upper()):
+            rest = raw[len(win):].lstrip("\\").replace("\\", "/")
+            base = wsl.rstrip("/")
+            return base + ("/" + rest if rest else "") or "/"
+    if len(raw) >= 2 and raw[1] == ":":
+        rest = raw[2:].lstrip("\\").replace("\\", "/")
+        return "/mnt/" + raw[0].lower() + ("/" + rest if rest else "")
+    return None
+
+
+def wsl_dir_exists(path: str) -> bool:
+    rc, out, _ = wsl_run(f"test -d {shquote(path)} && echo ok", timeout=120)
+    return rc == 0 and "ok" in out
+
+
 def run(cmd: list[str], env: dict, timeout: int = 1800, cwd: str | None = None):
     try:
         r = subprocess.run(cmd, capture_output=True, env=env, timeout=timeout, cwd=cwd)
@@ -58,9 +101,33 @@ def run(cmd: list[str], env: dict, timeout: int = 1800, cwd: str | None = None):
         return 124, "", "超时"
 
 
+def env_for_wsl() -> dict:
+    """交给 wsl.exe 的宿主 env。
+
+    两点都是踩出来的：① **空 env 会报 RPC 句柄错误**，所以必须整体传宿主 env；
+    ② PATH 里落在映射盘 / UNC 上的项，WSL 换算不了，会刷一屏 `Failed to translate`
+    ——它们对 WSL 内的执行没有用处，摘掉即可（只影响继承的 PATH，不影响宿主）。
+    """
+    env = dict(os.environ)
+    sep = ";" if os.name == "nt" else ":"
+    def usable(entry: str) -> bool:
+        if entry.startswith("\\\\"):
+            return False
+        up = entry.upper()
+        return not any(up.startswith(win.upper().rstrip(_BS)) for win, _ in WSL_PATH_MAP)
+    path = env.get("PATH", "")
+    env["PATH"] = sep.join(e for e in path.split(sep) if e and usable(e))
+    return env
+
+
 def wsl_run(cmd: str, timeout: int = 1800):
-    """在 WSL 内执行 bash 命令。注意：wsl.exe 需要宿主 env，空 env 会报 RPC 句柄错误。"""
-    return run(["wsl.exe", "-e", "bash", "-c", cmd], dict(os.environ), timeout=timeout)
+    """在 WSL 内执行 bash 命令。
+
+    cwd 特意挪到系统盘：子进程的 cwd 若落在映射盘上，WSL 会在启动时先报
+    `Failed to translate W://…`（只是告警，但会让脚本里的相对路径拿到坏值）。
+    """
+    cwd = os.environ.get("SystemRoot") or os.environ.get("windir") or "C:////"
+    return run(["wsl.exe", "-e", "bash", "-c", cmd], env_for_wsl(), timeout=timeout, cwd=cwd)
 
 
 def find_native_go() -> str | None:
@@ -103,6 +170,7 @@ def env_for(go: str | None, cross: bool = False) -> dict:
 def probe() -> int:
     print("== 环境探测")
     print("  工作目录      ", WORK_REL)
+    print("  WSL 工作目录  ", to_wsl_path(WORK_REL) or "未映射（请在 WSL_PATH_MAP 里补一条）")
     print("  调用目录      ", os.getcwd())
     native = find_native_go()
     if native:
@@ -130,10 +198,18 @@ def check(use_wsl: bool, race: bool) -> int:
         if not go:
             print("未在 WSL 内找到 go（gvm 需交互式 shell 才上 PATH）", file=sys.stderr)
             return 2
+        work = to_wsl_path(WORK_REL)
+        if not work or not wsl_dir_exists(work):
+            print(
+                f"无法把工作目录 {WORK_REL} 换算成 WSL 路径（试出 {work!r}）。\n"
+                "请在 scripts/check.py 的 WSL_PATH_MAP 里补一条「Windows 前缀 → WSL 挂载点」映射。",
+                file=sys.stderr,
+            )
+            return 2
         steps = [f"{go} build ./...", f"{go} vet ./...", f"{go} test ./... -count=1"]
         if race:
             steps.append(f"{go} test -race ./... -count=1")
-        script = f"cd {WORK_REL} && " + " && ".join(steps)
+        script = f"cd {shquote(work)} && " + " && ".join(steps)
         rc, out, err = wsl_run(script)
         print(f"== WSL 检查（linux/amd64，一期目标平台）-> exit {rc}")
         if out:

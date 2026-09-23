@@ -13,21 +13,18 @@ import (
 
 // 投递形态：Bounty 文件只装任务正文，部署事实由环境变量给出。
 const (
-	envRepoURL      = "XHUNTER_REPO_URL"
-	envRepoBranch   = "XHUNTER_REPO_BRANCH"
-	envRepoBase     = "XHUNTER_REPO_BASE_COMMIT"
-	envBountyID     = "XHUNTER_BOUNTY_ID"
-	envSessionID    = "XHUNTER_SESSION_ID"
-	envTraceID      = "XHUNTER_TRACE_ID"
-	envProvider     = "XHUNTER_PROVIDER"
-	envModel        = "XHUNTER_MODEL"
-	envProviderFile = "XHUNTER_PROVIDER_CONFIG"
+	envRepoURL    = "XHUNTER_REPO_URL"
+	envRepoBranch = "XHUNTER_REPO_BRANCH"
+	envRepoBase   = "XHUNTER_REPO_BASE_COMMIT"
+	envBountyID   = "XHUNTER_BOUNTY_ID"
+	envSessionID  = "XHUNTER_SESSION_ID"
+	envTraceID    = "XHUNTER_TRACE_ID"
 
 	// 预算上限：运行策略，与任务正文分开投递（同一台机器上往往固定）。
 	// 未设置或 0 表示该维度不限（hunt.Budget 的口径）。
-	envMaxTurns     = "XHUNTER_MAX_TURNS"
-	envMaxTokens    = "XHUNTER_MAX_TOKENS"
-	envMaxWallClock = "XHUNTER_MAX_WALL_CLOCK"
+	envBudgetTurns     = "XHUNTER_BUDGET_TURNS"
+	envBudgetTokens    = "XHUNTER_BUDGET_TOKENS"
+	envBudgetWallClock = "XHUNTER_BUDGET_WALL_CLOCK"
 )
 
 // lookupEnv 让组装过程可在测试里替换环境来源。
@@ -93,24 +90,24 @@ func bountyFromEnv(task string, lookup lookupEnv) (hunt.Bounty, error) {
 func parseBudget(lookup lookupEnv) (hunt.Budget, error) {
 	var b hunt.Budget
 
-	if v := readEnv(lookup, envMaxTurns); v != "" {
+	if v := readEnv(lookup, envBudgetTurns); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n <= 0 {
-			return hunt.Budget{}, fmt.Errorf("%s 必须是正整数（当前 %q）", envMaxTurns, v)
+			return hunt.Budget{}, fmt.Errorf("%s 必须是正整数（当前 %q）", envBudgetTurns, v)
 		}
 		b.MaxTurns = n
 	}
-	if v := readEnv(lookup, envMaxTokens); v != "" {
+	if v := readEnv(lookup, envBudgetTokens); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n <= 0 {
-			return hunt.Budget{}, fmt.Errorf("%s 必须是正整数（当前 %q）", envMaxTokens, v)
+			return hunt.Budget{}, fmt.Errorf("%s 必须是正整数（当前 %q）", envBudgetTokens, v)
 		}
 		b.MaxTokens = n
 	}
-	if v := readEnv(lookup, envMaxWallClock); v != "" {
+	if v := readEnv(lookup, envBudgetWallClock); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d <= 0 {
-			return hunt.Budget{}, fmt.Errorf("%s 必须是正的时间长度（如 90m、2h；当前 %q）", envMaxWallClock, v)
+			return hunt.Budget{}, fmt.Errorf("%s 必须是正的时间长度（如 90m、2h；当前 %q）", envBudgetWallClock, v)
 		}
 		b.MaxWallClock = d
 	}
@@ -123,38 +120,6 @@ func SessionID(b hunt.Bounty) string {
 		return b.Session.ID
 	}
 	return string(b.ID)
-}
-
-// providerSelection 是从环境得到的模型接入选择。
-type providerSelection struct {
-	ProviderID string
-	ModelID    string
-	ConfigPath string
-}
-
-func selectionFromEnv(lookup lookupEnv) providerSelection {
-	return providerSelection{
-		ProviderID: readEnv(lookup, envProvider),
-		ModelID:    readEnv(lookup, envModel),
-		ConfigPath: readEnv(lookup, envProviderFile),
-	}
-}
-
-func (s providerSelection) validate() error {
-	var missing []string
-	if s.ProviderID == "" {
-		missing = append(missing, envProvider)
-	}
-	if s.ModelID == "" {
-		missing = append(missing, envModel)
-	}
-	if s.ConfigPath == "" {
-		missing = append(missing, envProviderFile)
-	}
-	if len(missing) > 0 {
-		return fmt.Errorf("缺少模型接入配置：%s", strings.Join(missing, "、"))
-	}
-	return nil
 }
 
 func readEnv(lookup lookupEnv, name string) string {

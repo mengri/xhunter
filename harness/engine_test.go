@@ -146,7 +146,7 @@ func TestEngine_TurnLimitIsMechanicalCap(t *testing.T) {
 	eng.WithConfig(Config{MaxTurns: 3, MaxFailStreak: 2})
 
 	out := eng.Run(context.Background(), Input{})
-	if out.Status != StatusFailed || out.ExitCode != ExitFailed {
+	if out.Status != StatusFailed || out.ExitCode != ExitAborted {
 		t.Fatalf("达轮数上限应失败：%+v", out)
 	}
 	if out.Reason != "turn_limit_exceeded" {
@@ -204,7 +204,7 @@ func TestEngine_OnTurnErrorIsFailed(t *testing.T) {
 	}}, nil)
 
 	out := eng.Run(context.Background(), Input{})
-	if out.Status != StatusFailed || out.ExitCode != ExitFailed {
+	if out.Status != StatusFailed || out.ExitCode != ExitAborted {
 		t.Fatalf("轮边界报错应失败：%+v", out)
 	}
 	if !strings.Contains(out.Reason, "on_turn") || !strings.Contains(out.Reason, "渲染器崩了") {

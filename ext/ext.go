@@ -40,7 +40,8 @@ func (c ExtCaps) Registered(lang string) bool {
 	return false
 }
 
-// Impact 是符号定位的改动影响面。
+// Impact 是符号定位的改动规模。**它只是事实，不是闸门**：上报给变更说明与诊断用，
+// 不参与策略裁决（终局是无人 review，判据来自证据，而不是"改得多就保守拒绝"）。
 type Impact struct {
 	FilesChanged int
 	Occurrences  int

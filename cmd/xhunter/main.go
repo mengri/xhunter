@@ -4,8 +4,6 @@
 //
 //	xhunter --bounty <path> [--log-file <path>] [--result <path>] [--patch <path>]
 //	                                              执行一次 Hunt
-//	xhunter models update [--source URL] [--dir PATH] [--timeout DURATION]
-//	xhunter models status [--dir PATH]
 //	xhunter version
 //
 // 退出码：0 成功 / 1 任务失败 / 2 环境问题（可重试）/ 3 取消。
@@ -13,7 +11,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -25,15 +22,16 @@ import (
 
 	"xhunter/harness"
 	"xhunter/hunt"
-	"xhunter/internal/modelcatalog"
+	"xhunter/providerconfig"
 	"xhunter/workspace"
 )
 
 const (
-	exitOK        = 0
-	exitFailed    = 1
-	exitEnv       = 2
-	exitCancelled = 3
+	// 退出码只有一处定义（契约在 harness），这里只是短别名：同一组数字两处定义迟早会漂。
+	exitOK        = int(harness.ExitOK)
+	exitEnv       = int(harness.ExitEnv)
+	exitAborted   = int(harness.ExitAborted)
+	exitCancelled = int(harness.ExitCancelled)
 )
 
 // version 是本构建的版本号。
@@ -49,8 +47,6 @@ func run(args []string) int {
 		return exitEnv
 	}
 	switch {
-	case args[0] == "models":
-		return modelsCmd(args[1:])
 	case args[0] == "version":
 		fmt.Printf("xhunter %s\n", version)
 		return exitOK
@@ -69,14 +65,14 @@ func usage() {
         执行一次 Hunt（<path> 是任务正文文件）
         --result  结束时写结果文件（JSON；无论成败）
         --patch   写相对基线的统一 diff（git apply 兼容）
-  xhunter models update [--source URL] [--dir PATH] [--timeout DURATION]
-  xhunter models status [--dir PATH]
   xhunter version
 
-部署事实由环境变量给出：XHUNTER_REPO_URL / XHUNTER_REPO_BASE_COMMIT（必填）、
-XHUNTER_REPO_BRANCH / XHUNTER_BOUNTY_ID / XHUNTER_SESSION_ID（可选）、
-XHUNTER_PROVIDER / XHUNTER_MODEL / XHUNTER_PROVIDER_CONFIG（模型接入）、
-XHUNTER_MAX_TURNS / XHUNTER_MAX_TOKENS / XHUNTER_MAX_WALL_CLOCK（预算上限，可选）。
+部署事实由环境变量给出。仓库：XHUNTER_REPO_URL / XHUNTER_REPO_BASE_COMMIT（必填）、
+XHUNTER_REPO_BRANCH / XHUNTER_BOUNTY_ID / XHUNTER_SESSION_ID（可选）。
+模型接入：XHUNTER_MODEL / XHUNTER_BASE_URL / XHUNTER_MODEL_CONTEXT_TOKENS /
+XHUNTER_MODEL_OUTPUT_TOKENS（必填）、XHUNTER_PROTOCOL（协议取值，缺省对话补全）、
+XHUNTER_API_KEY / XHUNTER_HEADERS（可选）。预算上限（可选）：XHUNTER_BUDGET_TURNS /
+XHUNTER_BUDGET_TOKENS / XHUNTER_BUDGET_WALL_CLOCK。
 `)
 }
 
@@ -106,12 +102,14 @@ func huntCmd(args []string) int {
 		return exitEnv
 	}
 
-	selection := selectionFromEnv(os.LookupEnv)
-	if err := selection.validate(); err != nil {
+	// 模型接入事实完全来自环境变量：一次报出全部缺项（退出 2），
+	// 不留到第一次推理才发现——那时候已经烧掉了轮次与预算。
+	resolved, err := providerconfig.FromEnv(os.LookupEnv)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v（任务与仓库事实已就绪，缺的是模型接入）\n", err)
 		return exitEnv
 	}
-	provider, err := openProvider(selection)
+	provider, err := openProvider(resolved)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "构造 Provider 失败：%v\n", err)
 		return exitEnv
@@ -161,9 +159,9 @@ func huntCmd(args []string) int {
 		return exitEnv
 	}
 
-	fmt.Fprintf(os.Stderr, "已装配：任务 %q 仓库 %s 分支 %s 基线 %.12s 模型 %s/%s\n",
+	fmt.Fprintf(os.Stderr, "已装配：任务 %q 仓库 %s 分支 %s 基线 %.12s 协议 %s 模型 %s\n",
 		firstLine(bounty.Task), bounty.Repo.Remote, bounty.Repo.Branch, bounty.Repo.BaseCommit,
-		selection.ProviderID, selection.ModelID)
+		resolved.Protocol, resolved.ModelID)
 
 	// 取消入口：循环内任何阻塞调用都靠 ctx 打断。信号只在**运行段**接管——
 	// 启动期的读文件、建 Provider 仍走默认处置（那里还没有任何状态需要保住，
@@ -209,94 +207,4 @@ func firstLine(s string) string {
 		return string([]rune(s)[:limit]) + "…"
 	}
 	return s
-}
-
-func modelsCmd(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "用法：xhunter models <update|status>")
-		return exitEnv
-	}
-	switch args[0] {
-	case "update":
-		return modelsUpdate(args[1:])
-	case "status":
-		return modelsStatus(args[1:])
-	default:
-		fmt.Fprintf(os.Stderr, "未知子命令：models %s\n", args[0])
-		return exitEnv
-	}
-}
-
-func modelsUpdate(args []string) int {
-	fs := flag.NewFlagSet("models update", flag.ContinueOnError)
-	source := fs.String("source", "", "上游目录地址（默认 LiteLLM 目录）")
-	dir := fs.String("dir", "", "快照目录（默认 ~/.xhunter）")
-	timeout := fs.Duration("timeout", 60*time.Second, "单次请求超时")
-	reserve := fs.Int("output-reserve", 0, "上游未区分输入输出时的输出预留 token 数")
-	if err := fs.Parse(args); err != nil {
-		return exitEnv
-	}
-
-	snap, err := modelcatalog.Update(context.Background(), modelcatalog.UpdateOptions{
-		Source:        *source,
-		Dir:           *dir,
-		Timeout:       *timeout,
-		OutputReserve: *reserve,
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "更新模型目录失败：%v\n", err)
-		return exitEnv
-	}
-
-	target := *dir
-	if target == "" {
-		if d, err := modelcatalog.DefaultDir(); err == nil {
-			target = d
-		}
-	}
-	rep := snap.Meta.Report
-	fmt.Printf("模型目录已更新：%s\n", modelcatalog.SnapshotPath(target))
-	fmt.Printf("  来源      %s\n", snap.Meta.Source)
-	fmt.Printf("  抓取时间  %s\n", snap.Meta.FetchedAt.Format(time.RFC3339))
-	fmt.Printf("  上游规模  %d 条 / %.1f MB（sha256 %s…）\n",
-		rep.UpstreamEntries, float64(snap.Meta.UpstreamBytes)/(1<<20), snap.Meta.UpstreamSHA256[:12])
-	fmt.Printf("  转换结果  %d 个模型 / %d 个供应商\n", rep.Converted, rep.Providers)
-	fmt.Printf("  跳过      sample_spec %d · 缺供应商 %d · 无关模式 %d · 缺上限 %d · 窗口小于默认值 %d · 同名冲突 %d\n",
-		rep.SkippedSampleSpec, rep.SkippedNoProvider, rep.SkippedMode, rep.SkippedNoLimits, rep.SkippedIncoherent, rep.Collisions)
-	return exitOK
-}
-
-func modelsStatus(args []string) int {
-	fs := flag.NewFlagSet("models status", flag.ContinueOnError)
-	dir := fs.String("dir", "", "快照目录（默认 ~/.xhunter）")
-	if err := fs.Parse(args); err != nil {
-		return exitEnv
-	}
-	target := *dir
-	if target == "" {
-		d, err := modelcatalog.DefaultDir()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "%v\n", err)
-			return exitEnv
-		}
-		target = d
-	}
-
-	snap, err := modelcatalog.Load(target)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		if errors.Is(err, modelcatalog.ErrNoSnapshot) {
-			return exitEnv
-		}
-		return exitFailed
-	}
-	total := 0
-	for _, p := range snap.Catalog.Provider {
-		total += len(p.Models)
-	}
-	fmt.Printf("模型目录：%s\n", modelcatalog.SnapshotPath(target))
-	fmt.Printf("  来源      %s\n", snap.Meta.Source)
-	fmt.Printf("  抓取时间  %s\n", snap.Meta.FetchedAt.Format(time.RFC3339))
-	fmt.Printf("  可用模型  %d 个 / %d 个供应商\n", total, len(snap.Catalog.Provider))
-	return exitOK
 }

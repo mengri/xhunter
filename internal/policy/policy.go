@@ -22,6 +22,10 @@ import (
 )
 
 // controlDir 是引擎在仓库里的控制目录。
+//
+// 它只放**引擎自己的**材料与冻结配置（会话材料、skill 清单）。**不是"引擎用到的文件都放这里"**：
+// 仓库级、别的工具也会读的配置（如仓库根的 `gates.yml` 门禁清单）不进这个目录——放进来就等于
+// 连带套上"模型禁写"，而它们本来就该是可改、可 review 的普通仓库文件。
 const controlDir = ".xhunter"
 
 // skillsDraftDir 是唯一允许模型写入的控制子目录。
@@ -76,8 +80,9 @@ func (e *engine) Decide(_ context.Context, call hunt.Call) (hunt.Decision, error
 
 	case writePrimitives[call.Primitive]:
 		if call.Target == "" {
-			// 符号级写操作（如不指定文件的符号重命名）没有目标路径可查，
-			// 它的风险是「影响面过大」，那类拦截依赖影响面，另行排期。
+			// 符号级写操作（如不指定文件的符号重命名）没有目标路径可查：它的改动面由
+			// 定位结果决定，而定位发生在裁决之后。刻意不按改动规模设阈值——判据来自
+			// 证据（门禁、读回校验），不来自"改得多就保守拒绝"。
 			return allow("符号级写操作"), nil
 		}
 		if reason, blocked := blockPath(call.Target); blocked {

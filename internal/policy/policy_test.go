@@ -34,10 +34,11 @@ func TestDecide_WriteAllowed(t *testing.T) {
 
 func TestDecide_WriteToControlDirDenied(t *testing.T) {
 	p := New(Config{})
+	// 控制目录里禁写的是**引擎自己的材料与冻结配置**。门禁清单不在这个目录里
+	// （它是仓库级、别的工具也会读的配置，落在仓库根 `gates.yml`），所以这里没有它。
 	for _, target := range []string{
 		".xhunter/session.jsonl",
 		".xhunter/abc/session.jsonl",
-		".xhunter/gates.yml",
 		".xhunter/skills/release/SKILL.md",
 	} {
 		d, _ := p.Decide(context.Background(), hunt.Call{Primitive: "write", Target: target})

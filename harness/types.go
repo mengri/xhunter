@@ -23,9 +23,13 @@ const (
 type ExitCode int
 
 const (
-	ExitOK        ExitCode = 0
-	ExitFailed    ExitCode = 1
-	ExitEnv       ExitCode = 2
+	// ExitOK：模型正常完成对话（任务处于什么状态看 status）。
+	ExitOK ExitCode = 0
+	// ExitEnv：这一趟没走成——未进入对话，或对话中被上游/环境打断；**修好环境可重跑**。
+	ExitEnv ExitCode = 1
+	// ExitAborted：被引擎中止（预算耗尽、止损、轮数硬顶、引擎侧错误）；**重跑同样是这个结果**。
+	ExitAborted ExitCode = 2
+	// ExitCancelled：被外部取消（SIGTERM / SIGINT）。
 	ExitCancelled ExitCode = 3
 )
 

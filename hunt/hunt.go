@@ -29,19 +29,6 @@ type Budget struct {
 	MaxWallClock time.Duration
 }
 
-// CheckpointMode 是检查点密度的取值。
-type CheckpointMode string
-
-const (
-	CheckpointOnStructure CheckpointMode = "on_structure"
-	CheckpointEveryTurn   CheckpointMode = "every_turn"
-	CheckpointEveryWrite  CheckpointMode = "every_write"
-)
-
-type CheckpointPolicy struct {
-	Mode CheckpointMode
-}
-
 // SessionRef 指向同一任务的历次执行记录；为 nil 表示新任务。
 type SessionRef struct {
 	ID  string
@@ -55,11 +42,10 @@ type Bounty struct {
 	// TraceID 是贯穿平台侧记录的追踪标识（FR-11.3）：它进事件的信封，
 	// 用来把"这一串事件"对回平台上的那一次投递。为空表示调用方未提供，
 	// 由装配层回填（缺省取 BountyID）。
-	TraceID    string
-	Repo       git.RepoRef
-	Session    *SessionRef
-	Budget     Budget
-	Checkpoint CheckpointPolicy
+	TraceID string
+	Repo    git.RepoRef
+	Session *SessionRef
+	Budget  Budget
 }
 
 // ============================================================ 门禁

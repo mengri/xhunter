@@ -28,7 +28,7 @@ func (editPrim) Decl() llm.ToolDecl {
 			"path": {"type": "string", "description": "工作区内相对路径"},
 			"literal": {"type": "string", "description": "内容寻址：待替换的字面量片段"},
 			"content": {"type": "string", "description": "替换成的新内容"}
-		}`, "path", "content"),
+		}`, "path", "literal", "content"),
 	}
 }
 

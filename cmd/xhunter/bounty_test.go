@@ -75,7 +75,7 @@ func TestBountyFromEnv_DeliversBudget(t *testing.T) {
 		}
 	})
 	t.Run("三个维度都投递", func(t *testing.T) {
-		env := map[string]string{envMaxTurns: "7", envMaxTokens: "123456", envMaxWallClock: "90m"}
+		env := map[string]string{envBudgetTurns: "7", envBudgetTokens: "123456", envBudgetWallClock: "90m"}
 		for k, v := range base {
 			env[k] = v
 		}
@@ -89,9 +89,9 @@ func TestBountyFromEnv_DeliversBudget(t *testing.T) {
 	})
 	t.Run("写错即启动期失败", func(t *testing.T) {
 		for name, bad := range map[string]string{
-			envMaxTurns:     "0",
-			envMaxTokens:    "-1",
-			envMaxWallClock: "半小时",
+			envBudgetTurns:     "0",
+			envBudgetTokens:    "-1",
+			envBudgetWallClock: "半小时",
 		} {
 			env := map[string]string{name: bad}
 			for k, v := range base {
@@ -215,35 +215,6 @@ func TestBountyFromEnv_ExplicitBranchWins(t *testing.T) {
 	}
 	if SessionID(b) != "S-7" {
 		t.Errorf("会话标识 = %q，仍以会话标识为准", SessionID(b))
-	}
-}
-
-func TestSelectionFromEnv_Validate(t *testing.T) {
-	if err := selectionFromEnv(fakeEnv(nil)).validate(); err == nil {
-		t.Fatal("三要素全缺时必须报错")
-	}
-	sel := selectionFromEnv(fakeEnv(map[string]string{
-		envProvider:     "anthropic",
-		envModel:        "claude-test",
-		envProviderFile: "/etc/xhunter/providers.json",
-	}))
-	if err := sel.validate(); err != nil {
-		t.Fatalf("三要素齐备时不该报错：%v", err)
-	}
-	if sel.ProviderID != "anthropic" || sel.ModelID != "claude-test" || sel.ConfigPath != "/etc/xhunter/providers.json" {
-		t.Errorf("选择 = %+v", sel)
-	}
-
-	// 缺一项也要报出缺的是哪一项（诊断价值就在这里）。
-	partial := selectionFromEnv(fakeEnv(map[string]string{envProvider: "anthropic"}))
-	err := partial.validate()
-	if err == nil {
-		t.Fatal("缺项必须报错")
-	}
-	for _, want := range []string{envModel, envProviderFile} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("错误信息 = %q，应指出缺少 %s", err, want)
-		}
 	}
 }
 

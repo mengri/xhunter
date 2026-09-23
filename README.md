@@ -14,16 +14,16 @@ provider/adapter/             公开：协议实现的共用件（SSE 分帧、�
 provider/openaichat/          公开：协议——OpenAI 兼容对话补全（自持 wire，包注释含协议版本基线）
 provider/openairesponses/     公开：协议——OpenAI Responses
 provider/anthropicmessages/   公开：协议——Anthropic Messages
-providerconfig/               公开：Provider 配置模型与解析（组装层消费的连接事实）
-cmd/xhunter/                  CLI 入口 + 组装层（SDK 值 → 针对性工厂；工具集 / 插件 / 后端 / 策略的注入点）
-internal/                     CLI 侧实现（不对外）：policy 策略引擎、workspace/osfs、git/cli、modelcatalog
+providerconfig/               公开：模型接入事实的环境变量契约（组装层消费的连接事实）
+cmd/xhunter/                  CLI 入口 + 组装层（协议取值 → 针对性适配器；工具集 / 插件 / 后端 / 策略的注入点）
+internal/                     CLI 侧实现（不对外）：policy 策略引擎、workspace/osfs、git/cli
 docs/                         治理文档（产品设计 / 使用手册 / 架构设计）
 scripts/check.py              一键 build + vet + test（`--race` 追加竞态检测；目标平台 linux/amd64）
 scripts/build.sh              单二进制构建，版本号经 ldflags 注入 → bin/xhunter
 Makefile                      构建与验证编排（build / cross / test / vet / check / clean）
 ```
 
-**公开层与组装层严格分离**：`llm/`、`harness/`、`provider/...`、`providerconfig/` 都不依赖 `cmd/` 与 `internal/`，因此可被其他项目单独引用；装配（业务装配、哪个配置值对应哪种协议、针对厂商怎么连线）只发生在 CLI 侧，`internal/modelcatalog` 则是安装期与 CLI 期的动作，不属于运行期契约。
+**公开层与组装层严格分离**：`llm/`、`harness/`、`provider/...`、`providerconfig/` 都不依赖 `cmd/` 与 `internal/`，因此可被其他项目单独引用；装配（业务装配、哪个协议取值对应哪种协议实现）只发生在 CLI 侧。模型接入事实全部来自环境变量——**没有配置文件、没有模型目录**，因此运行期不读任何配置侧文件。
 
 ## 作为库使用
 
@@ -78,17 +78,17 @@ out := engine.Run(ctx, harness.Input{Meta: map[string]any{"bounty_id": bounty.ID
 | **协议实现** | 只有协议：请求形状、流式分帧、增量拼装、错误分类（**自持 wire，不引厂商 SDK**） | `provider/<protocol>`，公开包；包注释里写着**协议版本基线** |
 | **共用件** | 与具体协议无关的部分：SSE 分帧、调用按位置拼装、错误形状、上限契约 | `provider/adapter`，公开包 |
 | **绑定** | 模型给的"名字 + 参数 JSON"落到哪个原语、定位参数是什么 | `hunt/bind.go`——**使用方**的词汇，协议层不认识 |
-| **组装** | 哪个配置值对应哪种协议；**端点与鉴权形状都来自配置** | CLI 侧的组装层 |
+| **组装** | 哪个协议取值对应哪种协议实现；**端点与鉴权形状都来自环境变量** | CLI 侧的组装层 |
 
 目前内置三个协议：
 
-| SDK 取值 | 协议 | 协议版本基线 | 端点 | 鉴权 |
+| 协议取值（`XHUNTER_PROTOCOL`） | 协议 | 协议版本基线 | 端点 | 鉴权 |
 |---|---|---|---|---|
-| `@ai-sdk/openai-compatible`（缺省） | OpenAI 兼容对话补全 | 无版本头，记形状 | 由 `baseURL` 给出 | 由配置的请求头决定 |
-| `@ai-sdk/openai` | OpenAI Responses | 无版本头，`response.completed` 收尾 | 由 `baseURL` 给出 | 同上 |
-| `@ai-sdk/anthropic` | Anthropic Messages | `anthropic-version: 2023-06-01` | 由 `baseURL` 给出 | 同上（惯用 `x-api-key`） |
+| `openaichat`（缺省） | OpenAI 兼容对话补全 | 无版本头，记形状 | 由 `XHUNTER_BASE_URL` 给出 | 由环境变量给的请求头决定 |
+| `openairesponses` | OpenAI Responses | 无版本头，`response.completed` 收尾 | 由 `XHUNTER_BASE_URL` 给出 | 同上 |
+| `anthropicmessages` | Anthropic Messages | `anthropic-version: 2023-06-01` | 由 `XHUNTER_BASE_URL` 给出 | 同上（惯用 `x-api-key`） |
 
-协议实现是普通构造函数，参数是已经解析好的连接事实——**端点必填、鉴权以请求头形式传入**，因此它不依赖配置模型、不做注册、也不提供工厂，可以脱离本项目的配置体系被独立复用：
+协议实现是普通构造函数，参数是已经解析好的连接事实——**端点必填、鉴权以请求头形式传入**，因此它不依赖接入事实模型、不做注册、也不提供工厂，可以脱离本项目的接入体系被独立复用：
 
 ```go
 c, err := openaichat.New(openaichat.Config{
@@ -99,26 +99,34 @@ c, err := openaichat.New(openaichat.Config{
 })
 ```
 
-接入一家新厂商 = 在组装层的厂商表里加一条**针对性工厂**：
+接入一家新**厂商** = 设一组环境变量，代码一行都不用改：
+
+```bash
+XHUNTER_MODEL=my-model
+XHUNTER_BASE_URL=https://gateway.example/v1
+XHUNTER_MODEL_CONTEXT_TOKENS=128000
+XHUNTER_MODEL_OUTPUT_TOKENS=8192
+XHUNTER_HEADERS='{"x-gateway-token":"{env:GW_TOKEN}"}'   # 非标准鉴权也不用改代码
+```
+
+接入一种新**协议** = 写一个协议包，并在组装层的协议表里加一行绑定：
 
 ```go
 // cmd/xhunter/providers.go
-func vendorFactories() map[string]providerFactory {
-    return map[string]providerFactory{
-        "": openAICompatible,                    // 内置形态：OpenAI 兼容
-        "@vendor/private-gateway": func(r providerconfig.Resolved) (harness.Provider, error) {
-            // 该厂商特有的连线方式全在这里：端点约定、鉴权头怎么拼、要不要补租户头
-            return mygateway.New(mygateway.Config{...})
-        },
+func protocolFactories() map[string]protocolFactory {
+    return map[string]protocolFactory{
+        providerconfig.ProtocolOpenAIChat:        openAIChat,     // 缺省形态：OpenAI 兼容
+        providerconfig.ProtocolOpenAIResponses:   openAIResponses,
+        providerconfig.ProtocolAnthropicMessages: anthropicMessages,
     }
 }
 ```
 
 | 约定 | 说明 |
 |---|---|
-| **协议实现不含装配知识** | 它不知道自己被哪个配置值选中；新增厂商只改组装层，协议实现与 Harness 都不动 |
+| **协议实现不含装配知识** | 它不知道自己被哪个协议取值选中；接一家厂商只设环境变量，接一种协议才在组装层加一行 |
 | **一个协议一个包** | `provider/<protocol>` 之间互不引用；共享件下沉到 `provider/adapter`（互相引用即导入循环，编译期失败） |
-| **组装期显式失败** | 缺上限、缺端点、凭据引用解析为空、厂商表里没有对应工厂 → 启动期退出码 2，并指出答案在组装层 |
+| **组装期显式失败** | 缺上限、缺端点、引用解析为空、协议表里没有该取值 → 启动期退出码 1，并指出答案在组装层 |
 | **事件序列即协议状态** | 流的结束由通道关闭表达，正常结束与中断的区别由最后一条事件表达；形状不成立的调用带结构化错误上报，不得静默丢弃 |
 
 ### 三条使用约束（不满足则语义不成立）
@@ -127,7 +135,7 @@ func vendorFactories() map[string]providerFactory {
 |---|---|
 | **stdout 是唯一外部通道** | 事件流独占 stdout，日志走 stderr；写失败即环境错误终止（`docs/xhunter-product-design.md` FR-10.4） |
 | **分支与交付不由模型驱动** | 任务分支的创建/推送只发生在初始化，检查点与交付提交的**执行**只由引擎在轮边界与收尾完成；工具面不含能改变分支、推送目标或已推送历史的操作（`docs/xhunter-architecture.md` INV-11） |
-| **门禁清单来自受审配置** | 来自 Bounty 或**基线 commit**（不从工作区读取，防模型中途削弱门禁）；豁免只能由 Bounty 授予（FR-5.2b/g/h） |
+| **门禁清单来自受审配置** | 来自 Bounty 或**基线 commit**（仓库根 `gates.yml`；不从工作区读取——判据在运行前定死）；豁免只能由 Bounty 授予（FR-5.2b/g/h） |
 
 ## 构建与验证
 

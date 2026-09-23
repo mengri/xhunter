@@ -8,6 +8,8 @@
 //     tools[{type:function,function{name,description,parameters}}], stream, stream_options.include_usage}；
 //     分片 {choices[{delta{content,tool_calls[{index,id,function{name,arguments}}]},finish_reason}],usage}；
 //     结束标记 data: [DONE]；参数为**字符串**形式的 JSON
+//   - 用量口径：prompt_tokens 是**全部输入**（已含缓存），缓存读在
+//     prompt_tokens_details.cached_tokens；completion_tokens 是全部输出
 //   - 兼容面：自建网关与第三方托管端普遍实现这套形状，因此本包不假设任何厂商专属字段；
 //     也因此对"结束标记缺失"采取容忍策略（见过 finish_reason 即按正常结束）
 //   - 需要动本包的场合：分片字段改名、工具调用增量的形状变化、结束语义变化
@@ -94,7 +96,6 @@ func New(cfg Config) (*Client, error) {
 		caps: llm.Caps{
 			MaxContextTokens: cfg.MaxContextTokens,
 			// 一次响应里的多个调用按位置分别拼装，因此并行调用是被支持的。
-			ParallelToolCalls: true,
 		},
 	}, nil
 }

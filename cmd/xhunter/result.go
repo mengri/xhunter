@@ -35,10 +35,11 @@ type resultFile struct {
 }
 
 type usageFile struct {
-	InputTokens  int   `json:"input_tokens"`
-	OutputTokens int   `json:"output_tokens"`
-	Turns        int   `json:"turns"`
-	ElapsedMS    int64 `json:"elapsed_ms"`
+	InputTokens       int   `json:"input_tokens"`
+	OutputTokens      int   `json:"output_tokens"`
+	CachedInputTokens int   `json:"cached_input_tokens"`
+	Turns             int   `json:"turns"`
+	ElapsedMS         int64 `json:"elapsed_ms"`
 }
 
 // errorFile 只描述"任务为什么没成"：kind 供程序分支，message 给人看，
@@ -71,10 +72,11 @@ func writeRunOutputs(resultPath, patchPath string, bounty hunt.Bounty, out harne
 		Branch:       bounty.Repo.Branch,
 		FilesChanged: d.Files,
 		Usage: usageFile{
-			InputTokens:  out.Usage.InputTokens,
-			OutputTokens: out.Usage.OutputTokens,
-			Turns:        out.Usage.Turns,
-			ElapsedMS:    out.Usage.Elapsed.Milliseconds(),
+			InputTokens:       out.Usage.InputTokens,
+			OutputTokens:      out.Usage.OutputTokens,
+			CachedInputTokens: out.Usage.CachedInputTokens,
+			Turns:             out.Usage.Turns,
+			ElapsedMS:         out.Usage.Elapsed.Milliseconds(),
 		},
 	}
 	if r.FilesChanged == nil {

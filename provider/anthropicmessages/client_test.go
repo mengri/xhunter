@@ -524,3 +524,63 @@ func TestInfer_UsageIsNotDoubleCounted(t *testing.T) {
 		t.Errorf("输出用量 = %d，期望 57（累计值要差分成增量，而不是 1+57）", out)
 	}
 }
+
+// 用量口径（本协议特有）：输入三项是**并列**关系，全部输入必须相加；缓存读是其中一项。
+// 少加一项的后果很具体：缓存命中越多、上报的输入越小——把"缓存起作用"读成"这次很便宜"。
+func TestInfer_InputIncludesCacheReadAndCreation(t *testing.T) {
+	up := &fakeUpstream{parts: []string{
+		"event: message_start\n" + sse(`{"type":"message_start","message":{"usage":{"input_tokens":50,"output_tokens":0,"cache_read_input_tokens":100000,"cache_creation_input_tokens":1200}}}`),
+		"event: content_block_delta\n" + sse(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}`),
+		"event: message_delta\n" + sse(`{"type":"message_delta","usage":{"output_tokens":12}}`),
+		"event: message_stop\n" + sse(`{"type":"message_stop"}`),
+	}}
+	c := newAgainst(t, up, nil)
+	sess, err := c.Infer(context.Background(), llm.Request{Messages: []llm.Message{{Role: llm.RoleUser, Content: "hi"}}})
+	if err != nil {
+		t.Fatalf("Infer 失败：%v", err)
+	}
+	var in, out, cached int
+	for _, ev := range drain(t, sess) {
+		if ev.Kind == llm.EvUsage {
+			in += ev.Usage.InputTokens
+			out += ev.Usage.OutputTokens
+			cached += ev.Usage.CachedInputTokens
+		}
+	}
+	if want := 50 + 100000 + 1200; in != want {
+		t.Errorf("全部输入 = %d，期望 %d（三项并列，必须相加）", in, want)
+	}
+	if cached != 100000 {
+		t.Errorf("缓存读 = %d，期望 100000（只有 cache_read 是缓存命中）", cached)
+	}
+	if out != 12 {
+		t.Errorf("输出 = %d，期望 12", out)
+	}
+	if cached > in {
+		t.Errorf("缓存读必须是全部输入的子集：cached=%d in=%d", cached, in)
+	}
+}
+
+// 不用缓存时三项合并后与原生 input_tokens 一致——加字段不改变既有口径。
+func TestInfer_NoCacheReportsNativeInput(t *testing.T) {
+	up := &fakeUpstream{parts: []string{
+		"event: message_start\n" + sse(`{"type":"message_start","message":{"usage":{"input_tokens":100,"output_tokens":0}}}`),
+		"event: message_delta\n" + sse(`{"type":"message_delta","usage":{"output_tokens":7}}`),
+		"event: message_stop\n" + sse(`{"type":"message_stop"}`),
+	}}
+	c := newAgainst(t, up, nil)
+	sess, err := c.Infer(context.Background(), llm.Request{Messages: []llm.Message{{Role: llm.RoleUser, Content: "hi"}}})
+	if err != nil {
+		t.Fatalf("Infer 失败：%v", err)
+	}
+	var in, cached int
+	for _, ev := range drain(t, sess) {
+		if ev.Kind == llm.EvUsage {
+			in += ev.Usage.InputTokens
+			cached += ev.Usage.CachedInputTokens
+		}
+	}
+	if in != 100 || cached != 0 {
+		t.Errorf("输入/缓存读 = %d/%d，期望 100/0", in, cached)
+	}
+}

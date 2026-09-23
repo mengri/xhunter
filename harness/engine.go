@@ -190,6 +190,7 @@ func (e *Engine) Run(ctx context.Context, in Input) (out Outcome) {
 			case llm.EvUsage:
 				run.Usage.InputTokens += ev.Usage.InputTokens
 				run.Usage.OutputTokens += ev.Usage.OutputTokens
+				run.Usage.CachedInputTokens += ev.Usage.CachedInputTokens
 			case llm.EvError:
 				kind := "stream_error"
 				if ev.Err != nil {
@@ -208,7 +209,7 @@ func (e *Engine) Run(ctx context.Context, in Input) (out Outcome) {
 		for _, h := range e.onTurn {
 			c, err := h(ctx, run, turn)
 			if err != nil {
-				run.terminate(StatusFailed, "on_turn: "+err.Error(), ExitFailed)
+				run.terminate(StatusFailed, "on_turn: "+err.Error(), ExitAborted)
 				break
 			}
 			if !c {
@@ -220,7 +221,7 @@ func (e *Engine) Run(ctx context.Context, in Input) (out Outcome) {
 			break
 		}
 		if !cont {
-			run.terminate(StatusFailed, "hook_stopped", ExitFailed)
+			run.terminate(StatusFailed, "hook_stopped", ExitAborted)
 			break
 		}
 
@@ -228,7 +229,7 @@ func (e *Engine) Run(ctx context.Context, in Input) (out Outcome) {
 		if turn.Failed {
 			failStreak++
 			if failStreak >= e.cfg.MaxFailStreak {
-				run.terminate(StatusFailed, fmt.Sprintf("stop_loss: 连续 %d 轮工具失败", failStreak), ExitFailed)
+				run.terminate(StatusFailed, fmt.Sprintf("stop_loss: 连续 %d 轮工具失败", failStreak), ExitAborted)
 				break
 			}
 		} else {
@@ -243,7 +244,7 @@ func (e *Engine) Run(ctx context.Context, in Input) (out Outcome) {
 	}
 
 	if run.Terminal == nil {
-		run.terminate(StatusFailed, "turn_limit_exceeded", ExitFailed)
+		run.terminate(StatusFailed, "turn_limit_exceeded", ExitAborted)
 	}
 
 	return run.Outcome()

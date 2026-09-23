@@ -14,6 +14,8 @@
 //     response.failed 收尾；因此没见到它们就按截断上报（容忍缺失会把半截响应伪装成完整回答）。
 //     少数网关会在结束事件后再补一个 [DONE]，按同一含义处理
 //   - 参数形式：arguments 是**字符串**形式的 JSON（与对话补全一致）
+//   - 用量口径：input_tokens 是**全部输入**（已含缓存），缓存读在
+//     input_tokens_details.cached_tokens；output_tokens 是全部输出
 //   - 需要动本包的场合：事件名或载荷字段变化、结束语义变化、input 条目种类变化
 //
 // 鉴权不在本包：请求头由调用方按配置拼好后传进来（见 Config.Headers）。
@@ -93,8 +95,7 @@ func New(cfg Config) (*Client, error) {
 		headers:  cfg.Headers,
 		client:   client,
 		caps: llm.Caps{
-			MaxContextTokens:  cfg.MaxContextTokens,
-			ParallelToolCalls: true,
+			MaxContextTokens: cfg.MaxContextTokens,
 		},
 	}, nil
 }
@@ -227,6 +228,9 @@ func (s *session) run() {
 				u := llm.Usage{
 					InputTokens:  ev.Response.Usage.InputTokens,
 					OutputTokens: ev.Response.Usage.OutputTokens,
+				}
+				if d := ev.Response.Usage.InputTokensDetails; d != nil {
+					u.CachedInputTokens = d.CachedTokens
 				}
 				if !s.emit(llm.Event{Kind: llm.EvUsage, Usage: u}) {
 					return

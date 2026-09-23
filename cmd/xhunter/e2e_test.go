@@ -21,7 +21,7 @@ import (
 //
 // 只有"真 git + 真 SSE 假上游"能证明这条链路成立：之前每个包各自绿，主链路却
 // 断在第一行（git 四动作全是桩）。夹具仓库是本地的裸仓库，假上游是本地 httptest，
-// 全程不联网、不碰开发机的 ~/.xhunter 与 ~/.gitconfig。
+// 全程不联网、不碰开发机的 ~/.gitconfig。
 func TestEndToEnd_LocalRunProducesDeliveryCommit(t *testing.T) {
 	requireGitForE2E(t)
 	fx := newRepoFixture(t)
@@ -56,8 +56,8 @@ func TestEndToEnd_LocalRunProducesDeliveryCommit(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	taskPath, cfgPath := writeRunInputs(t, tmp, task, srv.URL+"/v1")
-	setRunEnv(t, taskPath, cfgPath, fx)
+	taskPath := writeRunInputs(t, tmp, task)
+	setRunEnv(t, fx, srv.URL+"/v1")
 
 	resultPath := filepath.Join(tmp, "out", "result.json") // 父目录不存在：装配层要建
 	patchPath := filepath.Join(tmp, "out", "delivery.patch")
@@ -101,18 +101,18 @@ func TestEndToEnd_LocalRunProducesDeliveryCommit(t *testing.T) {
 		t.Errorf("事件泄漏到 stderr：%q", stderrText)
 	}
 
-	// 交付物在远端的任务分支上。注意"交付 = 分支 tip"：本轮改动已在轮边界被检查点
-	// 提交，收尾**不产生空提交**（FR-1.3c「无新写操作不提交」），因此提交数是
-	// 基线 + 检查点 = 2，tip 是检查点提交。收尾提交只在有未提交改动时才有意义。
+	// 交付物在远端的任务分支上。"交付 = 分支 tip"。本例的改动**不落在结构完整点上**
+	// （符号扩展未接入 → 判据不可判定 → 不产生自动检查点），因此轮边界不提交，
+	// tip 是收尾的**交付提交**（FR-1.3c：无新写操作不提交，收尾必提交）。
 	tip := gitIn(t, fx.remote, "rev-parse", "refs/heads/"+fx.branch)
 	if tip == fx.base {
 		t.Fatal("远端任务分支没有推进——交付没有发生")
 	}
 	if n := gitIn(t, fx.remote, "rev-list", "--count", "refs/heads/"+fx.branch); n != "2" {
-		t.Errorf("提交数 = %s，期望 2（基线 + 轮边界检查点，收尾不得产生空提交）", n)
+		t.Errorf("提交数 = %s，期望 2（基线 + 收尾交付提交）", n)
 	}
-	if msg := gitIn(t, fx.remote, "log", "-1", "--format=%s", "refs/heads/"+fx.branch); !strings.Contains(msg, "检查点") {
-		t.Errorf("tip 的提交信息 = %q，期望轮边界检查点", msg)
+	if msg := gitIn(t, fx.remote, "log", "-1", "--format=%s", "refs/heads/"+fx.branch); !strings.Contains(msg, "任务改动") {
+		t.Errorf("tip 的提交信息 = %q，期望收尾交付提交", msg)
 	}
 	if got := gitIn(t, fx.remote, "show", tip+":hello.txt"); got != "hi" {
 		t.Errorf("交付提交里的文件内容 = %q，期望 hi", got)
@@ -145,8 +145,13 @@ func TestEndToEnd_LocalRunProducesDeliveryCommit(t *testing.T) {
 	if len(res.FilesChanged) != 1 || res.FilesChanged[0] != "hello.txt" {
 		t.Errorf("files_changed = %v", res.FilesChanged)
 	}
+	// 用量口径贯穿全链：上游明细 → 协议翻译 → 循环累加 → 结果文件。
 	if res.Usage.Turns != 2 || res.Usage.InputTokens != 32 || res.Usage.OutputTokens != 10 {
 		t.Errorf("usage 不对（两轮共 32/10）：%+v", res.Usage)
+	}
+	if res.Usage.CachedInputTokens != 24 {
+		t.Errorf("cached_input_tokens = %d，期望 24（两轮 8+16）：缓存读要一路带到结果文件",
+			res.Usage.CachedInputTokens)
 	}
 	if res.PatchPath != patchPath {
 		t.Errorf("patch_path = %q，期望 %q", res.PatchPath, patchPath)
@@ -205,8 +210,8 @@ func TestEndToEnd_SigtermConvergesToCancelled(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	taskPath, cfgPath := writeRunInputs(t, tmp, "随便做点什么", srv.URL+"/v1")
-	setRunEnv(t, taskPath, cfgPath, fx)
+	taskPath := writeRunInputs(t, tmp, "随便做点什么")
+	setRunEnv(t, fx, srv.URL+"/v1")
 
 	stdout, stderr := swapStdStreams(t)
 	done := make(chan int, 1)
@@ -250,13 +255,11 @@ func TestEndToEnd_ResultFileWrittenOnFailure(t *testing.T) {
 	t.Setenv("HOME", filepath.Join(tmp, "home"))
 	t.Setenv("TMPDIR", filepath.Join(tmp, "work"))
 
-	taskPath, cfgPath := writeRunInputs(t, tmp, "做点什么", "http://127.0.0.1:1/v1")
+	taskPath := writeRunInputs(t, tmp, "做点什么")
+	setProviderEnv(t, "http://127.0.0.1:1/v1")
 	t.Setenv("XHUNTER_REPO_URL", filepath.Join(tmp, "no-such-repo.git"))
 	t.Setenv("XHUNTER_REPO_BASE_COMMIT", "0123456789abcdef0123456789abcdef01234567")
 	t.Setenv("XHUNTER_REPO_BRANCH", "xhunter/fail")
-	t.Setenv("XHUNTER_PROVIDER", "localgw")
-	t.Setenv("XHUNTER_MODEL", "test-model")
-	t.Setenv("XHUNTER_PROVIDER_CONFIG", cfgPath)
 
 	resultPath := filepath.Join(tmp, "result.json")
 	stdout, stderr := swapStdStreams(t)
@@ -315,15 +318,15 @@ func TestEndToEnd_BudgetExhaustionStopsTheRun(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	taskPath, cfgPath := writeRunInputs(t, tmp, "随便看看", srv.URL+"/v1")
-	setRunEnv(t, taskPath, cfgPath, fx)
-	t.Setenv(envMaxTurns, "2")
+	taskPath := writeRunInputs(t, tmp, "随便看看")
+	setRunEnv(t, fx, srv.URL+"/v1")
+	t.Setenv(envBudgetTurns, "2")
 
 	stdout, stderr := swapStdStreams(t)
 	code := run([]string{"--bounty", taskPath})
 	stdoutText, stderrText := drainStdStreams(t, stdout, stderr)
 
-	if code != exitFailed {
+	if code != exitAborted {
 		t.Fatalf("预算耗尽应退出 1，实际 %d\nstdout:\n%s\nstderr:\n%s", code, stdoutText, stderrText)
 	}
 	if !strings.Contains(stdoutText, `"status":"failed"`) || !strings.Contains(stdoutText, "budget_exhausted:turns") {
@@ -356,8 +359,8 @@ func TestEndToEnd_BrokenEventChannelIsEnvError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	taskPath, cfgPath := writeRunInputs(t, tmp, "随便看看", srv.URL+"/v1")
-	setRunEnv(t, taskPath, cfgPath, fx)
+	taskPath := writeRunInputs(t, tmp, "随便看看")
+	setRunEnv(t, fx, srv.URL+"/v1")
 
 	// stderr 收进文件；stdout 接一个读端已关的管道。
 	stderrFile, err := os.CreateTemp(t.TempDir(), "stderr-*")
@@ -447,30 +450,32 @@ func requireGitForE2E(t *testing.T) {
 	}
 }
 
-func writeRunInputs(t *testing.T, dir, task, baseURL string) (taskPath, cfgPath string) {
+// writeRunInputs 只写任务正文：部署事实（仓库与模型接入）全部走环境变量，
+// 因此这里不再产出任何"配置文件"。
+func writeRunInputs(t *testing.T, dir, task string) string {
 	t.Helper()
-	taskPath = filepath.Join(dir, "task.txt")
+	taskPath := filepath.Join(dir, "task.txt")
 	if err := os.WriteFile(taskPath, []byte(task+"\n"), 0o644); err != nil {
 		t.Fatalf("写任务文件失败：%v", err)
 	}
-	cfgPath = filepath.Join(dir, "provider.json")
-	cfg := fmt.Sprintf(`{"provider":{"localgw":{"npm":"@ai-sdk/openai-compatible",
-      "options":{"baseURL":%q},
-      "models":{"test-model":{"limit":{"context":200000,"output":8192}}}}}}`, baseURL)
-	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
-		t.Fatalf("写 provider 配置失败：%v", err)
-	}
-	return taskPath, cfgPath
+	return taskPath
 }
 
-func setRunEnv(t *testing.T, taskPath, cfgPath string, fx repoFixture) {
+// setProviderEnv 投递模型接入事实。刻意不设 XHUNTER_PROTOCOL：缺省协议也要能用。
+func setProviderEnv(t *testing.T, baseURL string) {
+	t.Helper()
+	t.Setenv("XHUNTER_MODEL", "test-model")
+	t.Setenv("XHUNTER_BASE_URL", baseURL)
+	t.Setenv("XHUNTER_MODEL_CONTEXT_TOKENS", "200000")
+	t.Setenv("XHUNTER_MODEL_OUTPUT_TOKENS", "8192")
+}
+
+func setRunEnv(t *testing.T, fx repoFixture, baseURL string) {
 	t.Helper()
 	t.Setenv("XHUNTER_REPO_URL", fx.remote)
 	t.Setenv("XHUNTER_REPO_BASE_COMMIT", fx.base)
 	t.Setenv("XHUNTER_REPO_BRANCH", fx.branch)
-	t.Setenv("XHUNTER_PROVIDER", "localgw")
-	t.Setenv("XHUNTER_MODEL", "test-model")
-	t.Setenv("XHUNTER_PROVIDER_CONFIG", cfgPath)
+	setProviderEnv(t, baseURL)
 }
 
 // assertDirEmpty 断言目录里没有残骸（临时工作树被回收）。
@@ -496,7 +501,7 @@ func sseWithToolCall(id, name, args string) string {
 		id, name, args)
 	return "data: " + delta + "\n\n" +
 		`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n" +
-		`data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":7}}` + "\n\n" +
+		`data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":7,"prompt_tokens_details":{"cached_tokens":8}}}` + "\n\n" +
 		"data: [DONE]\n\n"
 }
 
@@ -504,6 +509,6 @@ func sseWithText(text string) string {
 	delta := fmt.Sprintf(`{"choices":[{"delta":{"content":%q},"finish_reason":null}]}`, text)
 	return "data: " + delta + "\n\n" +
 		`data: {"choices":[{"delta":{},"finish_reason":"stop"}]}` + "\n\n" +
-		`data: {"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":3}}` + "\n\n" +
+		`data: {"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":3,"prompt_tokens_details":{"cached_tokens":16}}}` + "\n\n" +
 		"data: [DONE]\n\n"
 }

@@ -23,7 +23,7 @@ func TestList_SkipsNoiseButKeepsControlDir(t *testing.T) {
 		"sub/b.go",
 		".git/c.go",
 		".cache/d.go",
-		controlDir + "/gates.yml",
+		controlDir + "/session.jsonl",
 		controlDir + "/skills/release/SKILL.md",
 	} {
 		if _, err := st.WriteRange(p, workspace.ByteRange{Start: 0, End: 0}, "x"); err != nil {

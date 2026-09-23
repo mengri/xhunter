@@ -473,3 +473,53 @@ func TestInfer_CancelUnblocksTheStream(t *testing.T) {
 		}
 	}
 }
+
+// 用量口径：prompt_tokens 是**全部输入**（已含缓存），缓存读作为**子集**上报。
+func TestInfer_ReportsCachedInputTokens(t *testing.T) {
+	f := &fakeUpstream{parts: []string{
+		sse(`{"choices":[{"delta":{"content":"hi"}}]}`),
+		sse(`{"choices":[],"usage":{"prompt_tokens":2006,"completion_tokens":30,"prompt_tokens_details":{"cached_tokens":1920}}}`),
+		"data: [DONE]\n\n",
+	}}
+	c := newAgainst(t, f, nil)
+	s, err := c.Infer(context.Background(), llm.Request{})
+	if err != nil {
+		t.Fatalf("发起推理失败：%v", err)
+	}
+	u := lastUsage(t, drain(t, s))
+	if u.InputTokens != 2006 || u.OutputTokens != 30 || u.CachedInputTokens != 1920 {
+		t.Fatalf("用量 = %+v，期望 输入=2006 输出=30 缓存读=1920", u)
+	}
+	if u.CachedInputTokens > u.InputTokens {
+		t.Errorf("缓存读必须是全部输入的子集：%+v", u)
+	}
+}
+
+// 老网关不给明细：缓存读记 0，其余口径不变——缺字段不该让解析失败。
+func TestInfer_MissingCacheDetailsReportsZero(t *testing.T) {
+	f := &fakeUpstream{parts: []string{
+		sse(`{"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":7}}`),
+		"data: [DONE]\n\n",
+	}}
+	c := newAgainst(t, f, nil)
+	s, err := c.Infer(context.Background(), llm.Request{})
+	if err != nil {
+		t.Fatalf("发起推理失败：%v", err)
+	}
+	u := lastUsage(t, drain(t, s))
+	if u.InputTokens != 11 || u.OutputTokens != 7 || u.CachedInputTokens != 0 {
+		t.Errorf("用量 = %+v，期望 输入=11 输出=7 缓存读=0", u)
+	}
+}
+
+// lastUsage 取事件流里最后一条用量事件（本协议整轮只发一条）。
+func lastUsage(t *testing.T, evs []llm.Event) llm.Usage {
+	t.Helper()
+	for i := len(evs) - 1; i >= 0; i-- {
+		if evs[i].Kind == llm.EvUsage {
+			return evs[i].Usage
+		}
+	}
+	t.Fatal("事件流里没有用量事件")
+	return llm.Usage{}
+}
