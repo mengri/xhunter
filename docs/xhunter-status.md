@@ -38,7 +38,7 @@
 | Provider 三协议 | `provider/openaichat` · `openairesponses` · `anthropicmessages` + `provider/adapter` + `providerconfig`（环境变量契约） | 各包 `*_test.go`（IA-8.x/9.x） |
 | CLI 与组装层 | `cmd/xhunter`：`--bounty/--log-file/--result/--patch`、`version`；环境变量投递（仓库事实 ＋ 模型接入）、退出码 0/1/2/3、信号接线 | `bounty_test.go`、`channel_test.go`、`provider_test.go`、`signal_test.go`、`e2e_test.go` |
 | 端到端夹具 | 真 git（本地裸仓库）＋ 真 SSE 假上游，不联网 | `TestEndToEnd_LocalRunProducesDeliveryCommit` 等 5 条 |
-| 事件出口 | 信封四字段统一盖章；已发 `tool_result` · `policy_denied` · `degraded` · `deliverable` · `hunt_end` | `hunt/session.go:286,303`、`hunt/hooks.go:136,307,326` |
+| 事件出口 | 信封四字段统一盖章；已发 `hunt_start` · `tool_result` · `policy_denied` · `degraded` · `deliverable` · `hunt_end` | `hunt/session.go`（工具结果/策略拒绝）、`hunt/hooks.go`（起飞/降级/终态） |
 | 结果文件 | `--result` 无论成败都写；含终态/退出码/仓库事实/提交/改动清单/用量/error | `cmd/xhunter/result.go`（IA-12.9） |
 | 模型声明终态（`needs` / `assumptions`） | `hunt/declare.go`（解析固定小节）＋ `Session.OnTurn`（轮边界登记）＋ `Session.Finalize`（收尾收敛为 `blocked`）；事件 `needs_input` / `assumption`；结果文件 `needs` / `assumptions` | `hunt/declare_test.go`（IA-1.13）、`cmd/xhunter/result_test.go` |
 
@@ -65,7 +65,6 @@
 | 提交连败上限 | `checkpoint` 失败只记 warn，无连败计数 |
 | 流看门狗 | 无（`StreamIdleTimeout` 未接入） |
 | 止损两段式 | `hunt/policy.go` 只有 `Decide`/`Charge`/`Exhausted`，无 `ObserveFailure`/`DeniedCount` |
-| 生效配置快照 | 无 `effective_config`，`hunt_start` 也不存在 |
 | **用量口径（输出明细与缓存写）** | 输入侧已按统一口径落地（见 §2.3）：全部输入含缓存读/写、缓存读为子集。仍未取的：OpenAI 的输出明细（`completion_tokens_details` / `output_tokens_details`：reasoning / audio / accepted·rejected prediction），以及把「缓存写」单列出来（Anthropic 的写溢价 1.25×/2× 目前按普通输入价计） |
 | 差异排除材料目录 | `internal/git/cli/git.go:173` — `Diff`/`Patch` 无 `.xhunter/<session_id>/**` 排除 |
 | 本地驱动 | `xhunter run`（Bounty 生成器）尚未接线（使用手册 §1.2 已标注） |
@@ -75,7 +74,7 @@
 | 不一致 | 事实 | 影响 |
 |---|---|---|
 | `edit.literal` 的必填性 | 实现里必填（缺它返回 `bad_selector`），schema 的 `required` 只有 `path`/`content`（`hunt/basic/edit.go:31`） | 模型照 schema 省略 → 本可避免的错误（**已于 2026-09-23 修正**，见 §2.3） |
-| 文档列了 6 个 `hunt_start` 载荷事件，实际未发出 | `hunt_start` / `heartbeat`（无调用点）/ `usage` / `assistant_text` / `tool_call` / `error` 均未发 | 平台侧看不到「开始了」「还活着」「花了多少」 |
+| 文档列了 6 类事件，部分仍未发出 | `hunt_start` **已发**（本周期，含生效配置快照）；`heartbeat`（无调用点）/ `usage` / `assistant_text` / `tool_call` / `error` 仍未发 | 平台侧仍看不到「还活着」「花了多少」「模型说了什么」 |
 | `check.py --wsl` 在映射盘工作区不可用 | 脚本由 `__file__` 推导工作目录，映射盘（UNC）路径在 `--wsl` 分支里被原样拼进 bash 命令，`cd` 失败（实测 `exit 1: cd: \localhostworkagentsxhunter`） | 规范验证入口曾在这台机器上跑不起来，基准只能**直接调用 WSL 内 go** 得到（**已于 2026-09-23 修正**，见 §2.3） |
 | **IA 编号重复** | `IA-2.11` 出现两次（内核条款 / skill 清单）；`IA-8.15` / `IA-8.16` / `IA-8.17` 各出现两次（协议包通用项 / 单协议形状项） | 引用会指错；**已用限定词消歧、不重编号**（重编号要动架构 §12 与本文档几十处引用，收益只是好看）：架构 §12 与本文档的编号现**逐字一致**，写作 `IA-2.11(a) 内核条款与环境事实` / `IA-2.11(b) skill 发现清单` / `IA-8.15(a) 协议版本基线` / `IA-8.15(b) Messages 协议形状` 等 |
 
@@ -101,8 +100,8 @@
 | <a id="fr-5-2b"></a>FR-5.2b~5.2i（门禁全链） | 待接入 | MS-5 | `s.gates = nil`；`check` 声明不实现 |
 | <a id="fr-6-3"></a>FR-6.3/6.4（`needs` / `assumptions` / `unverified`） | 部分已落地 | MS-2（余） | **`needs` / `assumptions` 已落地**（2026-09-23）：采集机制 = 解析正文固定小节（轮边界登记、收尾收敛为 `blocked`）。**余 `unverified`**（FR-6.4 的第三类）：需新增内核小节与采集，未接入 |
 | <a id="fr-9-4"></a>FR-9.4（两段式止损） | 待接入 | MS-3 | 无 `ObserveFailure` / `DeniedCount` |
-| <a id="fr-10-1"></a>FR-10.1~10.3（心跳 / 终态事件） | 部分待接入 | MS-2 | `heartbeat` 调用点未接入；`hunt_start` / `usage` / `assistant_text` / `tool_call` / `error` 未发 |
-| <a id="fr-11-6"></a>FR-11.6（生效配置快照） | 待接入 | MS-2 | 无 `effective_config` |
+| <a id="fr-10-1"></a>FR-10.1~10.3（心跳 / 终态事件） | 部分待接入 | MS-2 | `heartbeat` 调用点未接入；`usage` / `assistant_text` / `tool_call` / `error` 未发（`hunt_start` 已发） |
+| <a id="fr-11-6"></a>FR-11.6（生效配置快照） | 已落地 | MS-2 | 装配完成后冻结一次，进 `hunt_start` 与结果文件 `effective_config`；门禁清单随 MS-5 接入。用例 `TestEffectiveConfig_ListsPrimitivesInToolFaceOrder`、`TestEffectiveConfig_CarriesPluginAndFilterNames`、`TestEffectiveConfig_CarriesAssemblyFacts`、`TestPrepare_EmitsHuntStart`、`TestResultFile_EffectiveConfigIsWritten` |
 | <a id="fr-12-1"></a>FR-12.1（会话恢复 resume） | 待接入 | MS-7 | 恢复未实现 |
 | <a id="fr-12-2"></a>FR-12.2/12.2b/12.2c/12.3（会话材料） | 待接入 | MS-6 | 只记内存，材料未落盘 |
 | <a id="fr-13-1"></a>FR-13.1~13.9（扩展接入） | 待接入 | MS-8 | `ext.ExtHost` 无实现 |
@@ -263,7 +262,7 @@
 | <a id="ia-12-6"></a>IA-12.6 | 已落地 | `TestEndToEnd_LocalRunProducesDeliveryCommit` | MS-2 | 加强版事件序列断言待补 |
 | <a id="ia-12-7"></a>IA-12.7 | 已落地 | 代码检查（`harness` 只有 `New(provider, ...)`） | — | — |
 | <a id="ia-12-8"></a>IA-12.8 | 部分待补 | `TestSignalContext_CancelsOnSignal`、`TestSignalContext_StopCancelsContext` | — | 进程级 AC-6 断言待补 |
-| <a id="ia-12-9"></a>IA-12.9 | 已落地 | `TestEndToEnd_LocalRunProducesDeliveryCommit`、`TestEndToEnd_ResultFileWrittenOnFailure`、`TestResultFile_DeclarationsAreThreeState` | — | `needs` / `assumptions` 三态（未提供 → `null`）；`gates` / `effective_config` 仍待接入 |
+| <a id="ia-12-9"></a>IA-12.9 | 已落地 | `TestEndToEnd_LocalRunProducesDeliveryCommit`、`TestEndToEnd_ResultFileWrittenOnFailure`、`TestResultFile_DeclarationsAreThreeState`、`TestResultFile_EffectiveConfigIsWritten` | — | `needs` / `assumptions` 三态（未提供 → `null`）；`effective_config` 已落地；`gates` 仍待接入 |
 
 **运行段 L1~L7 的逐步骤状态**（对应架构 §6.3；未列出的步骤为已落地）：
 
@@ -272,7 +271,7 @@
 | <a id="l1-4"></a>L1-4 门禁清单来源裁决 | 待接入 | MS-5 | `Prepare` 里 `s.gates = nil`（一期暂空），来源裁决未接入 |
 | <a id="l1-5"></a>L1-5 扩展能力描述符 | 待接入 | MS-8 | 组装层注入 `ext.ExtHost` 未接入 |
 | <a id="l1-8"></a>L1-8 会话恢复（条件） | 待接入 | MS-7 | `XHUNTER_SESSION_ID` 非空时的 checkout tip ＋ 读回材料未接入 |
-| <a id="l1-9"></a>L1-9 生效配置快照 | 待接入 | MS-2 | 装配清单未进结果文件 / `hunt_start` |
+| <a id="l1-9"></a>L1-9 生效配置快照 | 已落地 | MS-2 | 装配完成后冻结一次，进 `hunt_start` 与结果文件 `effective_config`（含原语顺序与殿后 `checkpoint`）；门禁清单随 MS-5。证据 `TestEffectiveConfig_ListsPrimitivesInToolFaceOrder`、`TestPrepare_EmitsHuntStart` |
 | <a id="l2-事件通道"></a>L2-事件通道健康 | 待接入 | MS-2 | sink 写失败目前直接上抛，轮前健康检查未接入 |
 | <a id="l2-压缩"></a>L2-压缩 | 待接入 | MS-11 | `ContextBuilder` 内无压缩 |
 | <a id="l4-流看门狗"></a>L4-流看门狗 | 待接入 | MS-12 | 不活动超时 → `Cancel()` → 环境错误 未接入 |
@@ -299,8 +298,8 @@
 | 编号 | 状态 | 对应 MS-n | 缺口说明 |
 |---|---|---|---|
 | <a id="usage-1-2-bounty"></a>usage§1.2·Bounty生成器 | 待接入 | MS-12 | `xhunter run` 尚未接线；当前 CLI 只有 `models` / `version` 与 `--bounty`（后者为占位实现） |
-| <a id="usage-5-events"></a>usage§5·已发出事件 | 部分已发出 | MS-2 | 已发：`hunt_end`、`tool_result`、`policy_denied`、`deliverable`、`degraded`、`heartbeat`（调用点待接入）、`needs_input`、`assumption`；其余事件类型与字段为契约目标，待接线（`hunt_start`/`assistant_text`/`tool_call`/`usage`/`error`/`check_result`/`context_compacted`） |
-| <a id="usage-6-fields"></a>usage§6·待接入字段 | 部分待接入 | MS-2 / MS-6 | 已接线：`needs` / `assumptions`（2026-09-23）。仍未接线：`unverified`、`summary`（MS-2）、`gates`（MS-5）、`effective_config`（MS-2）、`session_delta`（MS-6） |
+| <a id="usage-5-events"></a>usage§5·已发出事件 | 部分已发出 | MS-2 | 已发：`hunt_start`、`hunt_end`、`tool_result`、`policy_denied`、`deliverable`、`degraded`、`heartbeat`（调用点待接入）、`needs_input`、`assumption`；其余事件类型与字段为契约目标，待接线（`assistant_text`/`tool_call`/`usage`/`error`/`check_result`/`context_compacted`） |
+| <a id="usage-6-fields"></a>usage§6·待接入字段 | 部分待接入 | MS-2 / MS-6 | 已接线：`needs` / `assumptions`（2026-09-23）、`effective_config`（2026-09-23）。仍未接线：`unverified`、`summary`（MS-2）、`gates`（MS-5）、`session_delta`（MS-6） |
 
 ### 2.3 已结清（本周期）
 
@@ -321,6 +320,7 @@
 | ~~`check.py --wsl` 在映射盘工作区不可用~~（MS-1） | **已落地**（2026-09-23）：`scripts/check.py` 内建 WSL 路径映射（映射盘 → `/work`）、`shquote` 写保护、cwd 移出映射盘、过滤 PATH 中不可翻译条目；实测 `python scripts/check.py --wsl --race` → `exit 0`。消除 §1.4 的「已知不一致」 |
 | ~~模型声明终态（澄清回路采集）~~ | **已落地**（2026-09-23）：`hunt/declare.go` 解析正文固定小节（`## 需要补全` / `## 假设`），`OnTurn` 逐轮登记、`Finalize` 只在引擎给出 `succeeded` 时收敛为 `blocked`（退出码 0；机制性终止不被改写）；事件 `needs_input` / `assumption` 逐条发；结果文件新增 `needs` / `assumptions`（三态，未提供为 `null`）。消除 §5 的「假设外化机制尚未定」与 §2.1 FR-6.3 的待接入 |
 | ~~写盘性质跨包镜像表~~ | **已落地**（2026-09-23）：`Primitive` 加 `Writes() bool`、`Call` 加由执行体回填的 `Writes`，删掉 `internal/policy` 的 `passPrimitives` / `writePrimitives` 两张表与 `default: deny`。消掉三件事：① 与「原语自己决定寻址、降级，不看性质表」的原则自相矛盾；② 新增写原语要改两个包，漏改会被误报成「未识别的原语」；③ `internal/policy` 对 `hunt/basic` / `hunt/gate` / `hunt/symbolic` 的**分层倒挂**（三个 import 已删）。**「未知原语默认拒绝」这条防线换了位置**（执行体查表处的 `unknown_tool`，本就在 `Decide` 之前），架构 §7.4 / §12.4 口径同步 |
+| ~~生效配置快照~~（MS-2） | **已落地**（2026-09-23）：`Prepare` 装配完成后把「本次实际生效的规则」冻结成快照，进 `hunt_start` 事件与结果文件 `effective_config`——原语清单与顺序（含殿后 `checkpoint`）、两段插件名与顺序、结果过滤器链名、策略口径、三重预算、检查点行为、扩展能力指纹、目标平台。快照是**只读事实、模型不可影响**，同时服务远程诊断与 MR 评审；`Prepare` 失败不发起飞事件、结果文件省略该字段（不摆空壳）。配套：`PromptPlugin` 加自述名 `Name()`、结果过滤器具名化为 `NamedFilter`。用例：`TestEffectiveConfig_ListsPrimitivesInToolFaceOrder`、`TestEffectiveConfig_CarriesPluginAndFilterNames`、`TestEffectiveConfig_CarriesAssemblyFacts`、`TestPrepare_EmitsHuntStart`（`hunt`）、`TestResultFile_EffectiveConfigIsWritten`（`cmd/xhunter`） |
 
 ---
 
@@ -339,9 +339,8 @@
 | git 剩余语义 | `IA-11.6`（排除材料目录）、`IA-11.8`、`IA-11.9`（连败上限）、`IA-11.10`、`IA-11.12`、`IA-11.13`、`L6-检查点`、`L6-提交连败`、`FR-1.3b` |
 | 流看门狗 | `L4-流看门狗`、`FR-1.11`（①） |
 | 结构检查 | `IA-11.11`、`L6-结构检查`、`FR-1.3d` |
-| 生效配置快照 | `L1-9`、`FR-11.6`、`usage§6·待接入字段` |
 | 止损两段式 | `IA-4.8`、`IA-4.9`、`H4-裁决点`、`FR-9.4` |
-| 可观测补齐 | `IA-5.2`、`IA-5.4`、`IA-12.6`（加强版）、`L2-事件通道`、`L6-事件通道复查`、`FR-10.1`、`AC-9`、`usage§5·已发出事件` |
+| 可观测补齐 | `IA-5.2`、`IA-5.4`、`IA-12.6`（加强版）、`L2-事件通道`、`L6-事件通道复查`、`FR-10.1`、`AC-9`、`usage§5·已发出事件`、`usage§6·待接入字段` |
 | 本地驱动 | `usage§1.2·Bounty生成器`、`FR-1.10` |
 
 ### 3.2 判定方式缺用例（对应原 §14.2）
@@ -383,7 +382,7 @@
 | # | 名称 | 对应分期 | 依赖 | 体量 | 主要 FR / IA | 状态 |
 |---|---|---|---|---|---|---|
 | **MS-1** | 验收入口与契约对齐 | 一期收口 | — | 小 | FR-2.2、IA-3.16 | **已完成**（2026-09-23；三项全部落地，见 §2.3） |
-| **MS-2** | 运行可观测补齐（事件流 ＋ 生效配置快照） | 一期收口 | MS-1 | 中 | FR-10、FR-11.1/11.6、FR-6.3/6.4、IA-5.2/5.4 | **部分完成**（澄清回路采集已落地；事件流与生效配置快照未开始） |
+| **MS-2** | 运行可观测补齐（事件流 ＋ 生效配置快照） | 一期收口 | MS-1 | 中 | FR-10、FR-11.1/11.6、FR-6.3/6.4、IA-5.2/5.4 | **部分完成**（澄清回路采集、生效配置快照与 `hunt_start` 已落地；`heartbeat`/`usage`/`assistant_text`/`tool_call`/`error` 未开始） |
 | **MS-3** | 止损完备（两段式止损） | 一期收口 | MS-2 | 中 | FR-9.1/9.4、IA-4.8/4.9 | 未开始 |
 | **MS-4** | 检查点分档与提交健壮性 | 一期收口 | MS-1 | 中 | FR-1.3b/1.3c/1.11②、IA-11.8/11.10/11.11/11.13 | 部分完成（判据不可判定 → 不提交已落地） |
 | **MS-5** | 门禁落地（`check` 实现 ＋ 全链护栏） | 一期收口 | MS-4 | 大 | FR-5.2b~5.2i、IA-11.12 | 未开始 |

@@ -17,6 +17,9 @@ import (
 	"xhunter/workspace"
 )
 
+// name 是插件的自述名（稳定短名）：进生效配置快照供审计，唯一来源是插件自己。
+const name = "agentsmd"
+
 // 项目约定文件的规范文件名。
 const fileName = "AGENTS.md"
 
@@ -35,6 +38,9 @@ type Plugin struct {
 func New(ws workspace.Workspace) *Plugin { return &Plugin{ws: ws} }
 
 var _ hunt.PromptPlugin = (*Plugin)(nil)
+
+// Name 返回插件自述名。
+func (p *Plugin) Name() string { return name }
 
 // Build 读取根级约定文件，作为 system 段的一段正文返回。
 func (p *Plugin) Build(_ context.Context, in hunt.PromptInput) (hunt.PromptPart, error) {

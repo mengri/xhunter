@@ -52,6 +52,19 @@ func New(cfg Config) hunt.Policy {
 
 var _ hunt.Policy = (*engine)(nil)
 
+// Facts 自述这套策略实际生效的口径，进「生效配置快照」供远程诊断与 MR 评审。
+//
+// 边界常量是策略自己的知识：快照因此由策略给出，装配层不必另抄一份边界清单，也就不会
+// 因为改了一处而漂开。键的含义：default 是默认裁决，write_protected 是禁写的控制目录，
+// write_exception 是唯一允许模型写入的控制子目录。
+func Facts() map[string]any {
+	return map[string]any{
+		"default":         "deny",
+		"write_protected": controlDir,
+		"write_exception": skillsDraftDir,
+	}
+}
+
 // Decide 裁决一次调用能否放行。只对写操作做路径裁决。
 //
 // 输入是「目标路径 ＋ 这次调用是否写盘」——**是否写盘由原语自述**（`Call.Writes`，执行体

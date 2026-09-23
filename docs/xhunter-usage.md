@@ -155,7 +155,7 @@ xhunter version
 `trace_id` 串联平台侧记录：由 `XHUNTER_TRACE_ID` 给出（FR-11.3），缺省回填为 `bounty_id`，全流程不变——**每个事件都带这四字段**，由事件出口统一盖章，发出点只需交业务载荷。
 
 ```json
-{"type":"hunt_start","bounty_id":"...","trace_id":"...","ts":"..."}
+{"type":"hunt_start","session_id":"...","base_commit":"...","branch":"xhunter/<session_id>","task":"...","effective_config":{...}}
 {"type":"assumption","text":"..."}                    // 代替追问的假设外化（模型采取了哪些默认）
 {"type":"needs_input","text":"..."}                   // 需要补全的条件（逐条；模型写完即停止，终态为 blocked）
 {"type":"assistant_text","text":"..."}                    // 模型的答复正文；**最终答复是交付物的一部分**（可能整份交付物就是它）
@@ -214,6 +214,17 @@ xhunter version
   "commit_sha": "...",
   "patch_path": "...",
   "files_changed": ["..."],
+  "effective_config": {
+    "primitives": ["read","write","edit","find","glob","symbol_read","symbol_edit","symbol_rename","check","checkpoint"],
+    "system_plugins": ["agentsmd","skills"],
+    "user_plugins": ["task"],
+    "filters": [],
+    "policy": {"default":"deny","write_protected":".xhunter","write_exception":".xhunter/skills.draft"},
+    "budget": {"max_turns":0,"max_tokens":0,"max_wall_clock_ms":0},
+    "checkpoint": "on_structure",
+    "ext": [],
+    "platform": "linux/amd64"
+  },
   "needs": ["..."],
   "assumptions": ["..."],
   "usage": {"reported": true, "input_tokens": 0, "output_tokens": 0, "cached_input_tokens": 0, "turns": 0, "elapsed_ms": 0},

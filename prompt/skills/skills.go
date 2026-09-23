@@ -16,6 +16,7 @@ import (
 )
 
 const (
+	name       = "skills" // 插件自述名（进生效配置快照供审计，唯一来源是插件自己）
 	dir        = ".xhunter/skills/"
 	skillFile  = "SKILL.md"
 	scope      = "prompt.skills"
@@ -31,6 +32,9 @@ type Plugin struct {
 func New(ws workspace.Workspace) *Plugin { return &Plugin{ws: ws} }
 
 var _ hunt.PromptPlugin = (*Plugin)(nil)
+
+// Name 返回插件自述名。
+func (p *Plugin) Name() string { return name }
 
 // entry 是清单里的一条：只有名字、说明与入口路径。
 type entry struct {

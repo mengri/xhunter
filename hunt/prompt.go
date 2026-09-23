@@ -31,7 +31,12 @@ type Notice struct {
 
 // PromptPlugin 构造首轮的一段正文。插件只产出正文，不产出消息序列：
 // 两段的位置、顺序、内核条款都由 Session 拼，插件插不进第三段、也删不掉内核条款。
+//
+// Name 是插件的自述名（稳定短名）：装配顺序由 Session 掌管，但"这一段是谁贡献的"只有
+// 插件自己知道——名字的唯一来源是插件本身，装配层不维护平行的名字表（与 Primitive 的
+// 名字只来自 Decl().Name 同一原则）。自述名进生效配置快照供审计。
 type PromptPlugin interface {
+	Name() string
 	Build(ctx context.Context, in PromptInput) (PromptPart, error)
 }
 
@@ -50,6 +55,16 @@ func buildPromptStage(ctx context.Context, plugins []PromptPlugin, in PromptInpu
 		parts = append(parts, part)
 	}
 	return joinPromptParts(parts), nil
+}
+
+// pluginNames 取两段插件各自的自述名，顺序不变。名字只从插件本身读，不看类型：
+// 生效配置快照要报的是"这次实际装了哪几个插件"，而不是一张平行的身份表。
+func pluginNames(plugins []PromptPlugin) []string {
+	names := make([]string, 0, len(plugins))
+	for _, p := range plugins {
+		names = append(names, p.Name())
+	}
+	return names
 }
 
 // joinPromptParts 按给定顺序拼接各段正文。没有贡献正文的插件整段跳过，

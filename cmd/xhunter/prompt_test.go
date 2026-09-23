@@ -1,13 +1,6 @@
 package main
 
-import (
-	"testing"
-
-	"xhunter/hunt"
-	"xhunter/prompt/agentsmd"
-	"xhunter/prompt/skills"
-	"xhunter/prompt/task"
-)
+import "testing"
 
 // 装配顺序就是执行顺序：这份清单是"提示词由哪几段、以什么次序拼成"的唯一定义处，
 // 顺序一变提示词就变，因此把它钉住。
@@ -22,7 +15,7 @@ func TestDefaultPromptPlugins_OrderIsThePromptOrder(t *testing.T) {
 		t.Fatalf("system 段插件数 = %d，期望 %d", len(system), len(wantSystem))
 	}
 	for i, p := range system {
-		if got := kind(p); got != wantSystem[i] {
+		if got := p.Name(); got != wantSystem[i] {
 			t.Errorf("system 段第 %d 个插件 = %s，期望 %s", i+1, got, wantSystem[i])
 		}
 	}
@@ -32,7 +25,7 @@ func TestDefaultPromptPlugins_OrderIsThePromptOrder(t *testing.T) {
 		t.Fatalf("user 段插件数 = %d，期望 %d（任务陈述不可缺）", len(user), len(wantUser))
 	}
 	for i, p := range user {
-		if got := kind(p); got != wantUser[i] {
+		if got := p.Name(); got != wantUser[i] {
 			t.Errorf("user 段第 %d 个插件 = %s，期望 %s", i+1, got, wantUser[i])
 		}
 	}
@@ -43,32 +36,17 @@ func TestDefaultPromptPlugins_OrderIsThePromptOrder(t *testing.T) {
 func TestDefaultPromptPlugins_NoDuplicate(t *testing.T) {
 	seen := map[string]bool{}
 	for _, p := range defaultSystemPlugins(nil) {
-		k := kind(p)
+		k := p.Name()
 		if seen[k] {
 			t.Errorf("插件 %s 在两段中重复出现", k)
 		}
 		seen[k] = true
 	}
 	for _, p := range defaultUserPlugins(nil) {
-		k := kind(p)
+		k := p.Name()
 		if seen[k] {
 			t.Errorf("插件 %s 在两段中重复出现", k)
 		}
 		seen[k] = true
-	}
-}
-
-// kind 由类型给出插件身份。刻意不给 hunt.PromptPlugin 加 Name 方法——
-// 插件身份要到真有人消费时才值得进公开契约，眼下只有装配可读性需要它。
-func kind(p hunt.PromptPlugin) string {
-	switch p.(type) {
-	case *agentsmd.Plugin:
-		return "agentsmd"
-	case *skills.Plugin:
-		return "skills"
-	case *task.Plugin:
-		return "task"
-	default:
-		return "unknown"
 	}
 }

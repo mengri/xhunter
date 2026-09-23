@@ -18,6 +18,9 @@ import (
 	"xhunter/hunt"
 )
 
+// name 是插件的自述名（稳定短名）：进生效配置快照供审计，唯一来源是插件自己。
+const name = "task"
+
 // Plugin 把任务正文渲染成 user 段的一段正文。它没有构造参数：任务正文来自 PromptInput。
 type Plugin struct{}
 
@@ -25,6 +28,9 @@ type Plugin struct{}
 func New() *Plugin { return &Plugin{} }
 
 var _ hunt.PromptPlugin = (*Plugin)(nil)
+
+// Name 返回插件自述名。
+func (p *Plugin) Name() string { return name }
 
 // Build 渲染任务陈述。任务正文为空时不贡献正文（空段不占位置），也不报错——
 // "没有任务"该由投递侧拦下（空任务文件在启动期即失败），到不了这里。

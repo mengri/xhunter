@@ -19,7 +19,8 @@ import (
 // Finalize（循环后）。harness 不认识 Session，只认识这三个函数签名；上下文、会话材料、
 // 事件出口、工具执行都由 Session 自己完成。
 
-// Prepare 循环前一次：准备基线、打开工作区、定格工具面、构造首轮提示词。
+// Prepare 循环前一次：准备基线、打开工作区、定格工具面、构造首轮提示词、冻结生效配置
+// 快照并发出起飞事件。
 //
 // 工作区在这里就打开并检查——失败即返回错误，循环根本不会开始，因此不存在「跑到一半
 // 才发现工作区不可用」的中间态。
@@ -64,11 +65,13 @@ func (s *Session) Prepare(ctx context.Context, run *harness.Run) error {
 
 	// 构造首轮两段正文：插件给正文、Session 拼位置与顺序。取一次、整任务内冻结。
 	in := PromptInput{Bounty: s.cfg.Bounty, Tools: run.Tools}
-	system, err := buildPromptStage(ctx, s.systemPlugins(storage), in)
+	systemPlugins := s.systemPlugins(storage)
+	userPlugins := s.userPlugins(storage)
+	system, err := buildPromptStage(ctx, systemPlugins, in)
 	if err != nil {
 		return err
 	}
-	user, err := buildPromptStage(ctx, s.userPlugins(storage), in)
+	user, err := buildPromptStage(ctx, userPlugins, in)
 	if err != nil {
 		return err
 	}
@@ -79,14 +82,71 @@ func (s *Session) Prepare(ctx context.Context, run *harness.Run) error {
 		s.logf("warn", "没有任何插件贡献正文：模型只会看到内核条款与环境事实，看不到项目约定与任务描述")
 	}
 
+	// 生效配置快照冻结一次：起飞事件与结果文件读的是同一份。放在工具面与提示词都定格之后，
+	// 快照才如实反映"本次实际生效"的装配；两份各算一遍迟早会漂。
+	s.effective = s.freezeEffectiveConfig(systemPlugins, userPlugins)
+
+	// 首轮消息收敛到单一出口：有上下文组装器就交给它持有历史，没有就直接用首轮两段。
 	// 提示词交给上下文持有者，历史也归它——harness 只拿组装好的消息。
 	if s.cfg.Context == nil {
 		run.Messages = prompt
-		return nil
+	} else {
+		s.cfg.Context.SetPrompt(prompt)
+		run.Messages = s.cfg.Context.Assemble()
 	}
-	s.cfg.Context.SetPrompt(prompt)
-	run.Messages = s.cfg.Context.Assemble()
+
+	// 起飞事件：Prepare 成功后立即发——没进入对话就没有起飞事件（失败路径在上面直接 return）。
+	s.emitHuntStart()
 	return nil
+}
+
+// freezeEffectiveConfig 汇总本次 Hunt 生效的装配清单，冻结成快照。
+//
+// 原语顺序取自定格后的工具面：Session.order 是工厂给的顺序，checkpoint 由执行体殿后追加
+// （与 decls 一致）——顺序即模型看到的顺序，快照必须报同一份。两段插件名与过滤器链名由
+// Session 采出（只有它知道工厂返回了什么、按什么顺序调用）；策略口径、检查点行为、扩展
+// 指纹、目标平台来自装配层注入的 AssemblyFacts。
+func (s *Session) freezeEffectiveConfig(systemPlugins, userPlugins []PromptPlugin) EffectiveConfig {
+	primitives := make([]string, 0, len(s.order)+1)
+	for _, name := range s.order {
+		primitives = append(primitives, string(name))
+	}
+	primitives = append(primitives, string(PrimCheckpoint))
+
+	filters := make([]string, 0, len(s.cfg.Filters))
+	for _, f := range s.cfg.Filters {
+		filters = append(filters, f.Name)
+	}
+
+	return EffectiveConfig{
+		Primitives:    primitives,
+		SystemPlugins: pluginNames(systemPlugins),
+		UserPlugins:   pluginNames(userPlugins),
+		Filters:       filters,
+		Policy:        s.cfg.Assembly.Policy,
+		Budget:        s.cfg.Bounty.Budget,
+		Checkpoint:    s.cfg.Assembly.Checkpoint,
+		Ext:           s.cfg.Assembly.Ext,
+		Platform:      s.cfg.Assembly.Platform,
+	}
+}
+
+// emitHuntStart 上报一次起飞事件：任务与仓库事实 ＋ 生效配置快照。
+//
+// 信封四字段（type / bounty_id / trace_id / ts）由出口统一盖章，这里只交业务载荷。
+// 快照取的是冻结的那一份（s.effective），与结果文件同源。缺出口时是空操作——事件是
+// 诊断通道，不是装配的必需件。
+func (s *Session) emitHuntStart() {
+	if s.cfg.Sink == nil {
+		return
+	}
+	_ = s.cfg.Sink.Emit(ExternalEvent{Type: "hunt_start", Payload: map[string]any{
+		"session_id":       s.cfg.Bounty.SessionID(),
+		"base_commit":      s.cfg.Bounty.Repo.BaseCommit,
+		"branch":           s.cfg.Bounty.Repo.Branch,
+		"task":             taskSubject(s.cfg.Bounty),
+		"effective_config": s.effective,
+	}})
 }
 
 // firstPrompt 把两段正文摆成首轮消息：system 在前、user 在后。
@@ -182,7 +242,7 @@ func (s *Session) OnTurn(ctx context.Context, run *harness.Run, turn *harness.Tu
 	// 结果加工：按序跑过滤器，改的是「即将发给模型的文本」。失败即上抛——脱敏、截断一类
 	// 过滤器挂掉时若静默放行，未处理的内容就会原样进下一轮上下文，这正是它们要防的事。
 	for _, f := range s.cfg.Filters {
-		if err := f(ctx, turn); err != nil {
+		if err := f.Run(ctx, turn); err != nil {
 			return false, err
 		}
 	}

@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
+	"time"
 
 	"xhunter/git"
 	"xhunter/harness"
@@ -40,7 +42,7 @@ func TestResultFile_DeclarationsAreThreeState(t *testing.T) {
 			Needs:       []string{"缺 A"},
 			Assumptions: []string{"假定 B"},
 		}
-		if err := writeRunOutputs(path, "", bounty, out, hunt.Delivery{}, declared); err != nil {
+		if err := writeRunOutputs(path, "", bounty, out, hunt.Delivery{}, declared, hunt.EffectiveConfig{}); err != nil {
 			t.Fatalf("写结果文件失败：%v", err)
 		}
 
@@ -62,7 +64,7 @@ func TestResultFile_DeclarationsAreThreeState(t *testing.T) {
 	t.Run("没自陈写成 null", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "r.json")
 		out := harness.Outcome{Status: harness.StatusSucceeded, Reason: "no_tool_call", ExitCode: harness.ExitOK}
-		if err := writeRunOutputs(path, "", bounty, out, hunt.Delivery{}, hunt.Declared{}); err != nil {
+		if err := writeRunOutputs(path, "", bounty, out, hunt.Delivery{}, hunt.Declared{}, hunt.EffectiveConfig{}); err != nil {
 			t.Fatalf("写结果文件失败：%v", err)
 		}
 
@@ -82,6 +84,82 @@ func TestResultFile_DeclarationsAreThreeState(t *testing.T) {
 			if string(v) != "null" {
 				t.Errorf("%s = %s，期望 null（不是 []）", key, v)
 			}
+		}
+	})
+}
+
+// 生效配置快照写进结果文件（FR-11.6）：评审者据此回答"这次用的是哪套规则"。原语顺序
+// 必须如实反映定格后的工具面（含殿后的 checkpoint）；预算以可读形状出现（0 = 不限、
+// 墙钟换算成毫秒）；没有快照（未进入对话）时字段省略，不摆空壳。
+func TestResultFile_EffectiveConfigIsWritten(t *testing.T) {
+	bounty := hunt.Bounty{ID: "b1", Repo: git.RepoRef{Branch: "xhunter/x", BaseCommit: "abc"}}
+	out := harness.Outcome{Status: harness.StatusSucceeded, ExitCode: harness.ExitOK}
+
+	t.Run("有快照", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "r.json")
+		ec := hunt.EffectiveConfig{
+			Primitives:    []string{"read", "write", "edit", "checkpoint"},
+			SystemPlugins: []string{"agentsmd", "skills"},
+			UserPlugins:   []string{"task"},
+			Filters:       []string{},
+			Policy:        map[string]any{"default": "deny"},
+			Budget:        hunt.Budget{MaxTurns: 5, MaxWallClock: 90 * time.Minute},
+			Checkpoint:    "on_structure",
+			Ext:           []string{},
+			Platform:      "linux/amd64",
+		}
+		if err := writeRunOutputs(path, "", bounty, out, hunt.Delivery{}, hunt.Declared{}, ec); err != nil {
+			t.Fatalf("写结果文件失败：%v", err)
+		}
+
+		got := readResultFile(t, path)
+		if got.EffectiveConfig == nil {
+			t.Fatal("有快照时必须写出 effective_config")
+		}
+		want := []string{"read", "write", "edit", "checkpoint"}
+		if !slices.Equal(got.EffectiveConfig.Primitives, want) {
+			t.Errorf("primitives = %v，期望 %v（顺序即工具面顺序）", got.EffectiveConfig.Primitives, want)
+		}
+		if got.EffectiveConfig.Policy["default"] != "deny" {
+			t.Errorf("policy 未如实写出：%v", got.EffectiveConfig.Policy)
+		}
+
+		// 预算的可读形状：0 = 不限；墙钟换算成毫秒，而不是一串纳秒数字。
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("读结果文件失败：%v", err)
+		}
+		var probe struct {
+			EC struct {
+				Budget map[string]any `json:"budget"`
+			} `json:"effective_config"`
+		}
+		if err := json.Unmarshal(raw, &probe); err != nil {
+			t.Fatalf("解析结果文件失败：%v", err)
+		}
+		if probe.EC.Budget["max_turns"] != float64(5) {
+			t.Errorf("budget.max_turns = %v，期望 5", probe.EC.Budget["max_turns"])
+		}
+		if probe.EC.Budget["max_wall_clock_ms"] != float64(5400000) {
+			t.Errorf("budget.max_wall_clock_ms = %v，期望 5400000（90 分钟的毫秒数）", probe.EC.Budget["max_wall_clock_ms"])
+		}
+	})
+
+	t.Run("无快照字段省略", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "r.json")
+		if err := writeRunOutputs(path, "", bounty, out, hunt.Delivery{}, hunt.Declared{}, hunt.EffectiveConfig{}); err != nil {
+			t.Fatalf("写结果文件失败：%v", err)
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("读结果文件失败：%v", err)
+		}
+		var probe map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &probe); err != nil {
+			t.Fatalf("解析结果文件失败：%v", err)
+		}
+		if _, ok := probe["effective_config"]; ok {
+			t.Error("无快照时不得出现 effective_config——空壳会被读成另一句话")
 		}
 	})
 }

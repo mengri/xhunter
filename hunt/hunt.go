@@ -48,6 +48,17 @@ type Bounty struct {
 	Budget  Budget
 }
 
+// SessionID 返回这次执行所属的会话标识：有会话就取会话标识，否则取本次任务的标识。
+//
+// 它是「记账口径」的唯一来源——事件流与结果文件都按它取值，两处因此不会各写一遍、
+// 也就不会漂。分支与记忆目录同样以它为准（`xhunter/<session_id>`、`.xhunter/<session_id>/`）。
+func (b Bounty) SessionID() string {
+	if b.Session != nil && b.Session.ID != "" {
+		return b.Session.ID
+	}
+	return string(b.ID)
+}
+
 // ============================================================ 门禁
 
 // Gate 是一个具名校验条目。

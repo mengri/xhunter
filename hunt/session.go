@@ -19,9 +19,10 @@ type ToolFactory func(ws workspace.Workspace) []Primitive
 
 // Config 是 Session 的装配参数。上下文、会话、事件出口都是业务自己的协作者
 // （harness 不认识它们）；原语清单、策略、工作区与 git 的实现同样由装配层注入。
-// Filters 是本轮的**结果加工链**，按装配顺序在「工具已执行、还没落历史」之间生效。
-// SystemPlugins / UserPlugins 是首轮两段正文的构造插件工厂，顺序即拼接顺序；为 nil
-// 表示该段不接插件。
+// Filters 是本轮的**结果加工链**，按装配顺序在「工具已执行、还没落历史」之间生效；
+// 每个过滤器带名字，名字进生效配置快照。SystemPlugins / UserPlugins 是首轮两段正文的
+// 构造插件工厂，顺序即拼接顺序；为 nil 表示该段不接插件。Assembly 是「只有装配层知道」
+// 的生效事实（策略口径、检查点行为、扩展指纹、目标平台），值注入、Session 不猜。
 type Config struct {
 	Bounty  Bounty
 	Tools   ToolFactory
@@ -32,10 +33,12 @@ type Config struct {
 	Session SessionRecorder
 	Sink    EventSink
 
-	Filters []ResultFilter
+	Filters []NamedFilter
 
 	SystemPlugins PromptPluginFactory
 	UserPlugins   PromptPluginFactory
+
+	Assembly AssemblyFacts
 }
 
 // Session 是「代码编辑 agent」的默认执行体：向 harness 提供三组 handler
@@ -52,6 +55,10 @@ type Session struct {
 	gates   []Gate
 	commit  *git.Commit
 	ops     []WriteOp
+
+	// effective 是本次 Hunt 的生效配置快照，装配完成后冻结一次（见 Prepare）。起飞事件与
+	// 结果文件读的是它同一份；Prepare 未成功时是零值，结果文件据此省略该字段。
+	effective EffectiveConfig
 
 	// files / patch 是收尾时定型的附带交付物：工作树一旦回收就再也取不到，
 	// 因此必须在此之前取出来（见 Finalize）。
@@ -82,6 +89,12 @@ type Delivery struct {
 func (s *Session) Delivery() Delivery {
 	return Delivery{Commit: s.commit, Files: s.files, Patch: s.patch}
 }
+
+// EffectiveConfig 返回本次 Hunt 的生效配置快照（收尾后由装配层读走写结果文件）。
+//
+// Prepare 尚未成功时是**零值**——没进入对话就没有快照，结果文件据此省略该字段，
+// 而不是摆一个空壳（空切片会被读成"没有原语、没有插件"）。
+func (s *Session) EffectiveConfig() EffectiveConfig { return s.effective }
 
 // NewSession 构造 Session。
 func NewSession(cfg Config) *Session {

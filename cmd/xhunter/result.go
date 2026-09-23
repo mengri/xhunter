@@ -14,9 +14,9 @@ import (
 // 结果文件与补丁是"交付记录"这一侧的产物：主交付是远端那条任务分支（FR-6.1），
 // 这里是附带的机器可读结论，供平台记账与评审（FR-1.5、使用手册 §6）。
 //
-// 只写当前真能给出的事实：`assumptions` / `unverified` / `gates` / `effective_config`
-// / `session_delta` 尚未落地，就不在这里摆空壳——空数组会被读成"没有门禁、没有假设"，
-// 那是另一句话。字段状态以使用手册 §6 的标注为准。
+// 只写当前真能给出的事实：`assumptions` / `unverified` / `gates` / `session_delta`
+// 尚未落地，就不在这里摆空壳——空数组会被读成"没有门禁、没有假设"，那是另一句话。
+// 字段状态以使用手册 §6 的标注为准。
 
 // resultFile 是结果文件的形状（使用手册 §6）。
 type resultFile struct {
@@ -38,6 +38,11 @@ type resultFile struct {
 	Assumptions *[]string  `json:"assumptions"`
 	Usage       usageFile  `json:"usage"`
 	Error       *errorFile `json:"error,omitempty"`
+
+	// EffectiveConfig 是本次 Hunt 的生效配置快照（FR-11.6）：只读事实，回答"这次用的是
+	// 哪套规则"，服务远程诊断与 MR 评审。Prepare 未成功时没有快照，指针为 nil、字段
+	// 省略——不摆空壳（空快照会被读成"没有原语、没有插件"）。
+	EffectiveConfig *hunt.EffectiveConfig `json:"effective_config,omitempty"`
 }
 
 type usageFile struct {
@@ -58,7 +63,10 @@ type errorFile struct {
 
 // writeRunOutputs 写出补丁与结果文件。任一写失败都返回错误——交不出交付记录
 // 属环境问题（退出码 2），不得静默继续（对齐 FR-10.4 的"通道断裂即终止"精神）。
-func writeRunOutputs(resultPath, patchPath string, bounty hunt.Bounty, out harness.Outcome, d hunt.Delivery, declared hunt.Declared) error {
+//
+// effective 是本次 Hunt 的生效配置快照（由装配层从 Session 取）：Prepare 成功才有内容，
+// 否则是零值、字段省略。
+func writeRunOutputs(resultPath, patchPath string, bounty hunt.Bounty, out harness.Outcome, d hunt.Delivery, declared hunt.Declared, effective hunt.EffectiveConfig) error {
 	if patchPath != "" {
 		if err := writeFile(patchPath, []byte(d.Patch)); err != nil {
 			return fmt.Errorf("写补丁文件失败：%w", err)
@@ -95,6 +103,10 @@ func writeRunOutputs(resultPath, patchPath string, bounty hunt.Bounty, out harne
 	}
 	if patchPath != "" {
 		r.PatchPath = patchPath
+	}
+	// 有快照才写：Primitives 非空即表示"进了对话、装配已完成"；否则交给 omitempty 省略。
+	if len(effective.Primitives) > 0 {
+		r.EffectiveConfig = &effective
 	}
 	if out.Status == harness.StatusFailed {
 		r.Error = &errorFile{

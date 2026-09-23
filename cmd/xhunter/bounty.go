@@ -114,13 +114,9 @@ func parseBudget(lookup lookupEnv) (hunt.Budget, error) {
 	return b, nil
 }
 
-// SessionID 返回这次执行所属的会话标识。
-func SessionID(b hunt.Bounty) string {
-	if b.Session != nil && b.Session.ID != "" {
-		return b.Session.ID
-	}
-	return string(b.ID)
-}
+// SessionID 返回这次执行所属的会话标识。取值口径定义在 hunt.Bounty 上，这里只是本包的
+// 便利入口（结果文件与事件都经它取），实现委托过去——两处各写一遍，改一处忘一处就会漂。
+func SessionID(b hunt.Bounty) string { return b.SessionID() }
 
 func readEnv(lookup lookupEnv, name string) string {
 	if lookup == nil {

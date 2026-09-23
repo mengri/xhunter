@@ -26,16 +26,16 @@ func (r *recordingSession) RecordTurn(rec harness.Turn) { r.turns = append(r.tur
 func (r *recordingSession) Snapshot() error             { return nil }
 
 // 加工必须发生在落历史之前：历史与材料都是值拷贝，抢在后面改的过滤器等于白做——
-// 模型下一轮看不到改动，而过滤器作者会以为生效了。
+// 模型下一轮看不到改动，而过滤器作者会以为生效了。过滤器的名字进生效配置快照。
 func TestOnTurn_FiltersRunBeforeRecording(t *testing.T) {
 	ctxLog := &recordingContext{}
 	rec := &recordingSession{}
 	s := NewSession(Config{
 		Context: ctxLog,
 		Session: rec,
-		Filters: []ResultFilter{
-			func(_ context.Context, turn *harness.Turn) error { turn.Text += "-甲"; return nil },
-			func(_ context.Context, turn *harness.Turn) error { turn.Text += "-乙"; return nil },
+		Filters: []NamedFilter{
+			{Name: "甲", Run: func(_ context.Context, turn *harness.Turn) error { turn.Text += "-甲"; return nil }},
+			{Name: "乙", Run: func(_ context.Context, turn *harness.Turn) error { turn.Text += "-乙"; return nil }},
 		},
 	})
 
@@ -62,8 +62,8 @@ func TestOnTurn_FilterFailureStopsTurn(t *testing.T) {
 	ctxLog := &recordingContext{}
 	s := NewSession(Config{
 		Context: ctxLog,
-		Filters: []ResultFilter{
-			func(_ context.Context, _ *harness.Turn) error { return errors.New("脱敏失败") },
+		Filters: []NamedFilter{
+			{Name: "脱敏", Run: func(_ context.Context, _ *harness.Turn) error { return errors.New("脱敏失败") }},
 		},
 	})
 

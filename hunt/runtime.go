@@ -30,6 +30,15 @@ type ExternalEvent struct {
 	Payload map[string]any
 }
 
+// NamedFilter 给结果过滤器一个名字：生效配置快照要报出「用的是哪条链」。
+//
+// 过滤器是匿名函数组成的链，本身说不出自己是谁；没有名字，评审者就无从对比两次运行的
+// 过滤行为，也看不出"这次到底挂没挂脱敏"。因此名字与过滤器一起装配，不另维护一张表。
+type NamedFilter struct {
+	Name string
+	Run  ResultFilter
+}
+
 // Phase 是心跳携带的阶段。
 type Phase string
 

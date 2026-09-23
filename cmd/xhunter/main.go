@@ -146,6 +146,8 @@ func huntCmd(args []string) int {
 		Sink:          sink,
 		SystemPlugins: defaultSystemPlugins,
 		UserPlugins:   defaultUserPlugins,
+		// 生效配置快照里「只有装配层知道」的那部分：装配它就等于声明"本次生效的是什么"。
+		Assembly: assemblyFacts(),
 	})
 
 	// 循环只拿到「模型 + 三组 handler」：换一套 handler 就是换一套业务。
@@ -175,7 +177,8 @@ func huntCmd(args []string) int {
 	}})
 
 	// 交付记录在终态之后写：无论成败都要留档（FR-1.5），写不出来属环境问题。
-	if err := writeRunOutputs(*resultPath, *patchPath, bounty, outcome, session.Delivery(), session.Declared()); err != nil {
+	// 生效配置快照由 Session 在装配完成后冻结，这里取同一份写进结果文件。
+	if err := writeRunOutputs(*resultPath, *patchPath, bounty, outcome, session.Delivery(), session.Declared(), session.EffectiveConfig()); err != nil {
 		fmt.Fprintf(os.Stderr, "%v（终态已定：%s/%s）\n", err, outcome.Status, outcome.Reason)
 		return exitEnv
 	}
