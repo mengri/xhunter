@@ -344,8 +344,8 @@ func (s *Session) OnTurn(ctx context.Context, run *harness.Run, turn *harness.Tu
 //   - 落在**结构完整点**上（语法自洽，改动封闭在符号区间内）。
 //
 // 刻意**没有「按轮提交」这一档**：语法残缺的中间态钉在分支上价值很低——残次品不是可用的
-// 检查点，还会污染提交链。判据**不可判定时不提交**（语言未注册 / 扩展未接入）：宁可不留
-// 检查点，也不留残次品；收尾的交付提交照常，改动不会因此丢失。
+// 检查点，还会污染提交链。判据**不可判定时不提交**（符号扩展未接入）：那时我们并没有判过，
+// 只是没法判——宁可不留检查点，也不留残次品；收尾的交付提交照常，改动不会因此丢失。
 //
 // 单次失败不终止：提交是累积的，下一轮会把所有未提交的改动一并带上。
 func (s *Session) checkpoint(ctx context.Context, turn *harness.Turn) {
@@ -358,9 +358,21 @@ func (s *Session) checkpoint(ctx context.Context, turn *harness.Turn) {
 		}
 		return
 	}
-	if !requested && !s.structuralPoint() {
-		s.logf("info", "本轮不产生自动检查点：未落在结构完整点", "turn", turn.No)
-		return
+	// 模型显式请求不受判据影响；否则按结构判据三态决定。
+	if !requested {
+		switch s.structuralJudge() {
+		case structuralPass:
+			// 落在结构完整点上：照常提交。
+		case structuralFail:
+			// 判据可用、但本轮改动没通过：不提交。措辞与"不可判定"必须可区分。
+			s.logf("info", "本轮不产生自动检查点：未落在结构完整点", "turn", turn.No)
+			return
+		case structuralUndecidable:
+			// **没法判**（符号扩展未接入）——不等于"没通过"。不提交，并如实上报（每次运行最多一条）。
+			s.logf("info", "本轮不产生自动检查点：结构判据不可判定（符号扩展未接入）", "turn", turn.No)
+			s.emitStructuralUndecidableOnce()
+			return
+		}
 	}
 
 	cm, err := s.cfg.Git.Commit(ctx, s.cfg.Bounty.Repo, checkpointMessage(s.cfg.Bounty, TurnNo(turn.No), requested, intent))
@@ -377,12 +389,38 @@ func (s *Session) checkpoint(ctx context.Context, turn *harness.Turn) {
 	}
 }
 
-// structuralPoint 报告本轮改动是否落在结构完整点上（自动检查点的唯一判据）。
+// structuralVerdict 是结构判据（自动检查点的唯一判据）的三态结果。
 //
-// 判据是「语法自洽（ParseOK）＋ 改动区间封闭在某个符号内」，两者都由符号扩展提供。
-// 扩展未接入时**不可判定**——此时按上面的取舍**不提交**：不猜、也不放宽。
-func (s *Session) structuralPoint() bool {
-	return false
+// 三态是刻意的：**"不可判定"不等于"没通过"**。判据由符号扩展提供（「语法自洽（ParseOK）＋
+// 改动区间封闭在某个符号内」）；扩展未接入时我们并不知道改动是否落在结构完整点上，只是**没法判**。
+// 把两者混为一谈，接真判据的人会以为这段已工作，运维也无从区分两种沉默。
+type structuralVerdict int
+
+const (
+	// structuralPass：落在结构完整点上 → 自动检查点照常提交。
+	structuralPass structuralVerdict = iota
+	// structuralFail：判据可用、但本轮改动未落在结构完整点上 → 不提交。
+	structuralFail
+	// structuralUndecidable：**没法判**（符号扩展未接入）→ 不提交，并如实上报。
+	structuralUndecidable
+)
+
+// emitStructuralUndecidableOnce 上报一次「结构判据不可判定」——**每次运行最多一条**：这是运行级的
+// 常量事实，不是每轮新闻；每轮一条会把事件流刷满（与 usage 降级同一取舍）。只在真的要用判据时
+// 调用（`len(s.ops) == 0` 的早退路径不碰它：没有改动可提交时"判据不可用"毫无信息量）。
+func (s *Session) emitStructuralUndecidableOnce() {
+	if s.structuralDegradedReported {
+		return
+	}
+	s.structuralDegradedReported = true
+	if s.cfg.Sink == nil {
+		return
+	}
+	_ = s.cfg.Sink.Emit(ExternalEvent{Type: "degraded", Payload: map[string]any{
+		"scope":   "checkpoint",
+		"subject": "structural",
+		"reason":  "结构判据不可判定（符号扩展未接入），本轮不产生自动检查点",
+	}})
 }
 
 // snapshot 让会话材料落盘，供崩溃后按「tip + 会话材料」恢复。

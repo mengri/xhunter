@@ -61,7 +61,7 @@
 | 上下文压缩 | `contextBuilder` 只有组装（`Assemble`），无水位、无下压 |
 | 门禁全链 | `hunt/hooks.go:59` — `s.gates = nil`，一期暂空 |
 | 符号能力与扩展宿主 | `ext/ext.go` 只有接口，无实现；`hunt/symbolic` 声明不实现 |
-| 结构检查（自动检查点的判据） | `hunt/hooks.go` 的 `structuralPoint()` 恒为 false——判据随符号扩展接入；**接入前不产生自动检查点**（判据不可判定 → 不提交），跳过原因如实进日志 |
+| 结构检查（自动检查点的判据） | `Session.structuralJudge` 默认返回**不可判定**——判据随符号扩展接入；**接入前不产生自动检查点**（不可判定 → 不提交），跳过原因如实进日志与 `degraded`（`scope: checkpoint`） |
 | 提交连败上限 | `checkpoint` 失败只记 warn，无连败计数 |
 | 流看门狗 | 无（`StreamIdleTimeout` 未接入） |
 | 止损两段式 | `hunt/policy.go` 只有 `Decide`/`Charge`/`Exhausted`，无 `ObserveFailure`/`DeniedCount` |
@@ -91,7 +91,7 @@
 | 编号 | 状态 | 对应 MS-n | 说明 |
 |---|---|---|---|
 | <a id="fr-1-3b"></a>FR-1.3b（提交连败上限） | 待接入 | MS-4 | 检查点连续失败达 3 次 → 本轮结束即收敛（退出 1）；当前只记 warn、无计数 |
-| <a id="fr-1-3d"></a>FR-1.3d（结构检查） | 待接入 | MS-9 | `structuralPoint()` 恒 false；判据不可判定 → 不提交**已落地**，判据本身待接入 |
+| <a id="fr-1-3d"></a>FR-1.3d（结构检查） | 部分已落地 | MS-4 / MS-9 | 判据三态（`structuralVerdict`）与「不可判定 → 不提交并如实上报」**已落地**（默认 undecidable，发 `degraded` `scope: checkpoint`）；真实判据随符号扩展接入（MS-9）。用例 `TestCheckpoint_NoAutoCheckpointOffStructuralPoint`、`TestCheckpoint_StructuralFailDoesNotCommit`、`TestCheckpoint_StructuralPassCommits` |
 | <a id="fr-1-10"></a>FR-1.10（Bounty 生成器 / 本地驱动） | 待接入 | MS-12 | `xhunter run` 尚未接线 |
 | <a id="fr-1-11"></a>FR-1.11①/②（流看门狗 / 提交连败提前收敛） | 待接入 | MS-12（①）/ MS-4（②） | ①`StreamIdleTimeout` 未接入；②见 FR-1.3b |
 | <a id="fr-2-2"></a>FR-2.2（内容检索 `find`） | 已落地 | MS-1 | 2026-09-23 落地（见 §2.3） |
@@ -255,7 +255,7 @@
 | <a id="ia-11-8"></a>IA-11.8 | 待补 | — | MS-4 | 调用顺序 ＋ 工具面不含 git 原语的断言 |
 | <a id="ia-11-9"></a>IA-11.9 | 部分待接入 | 代码检查（`checkpoint` 失败只记 warn） | MS-4 | 自愈已落地；**连败上限待接入** |
 | <a id="ia-11-10"></a>IA-11.10 | 待补 | — | MS-4 | 时间语义断言（提交的是本轮已应用的改动） |
-| <a id="ia-11-11"></a>IA-11.11 | 已落地 | `TestCheckpoint_NoAutoCheckpointOffStructuralPoint`、`TestCheckpoint_LogsNoOpWhenNothingWasCommitted` | MS-9 | 判据（结构检查）本身待接入 |
+| <a id="ia-11-11"></a>IA-11.11 | 已落地 | `TestCheckpoint_NoAutoCheckpointOffStructuralPoint`、`TestCheckpoint_StructuralFailDoesNotCommit`、`TestCheckpoint_StructuralPassCommits`、`TestCheckpoint_UndecidableReportsDegradedOnce`、`TestCheckpoint_LogsNoOpWhenNothingWasCommitted` | MS-4 / MS-9 | 三态（pass/fail/undecidable）与不可判定如实上报已落地；真实判据随符号扩展接入（MS-9） |
 | <a id="ia-11-12"></a>IA-11.12 | 待接入 | — | MS-5 | 门禁驱动的检查点（依赖 `check`） |
 | <a id="ia-11-13"></a>IA-11.13 | 部分待补 | `TestSanitizeIntent` | MS-4 | 提交信息合成、一次兑现、空提交抑制的用例待补 |
 | <a id="ia-12-1"></a>IA-12.1 | 已落地 | `TestWiring_SatisfiesContracts` | — | — |
@@ -331,6 +331,7 @@
 | ~~事件通道健康复查~~（MS-2） | **已落地**（2026-09-23）：`EventSink` 加自述健康状态 `Failed()`（覆盖事件与心跳两条写路径），`OnTurn` 轮前（L2）与轮末（L6）复查出口断线即收敛 `event_channel_failed`（退出 1）——早停，不跑完剩余轮次；取消优先；进程末尾 `sink.Failed()` 收口保留为兜底。用例 `TestOnTurn_StopsBeforeWorkWhenChannelAlreadyFailed`、`TestOnTurn_StopsAfterTurnWhenChannelFailsDuringTurn`、`TestOnTurn_ChannelFailureDoesNotOverrideCancellation`（`hunt`）、`TestEventSink_FailedCoversHeartbeatWrites`（`cmd/xhunter`），并扩 `TestEndToEnd_BrokenEventChannelIsEnvError` |
 | ~~`unverified` 采集（FR-6.4 第三类）~~（MS-2） | **已落地**（2026-09-23）：新增固定小节 `## 未验证`（小节名的唯一来源是常量，解析与内核条款同改）；`Declared` 加 `Unverified`、`sectionTarget` 加第三分支、`AppendDeclared` 一并登记；结果文件加 `unverified`（三态，未提供 → `null`）。**只陈述、不判定**——它不改变终态（只有 `needs` 非空才收敛 `blocked`）。用例 `TestParseDeclared_ThreeSectionsAreSeparated`、`TestParseDeclared_UnverifiedAloneIsNotNeeds`、`TestParseDeclared_UnverifiedThreeState`、`TestFinalize_UnverifiedDoesNotBlock`（`hunt`）、`TestResultFile_UnverifiedIsThreeState`（`cmd/xhunter`） |
 | ~~MS-2 收口验收（纯 NDJSON ＋ 事件序列 ＋ 增量语义 ＋ 插件失败）~~ | **已落地**（2026-09-23）：`TestEventSink_StdoutIsPureNDJSON`（stdout 逐行合法 JSON ＋ 信封四字段 ＋ `ts` RFC3339）、`TestEndToEnd_EventSequenceIsComplete`（首尾、`tool_call`↔`tool_result` 配对、`deliverable` 在 `hunt_end` 前）、`TestPolicy_ChargeReceivesIncrements`（`Policy.Charge` 收增量、非增长轮不上报）、`TestPrepare_PluginFailureConvergesAsEnvError`（插件失败 → `prepare_failed`/退出 1）。MS-2 由此收口 |
+| ~~结构判据三态与"不可判定"如实上报~~（MS-4） | **已落地**（2026-09-23）：`structuralPoint() bool`（恒 false）换成三态 `structuralVerdict`（pass/fail/undecidable）；默认实现是 **undecidable**（符号扩展未接入——我们没**判过**，不是"没通过"），日志如实说「结构判据不可判定」、并发一条 `degraded`（`scope: checkpoint`，每次运行最多一条）；pass 照常提交、fail 说「未落在结构完整点」。判据留了**包内可替换位置**（`Session.structuralJudge`，未加公开配置字段）。用例 `TestCheckpoint_NoAutoCheckpointOffStructuralPoint`、`TestCheckpoint_StructuralFailDoesNotCommit`、`TestCheckpoint_StructuralPassCommits`、`TestCheckpoint_UndecidableReportsDegradedOnce` |
 
 ---
 
@@ -392,7 +393,7 @@
 | **MS-1** | 验收入口与契约对齐 | 一期收口 | — | 小 | FR-2.2、IA-3.16 | **已完成**（2026-09-23；三项全部落地，见 §2.3） |
 | **MS-2** | 运行可观测补齐（事件流 ＋ 生效配置快照） | 一期收口 | MS-1 | 中 | FR-10、FR-11.1/11.6、FR-6.3/6.4、IA-5.2/5.4 | **已完成**（2026-09-23；事件流、生效配置快照、澄清回路三类自陈与收口验收（纯 NDJSON／事件序列／增量语义／插件失败）全部落地，见 §2.3） |
 | **MS-3** | 止损完备（两段式止损） | 一期收口 | MS-2 | 中 | FR-9.1/9.4、IA-4.8/4.9 | 未开始 |
-| **MS-4** | 检查点分档与提交健壮性 | 一期收口 | MS-1 | 中 | FR-1.3b/1.3c/1.11②、IA-11.8/11.10/11.11/11.13 | 部分完成（判据不可判定 → 不提交已落地） |
+| **MS-4** | 检查点分档与提交健壮性 | 一期收口 | MS-1 | 中 | FR-1.3b/1.3c/1.11②、IA-11.8/11.10/11.11/11.13 | **进行中**（结构判据三态 ＋ 不可判定如实上报已落地；连败上限（FR-1.3b）与 IA-11.8/11.10/11.13 用例待续） |
 | **MS-5** | 门禁落地（`check` 实现 ＋ 全链护栏） | 一期收口 | MS-4 | 大 | FR-5.2b~5.2i、IA-11.12 | 未开始 |
 | **MS-6** | 会话材料落盘 | M1.5 前置 | MS-4 | 中 | FR-12.2/12.2b/12.3、IA-6.1/6.1b/6.1c | 未开始 |
 | **MS-7** | 会话恢复（resume） | M1.5 | MS-6 | 大 | FR-12.1/12.6、AC-7、IA-6.2/6.3/6.4 | 未开始 |
@@ -495,13 +496,14 @@
 **目标**：把检查点收敛成「只在结构完整点上自动产生」（判据不可判定 → 不提交这一半已落地），并补齐连败收敛与提交语义的断言。
 
 **范围**
-- **判据接入位**：`hunt/hooks.go` 的 `structuralPoint()` 目前恒 false；保证**判据不可判定时确实不提交**、且跳过原因如实进日志与事件。
+- **判据接入位**：`Session.structuralJudge`（三态 `structuralVerdict`）默认返回 **undecidable**；保证**不可判定时确实不提交**、且跳过原因如实进日志与事件（`degraded`，`scope: checkpoint`，每次运行最多一条）。符号扩展接入时替换它。
 - **连败上限**：检查点连续提交失败达 3 次 → 本轮结束即收敛（退出 1），不跑完剩余轮次。
 - **时间语义与不可见性**：断言 `Commit` 只在轮边界与收尾被调用、`PrepareBaseline` 是 `Prepare` 第一步、工具面不含任何 git 原语（IA-11.8 / IA-11.10）。
 - **意图兑现**：一次请求只兑现一次；无改动不产生空提交但意图照样消费；提交信息由执行体合成。
 
 **独立验收的证据**
-- `TestCheckpoint_NoAutoCheckpointOffStructuralPoint`、`TestCheckpoint_LogsNoOpWhenNothingWasCommitted`（均已有）。
+- 结构判据三态：`TestCheckpoint_NoAutoCheckpointOffStructuralPoint`（不可判定）、`TestCheckpoint_StructuralFailDoesNotCommit`（未通过）、`TestCheckpoint_StructuralPassCommits`（通过）、`TestCheckpoint_UndecidableReportsDegradedOnce`（降级每次运行最多一条）。
+- `TestCheckpoint_LogsNoOpWhenNothingWasCommitted`（模型请求路径，已有）。
 - `TestCheckpoint_StreakLimitConvergesAsEnvError`。
 - `TestCheckpoint_ModelRequestIsConsumedOnceAndSkipsEmptyCommit`（IA-11.13 补全）＋ 提交信息合成断言（`TestSanitizeIntent` 已有）。
 - `TestWiring_PrepareBaselineRunsBeforeAnyTool`、`TestDefaultTools_HasNoGitPrimitive`（IA-11.8）。
@@ -615,7 +617,7 @@
 
 #### MS-9 结构检查（自动检查点的判据）
 
-**目标**：让 `structuralPoint()` 有真实判据，自动检查点从此落在结构完整点上。
+**目标**：让 `Session.structuralJudge`（三态 `structuralVerdict`）接上真实判据（pass/fail），自动检查点从此落在结构完整点上（`undecidable` 分支保留给"判据不在"的情形）。
 
 **范围**
 - 判据：① 目标文件语法完整（`ParseOK`）；② 单次编辑的字节区间封闭在某个符号范围内（依赖 MS-8）。
@@ -752,7 +754,7 @@
 |---|---|---|
 | 1 | 门禁清单位置（`.xhunter/gates.yml` → 仓库根 `gates.yml`，不限制修改） | 已采纳进设计文档：FR-5.2g / FR-5.2b、架构 §6.3 L1-4 / §7.8、使用手册 §1.1/§1.2 |
 | 2 | 检查点档位（只要 `on_structure`，取消档位配置面） | 已采纳进设计文档：AC-20 / AC-22 / IA-11.11 / 架构 §6.3 L5⑥、使用手册 §3 |
-| 3 | 默认档在结构检查落地前（判据不可判定 → 不提交） | 已采纳进设计文档：FR-1.3c / FR-1.3d；代码侧见 §1.1（`structuralPoint()` 恒 false） |
+| 3 | 默认档在结构检查落地前（判据不可判定 → 不提交） | 已采纳进设计文档：FR-1.3c / FR-1.3d；代码侧见 §1.3（`Session.structuralJudge` 默认返回不可判定） |
 | 4 | 假设外化升级为「澄清回路」 | 已采纳进设计文档：FR-6.3、§3「澄清回路」、FR-12.1 第二场景、FR-1.10、架构 §6.5 / §7.2、使用手册 §5/§6/§7 |
 | 5 | 权限询问（不做，路径不存在） | 已采纳进设计文档：架构 §10.3、§7.4、§8、INV-4、IA-4.4 / IA-8.2、§5；产品 FR-7.2；使用手册 §5 |
 | 6 | 影响面阈值（不做） | 已采纳进设计文档：产品设计 §1.2「判据优先于偏好」、FR-8.7、§6 硬约束 #4、AC-16、§8 M3、FR-6.2、FR-2.8；架构 §7.4 / §10.1 / §10.5 / IA-4.1；MS-10 改为「规模上报」 |

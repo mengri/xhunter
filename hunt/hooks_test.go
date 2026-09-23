@@ -282,8 +282,9 @@ func TestCheckpoint_LogsNoOpWhenNothingWasCommitted(t *testing.T) {
 	}
 }
 
-// 自动检查点只在结构完整点上产生：判据不可判定（扩展未接入）时**不提交**——
-// 宁可不留检查点，也不把语法残缺的中间态钉在分支上（残次品不是可用的检查点）。
+// 自动检查点只在结构完整点上产生。默认判据是**不可判定**（符号扩展未接入）：那时我们并**没有
+// 判过**，只是没法判——日志必须这么说，不能报成「未落在结构完整点」（那是把"没法判"说成"判过了
+// 没通过"）。仍然不提交，也不谎报「已创建检查点」。
 func TestCheckpoint_NoAutoCheckpointOffStructuralPoint(t *testing.T) {
 	sink := &captureSink{}
 	g := &recordingCommitGit{created: true}
@@ -291,18 +292,91 @@ func TestCheckpoint_NoAutoCheckpointOffStructuralPoint(t *testing.T) {
 		Bounty: Bounty{ID: "b", Task: "t", Repo: gitRepoRef()},
 		Git:    g, Policy: allowAll{}, Sink: sink,
 	})
-	s.ops = []WriteOp{{File: "a.txt"}} // 有改动，但没人请求、也不在结构点上
+	s.ops = []WriteOp{{File: "a.txt"}} // 有改动，但没人请求
 	s.checkpoint(context.Background(), &harness.Turn{No: 1})
 
 	if g.calls != 0 {
 		t.Errorf("不该调用提交：calls=%d", g.calls)
 	}
 	joined := strings.Join(sink.logs, "\n")
-	if !strings.Contains(joined, "未落在结构完整点") {
-		t.Errorf("应如实记录跳过原因：%v", sink.logs)
+	if !strings.Contains(joined, "结构判据不可判定") {
+		t.Errorf("不可判定必须如实措辞：%v", sink.logs)
+	}
+	if strings.Contains(joined, "未落在结构完整点") {
+		t.Errorf("不可判定不得报成「未落在结构完整点」：%v", sink.logs)
 	}
 	if strings.Contains(joined, "已创建检查点") {
 		t.Errorf("不得谎报已创建：%v", sink.logs)
+	}
+	if n := countEvent(sink, "degraded"); n != 1 {
+		t.Errorf("不可判定应发恰好一条 degraded：%v", sink.events)
+	}
+}
+
+// 判据可用但未通过 → 不提交、日志说「未落在结构完整点」，与"不可判定"区分开、且**不发** degraded。
+func TestCheckpoint_StructuralFailDoesNotCommit(t *testing.T) {
+	sink := &captureSink{}
+	g := &recordingCommitGit{created: true}
+	s := NewSession(Config{
+		Bounty: Bounty{ID: "b", Task: "t", Repo: gitRepoRef()},
+		Git:    g, Policy: allowAll{}, Sink: sink,
+	})
+	s.structuralJudge = func() structuralVerdict { return structuralFail }
+	s.ops = []WriteOp{{File: "a.txt"}}
+	s.checkpoint(context.Background(), &harness.Turn{No: 1})
+
+	if g.calls != 0 {
+		t.Errorf("未通过判据不该提交：calls=%d", g.calls)
+	}
+	joined := strings.Join(sink.logs, "\n")
+	if !strings.Contains(joined, "未落在结构完整点") {
+		t.Errorf("应如实记录跳过原因：%v", sink.logs)
+	}
+	if strings.Contains(joined, "不可判定") {
+		t.Errorf("未通过不等于不可判定：%v", sink.logs)
+	}
+	if n := countEvent(sink, "degraded"); n != 0 {
+		t.Errorf("判据可用时不发 degraded：%v", sink.events)
+	}
+}
+
+// 判据通过 ＋ 有改动 ＋ 无模型请求 → 照常提交（三态没把"通过"这条堵死）。
+func TestCheckpoint_StructuralPassCommits(t *testing.T) {
+	sink := &captureSink{}
+	g := &recordingCommitGit{created: true}
+	s := NewSession(Config{
+		Bounty: Bounty{ID: "b", Task: "t", Repo: gitRepoRef()},
+		Git:    g, Policy: allowAll{}, Sink: sink,
+	})
+	s.structuralJudge = func() structuralVerdict { return structuralPass }
+	s.ops = []WriteOp{{File: "a.txt"}}
+	s.checkpoint(context.Background(), &harness.Turn{No: 1})
+
+	if g.calls != 1 {
+		t.Errorf("判据通过应提交一次：calls=%d", g.calls)
+	}
+	if !strings.Contains(strings.Join(sink.logs, "\n"), "已创建检查点") {
+		t.Errorf("应记录已创建：%v", sink.logs)
+	}
+}
+
+// 不可判定的降级**每次运行最多一条**：它是运行级常量事实，不是每轮新闻。
+func TestCheckpoint_UndecidableReportsDegradedOnce(t *testing.T) {
+	sink := &captureSink{}
+	s := NewSession(Config{
+		Bounty: Bounty{ID: "b", Task: "t", Repo: gitRepoRef()},
+		Git:    &recordingCommitGit{created: true}, Policy: allowAll{}, Sink: sink,
+	})
+	s.ops = []WriteOp{{File: "a.txt"}}
+	for n := 1; n <= 3; n++ { // 连跑三轮，每轮都有改动、都不在结构点上
+		s.checkpoint(context.Background(), &harness.Turn{No: n})
+	}
+
+	if n := countEvent(sink, "degraded"); n != 1 {
+		t.Errorf("不可判定的降级每次运行最多一条，实际 %d 条：%v", n, sink.events)
+	}
+	if deg := sink.ofType("degraded"); len(deg) == 1 && deg[0]["scope"] != "checkpoint" {
+		t.Errorf("degraded.scope 应为 checkpoint：%v", deg[0])
 	}
 }
 

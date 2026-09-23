@@ -95,6 +95,14 @@ type Session struct {
 	// 默认是空操作——所以 Prepare 未成功时 Finalize 照常调用一次也不会炸，也不会漏停。
 	stopHeartbeat func()
 
+	// structuralJudge 给出本轮改动的**结构判据三态**；它是判据的**包内可替换位置**——符号扩展
+	// 接入时替换它即可（见 structuralVerdict）。NewSession 默认"不可判定"：扩展未接入时我们
+	// 并**没有判过**，只是没法判，那与"判过但没通过"是两句话。刻意不给 hunt.Config 加一个
+	// 只有一个取值的公开字段。
+	structuralJudge func() structuralVerdict
+	// structuralDegradedReported 保证"不可判定"的 degraded **每次运行最多一条**。
+	structuralDegradedReported bool
+
 	// declared 是模型在正文里自陈的两类清单（缺什么条件、采取了哪些默认）：轮边界登记、
 	// 收尾据此收敛终态——见 AppendDeclared 与 Finalize。
 	declared Declared
@@ -135,7 +143,13 @@ func (s *Session) setPhase(p Phase) { s.phase.Store(p) }
 
 // NewSession 构造 Session。
 func NewSession(cfg Config) *Session {
-	return &Session{cfg: cfg, ledger: &Ledger{}, stopHeartbeat: func() {}}
+	return &Session{
+		cfg:           cfg,
+		ledger:        &Ledger{},
+		stopHeartbeat: func() {},
+		// 默认判据：不可判定（符号扩展未接入）。三态见 structuralVerdict。
+		structuralJudge: func() structuralVerdict { return structuralUndecidable },
+	}
 }
 
 // CheckpointDecl 是检查点原语的声明。它由业务层自带，装配工具面时殿后追加。
