@@ -247,7 +247,8 @@ func (e *Engine) Run(ctx context.Context, in Input) (out Outcome) {
 		run.terminate(StatusFailed, "turn_limit_exceeded", ExitAborted)
 	}
 
-	return run.Outcome()
+	// 裸 return：终态由函数开头的 defer 统一取（见那里的说明），这一行不自己再取一次。
+	return
 }
 
 // finalize 跑收尾 handler。它自己再炸一次也不让进程崩掉——已经走到最后一步了，

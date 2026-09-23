@@ -487,7 +487,7 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 |---|---|
 | 注册 | **工具面恒定（9 + 1）**：基础 5（`read`/`write`/`edit`/`find`/`glob`）＋ 符号 3（`symbol_read`/`symbol_edit`/`symbol_rename`）＋ `check` ＋ 控制原语 `checkpoint`（殿后）。**两个轴都不改变工具名与参数 schema**：**交付分期**不裁剪工具面（尚未实现的符号原语与 `check` 照常注册，调用返回 `not_implemented`）；**环境能力**不决定注册（扩展不可用、语言未注册时符号原语仍注册，调用返回结构化错误）。能力差异只改"调用时会发生什么"（FR-4.11、AC-26） |
 | **工具集由装配层提供** | `harness` 与 `hunt` 都不认识具体原语：有哪些、叫什么、什么顺序，全由装配层以**工厂**形式交给 `hunt.Session`（`Config.Tools = func(Workspace) []Primitive`）。原语的实现需要工作区，而工作区是基线就绪后的运行期产物，所以交的是工厂：`Session.Prepare` 打开工作区后调用它，把工作区**显式传给每个原语**再定格工具面（`run.Tools`）。因此换一套工具集不需要动框架；而"这套工具集恰好是这些、顺序固定"这类**业务约束留在装配层**（`cmd/xhunter/primitives.go`），由那里的测试审查（FR-4.11） |
-| 实现扩展点 | **三段，全在业务侧**：① **原语实现可替换**——工厂返回同一个已知名字但换一份实现的 `Primitive`（差量替换），或返回整张清单（整体接管）；只能替换已知名字、不能新增工具名——模型可见面恒定，扩展改变的是名字背后的行为与路径，不是模型的工具清单。② **调用级装饰器**：包一层 `Primitive`，可拦截（不转交 inner 直接给结果）、改语义（改 `Call` 再转交）、美化结果（改 `Result.Summary`），但写盘仍只走 `Committer`（"未读即写"与指纹校验不被绕开）。③ **轮级结果加工**：`Config.Filters` 里的有序 `ResultFilter` 链，跑在工具执行之后、落历史之前——位置即保证，加工后的文本一定会进下一轮上下文；排在其后的任何加工只会改到副本。加工失败即上抛：脱敏、截断一类过滤器静默放行，等于把自己要防的内容原样送进上下文。**框架侧只校验结构自洽**（名字非空、实现齐备、声明名一致、不重复），不校验业务名字（那是业务知识） |
+| 实现扩展点 | **三段，全在业务侧**：① **原语实现可替换**——工厂返回同一个已知名字但换一份实现的 `Primitive`（差量替换），或返回整张清单（整体接管）；只能替换已知名字、不能新增工具名——模型可见面恒定，扩展改变的是名字背后的行为与路径，不是模型的工具清单。② **调用级装饰器**：包一层 `Primitive`，可拦截（不转交 inner 直接给结果）、改语义（改 `Call` 再转交）、美化结果（改 `Result.Summary`），但写盘仍只走 `Committer`（"未读即写"与指纹校验不被绕开）。③ **轮级结果加工**：`Config.Filters` 里的有序 `ResultFilter` 链，跑在工具执行之后、落历史之前——位置即保证，加工后的文本一定会进下一轮上下文；排在其后的任何加工只会改到副本。加工失败即上抛：脱敏、截断一类过滤器静默放行，等于把自己要防的内容原样送进上下文。**框架侧只校验结构自洽**（名字非空、实现齐备、不重复；`checkpoint` 由执行体自带，工厂不得再给），不校验业务名字（那是业务知识） |
 | 执行位置 | 一轮的调用由 `hunt.Session.OnTurn` 按到达序执行（一期串行）；harness 只从流里收 `turn.Calls`，**不执行** |
 | 寻址与分发 | **没有统一 Dispatch 层**：每个原语自己解释寻址——`hunt/symbolic` 先定位字节区间、再复用 `hunt/basic` 的读写；`BindToolCall` 只做具名槽位的纯搬运，不做业务分支。路径不同**不得放宽匹配语义**（FR-4.12、FR-4.13） |
 | 并行 | 同一轮内无依赖的调用并行执行；有依赖的串行（一期默认串行，结构留门） |
@@ -1014,7 +1014,7 @@ Bounty(session) ──► H6.Session
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
 | IA-2.1 | 首轮两段顺序稳定：system 段在前、user 段在后，缓存友好；**任务正文必须进 user 段**（否则模型看不到任务）；空插件正文不占位置 | `TestFirstPrompt_KeepsOrderAndAppendsKernelBlocks`（hunt）、`TestDefaultPromptPlugins_OrderIsThePromptOrder`、`TestPrepare_FirstPromptCarriesTaskAndConventions`（cmd） |
-| IA-2.11 | **内核条款与环境事实不由插件贡献**（AC-29、FR-7.2/7.3/7.5）：条款追加在 system 段**末尾**（含无人类条款与止损规则），环境事实摆在 user 段**最前**；插件两段都为空时它们仍然在场，插件没有删除途径 | `TestFirstPrompt_KeepsOrderAndAppendsKernelBlocks`、`TestPrepare_FirstPromptCarriesTaskAndConventions`（断言位置与在场） |
+| IA-2.11(a) 内核条款与环境事实 | **内核条款与环境事实不由插件贡献**（AC-29、FR-7.2/7.3/7.5）：条款追加在 system 段**末尾**（含无人类条款与止损规则），环境事实摆在 user 段**最前**；插件两段都为空时它们仍然在场，插件没有删除途径 | `TestFirstPrompt_KeepsOrderAndAppendsKernelBlocks`、`TestPrepare_FirstPromptCarriesTaskAndConventions`（断言位置与在场） |
 | IA-2.2 | 历史按轮追加、每轮各成消息（模型说了什么 ＋ 调用结果），下一轮即可见 | `TestContextBuilder_AssemblesPromptThenHistory`（cmd） |
 | IA-2.3 | 结果加工的改动**必须先于落历史**——否则历史里是旧副本，模型看不到 | `TestOnTurn_FiltersRunBeforeRecording`（hunt） |
 | IA-2.4 | 落历史与会话材料是**值拷贝**：此后对 `Turn` 的改动不影响已记内容 | 同上（同一条用例的断言之一） |
@@ -1024,7 +1024,7 @@ Bounty(session) ──► H6.Session
 | IA-2.8 | 同一份 session 记录两次投影出的工作日志内容一致 | （实现状态见 xhunter-status.md 状态索引 · IA-2.8） |
 | IA-2.9 | 可用输入预算与水位的算法口径：上限来自配置而非估算 | `TestInputBudget`、`TestWatermarks`（providerconfig） |
 | IA-2.10 | **AGENTS.md 注入**（FR-2.6 / AC-23）：根级全文进 system 段；文件名精确匹配（大小写反例不注入）；空白视同不存在；超限在行边界收刀并留下降级记录；构造一次冻结 | `TestBuild_InjectsRootConventions`、`TestBuild_CaseVariantIsNotRecognized`、`TestBuild_BlankContentIsTreatedAsAbsent`、`TestBuild_OversizeTruncatesWithNotice`、`TestBuild_WithoutBaseCommitFallsBackToWorktree` |
-| IA-2.11 | **skill 发现清单**（FR-15.2/15.5/15.6 / AC-24）：只注入 name+description 与入口路径（正文绝不进清单，总量封顶、溢出上报）；非法 frontmatter / 名字与目录名不符者跳过且事件流可见；SKILL.md 全文由模型经 `read` 按需获取 | `TestBuild_ListsNameDescriptionAndPath`、`TestBuild_InvalidEntryIsSkippedWithNotice`、`TestBuild_NameMustMatchDirectory`、`TestBuild_IgnoresSkillFilesOutsideDirectory`、`TestBuild_TruncatesBeyondLimit`、`TestBuild_NoSkillsYieldsEmptyPart`、`TestParseFrontmatter`、`TestParseFrontmatter_LengthLimitsComeFromSpec` |
+| IA-2.11(b) skill 发现清单 | **skill 发现清单**（FR-15.2/15.5/15.6 / AC-24）：只注入 name+description 与入口路径（正文绝不进清单，总量封顶、溢出上报）；非法 frontmatter / 名字与目录名不符者跳过且事件流可见；SKILL.md 全文由模型经 `read` 按需获取 | `TestBuild_ListsNameDescriptionAndPath`、`TestBuild_InvalidEntryIsSkippedWithNotice`、`TestBuild_NameMustMatchDirectory`、`TestBuild_IgnoresSkillFilesOutsideDirectory`、`TestBuild_TruncatesBeyondLimit`、`TestBuild_NoSkillsYieldsEmptyPart`、`TestParseFrontmatter`、`TestParseFrontmatter_LengthLimitsComeFromSpec` |
 | IA-2.12 | **书写/生效分离**（FR-15.3 / AC-25）：`.xhunter/skills/**` 禁写、`.xhunter/skills.draft/**` 放行 | `TestDecide_WriteToControlDirDenied`、`TestDecide_WriteToSkillsDraftAllowed`（策略侧） |
 | IA-2.13 | **两段正文由插件贡献**（FR-7.8/7.9 / AC-29）：同段多插件按装配顺序拼接、空正文整段跳过、不重复；两段都不接只记 warn、不判死 | `TestDefaultPromptPlugins_OrderIsThePromptOrder`、`TestDefaultPromptPlugins_NoDuplicate`（cmd）、`TestFirstPrompt_KeepsOrderAndAppendsKernelBlocks`（hunt）（插件失败按环境错误收敛的用例见 xhunter-status.md 状态索引 · IA-2.13） |
 
@@ -1053,6 +1053,7 @@ Bounty(session) ──► H6.Session
 | IA-3.16 | **门禁不是任意命令执行**：`check` 的参数面精确等于 `{name}`，`required` 只有 `name` | `TestCheck_DeclSurfaceIsExactlyTheGateName` |
 | IA-3.17 | 符号原语只走符号寻址：参数面里没有内容寻址槽位（无降级形态） | `TestSymbolics_SurfaceHasNoContentAddressingSlot`、`TestSymbolics_DeclShapes` |
 | IA-3.18 | **装配缺件显式失败**：`Prepare` 缺 git / opener / policy 时返回指明缺件的错误（不是 panic、也不是静默放行）；`policy` 缺失时工具调用**默认拒绝**且不产生任何落盘 | `TestPrepare_IncompleteAssemblyFailsLoudly`、`TestExecuteCall_MissingPolicyFailsClosed`（hunt） |
+| IA-3.20 | **工具面自洽校验**：装配层交出的原语清单必须成立——名字非空、不重复、`checkpoint` 不得由工厂自带（它由 `decls` 殿后追加）；不成立即装配期缺件（与缺 git / 缺策略同一出口、退出码 1），而不是把一份重复的声明发出去等供应商拒收 | `TestBuildTools_RejectsDuplicateName`、`TestBuildTools_RejectsEmptyName`、`TestBuildTools_RejectsCheckpointFromFactory`、`TestBuildTools_KeepsOrderAndAcceptsAFullFace`、`TestBuildTools_NoFactoryIsNotAnError`、`TestPrepare_FailsOnBrokenToolFace`（hunt） |
 
 ### 12.4 H4 — `hunt.Policy`
 
@@ -1137,12 +1138,12 @@ Bounty(session) ──► H6.Session
 | IA-8.12 | **端点与鉴权都由环境变量决定**：缺 `XHUNTER_BASE_URL` 启动期失败；`XHUNTER_HEADERS` 支持 `{env:VAR}` 引用（含带前缀写法），`XHUNTER_API_KEY` 只是便捷形式 | `TestProviderFor_RequiresEndpoint`、`TestFromEnv_HeadersExpandEnvRefs`、`TestProviderFor_APIKeyBecomesBearerHeader`、`TestProviderFor_NoCredentialMeansNoAuthHeader`、`TestProviderFor_NewProtocolIsJustAnotherEntry` |
 | IA-8.13 | **一个协议一个包**：协议包与共用件包之间互不包含对方的具体协议 | 结构自证：互相引用会构成导入循环，编译即失败 |
 | IA-8.14 | 组装不持有全局状态：协议表每次新建，可用项不随调用顺序漂移 | 代码检查：`protocolFactories()` 返回新表 |
-| IA-8.15 | **协议版本基线写在包注释里**（端点 / 版本标识 / 形状基线 / 结束语义 / 何时需要动本包） | 代码检查（三个协议包的包注释） |
-| IA-8.16 | **自持传输层**：不使用厂商 SDK，核心二进制保持零第三方运行时依赖（NFR-1） | 代码检查：`go.mod` 无 `require`；协议实现自解分帧 |
-| IA-8.17 | 未知角色显式报错，不得原样透传（拼错的角色名会变成对端的静默行为差异） | `TestInfer_RejectsUnknownRole`、`TestToWireMessages_UnknownRoleIsRejected` |
-| IA-8.15 | **Messages 协议的形状**：系统提示提到顶层字段、工具调用与工具结果都是内容块（结果挂在用户消息下）、请求体带生成上限、工具用 `input_schema` | `TestInfer_SendsProtocolRequest`、`TestInfer_UsageIsNotDoubleCounted`（`provider/anthropicmessages`）、`TestProviderFor_BuildsEveryKnownProtocol`（cmd） |
-| IA-8.16 | **Responses 协议的形状**：对话是类型化条目数组（消息 / 函数调用 / 结果各占一条）、工具声明不带"函数"外层包装、用量取自收尾事件 | `TestInfer_SendsProtocolRequest`、`TestInfer_AssemblesRawFunctionCallFromDeltas`、`TestInfer_FallsBackToItemArguments`（`provider/openairesponses`） |
-| IA-8.17 | **收尾语义按协议各自定义**：Anthropic 无 `message_stop`、Responses 无 `response.completed` → 显式截断；`response.incomplete`（输出被截断）算正常结束 | `TestInfer_TruncatedWithoutMessageStopIsExplicit`、`TestInfer_TruncatedWithoutCompletedIsExplicit`、`TestInfer_IncompleteIsNormalEnd` |
+| IA-8.15(a) 协议版本基线 | **协议版本基线写在包注释里**（端点 / 版本标识 / 形状基线 / 结束语义 / 何时需要动本包） | 代码检查（三个协议包的包注释） |
+| IA-8.16(a) 自持传输层 | **自持传输层**：不使用厂商 SDK，核心二进制保持零第三方运行时依赖（NFR-1） | 代码检查：`go.mod` 无 `require`；协议实现自解分帧 |
+| IA-8.17(a) 未知角色 | 未知角色显式报错，不得原样透传（拼错的角色名会变成对端的静默行为差异） | `TestInfer_RejectsUnknownRole`、`TestToWireMessages_UnknownRoleIsRejected` |
+| IA-8.15(b) Messages 协议形状 | **Messages 协议的形状**：系统提示提到顶层字段、工具调用与工具结果都是内容块（结果挂在用户消息下）、请求体带生成上限、工具用 `input_schema` | `TestInfer_SendsProtocolRequest`、`TestInfer_UsageIsNotDoubleCounted`（`provider/anthropicmessages`）、`TestProviderFor_BuildsEveryKnownProtocol`（cmd） |
+| IA-8.16(b) Responses 协议形状 | **Responses 协议的形状**：对话是类型化条目数组（消息 / 函数调用 / 结果各占一条）、工具声明不带"函数"外层包装、用量取自收尾事件 | `TestInfer_SendsProtocolRequest`、`TestInfer_AssemblesRawFunctionCallFromDeltas`、`TestInfer_FallsBackToItemArguments`（`provider/openairesponses`） |
+| IA-8.17(b) 收尾语义 | **收尾语义按协议各自定义**：Anthropic 无 `message_stop`、Responses 无 `response.completed` → 显式截断；`response.incomplete`（输出被截断）算正常结束 | `TestInfer_TruncatedWithoutMessageStopIsExplicit`、`TestInfer_TruncatedWithoutCompletedIsExplicit`、`TestInfer_IncompleteIsNormalEnd` |
 | IA-8.18 | 上游错误按协议分类可重试性（限流/过载可重试，请求不合法/鉴权失败不可重试） | `TestInfer_ErrorEventIsClassified`（两个协议各一） |
 | IA-8.19 | **用量口径三家一致**：`InputTokens` 是全部输入、`CachedInputTokens` 是其中从缓存读取的部分且**恒为它的子集**、`OutputTokens` 是全部生成（输出侧没有缓存概念）。翻译规则按协议各自成立：对话补全与 Responses 的输入原生即含缓存（缓存数取 `*_tokens_details.cached_tokens` 子集）；**Messages 的三个输入字段并列、必须相加**（`input + cache_read + cache_creation`），只取 `input_tokens` 会让缓存命中越多、上报的输入越小 | `TestInfer_ReportsCachedInputTokens`、`TestInfer_MissingCacheDetailsReportsZero`（对话补全、Responses 各一）、`TestInfer_InputIncludesCacheReadAndCreation`、`TestInfer_NoCacheReportsNativeInput`（Messages）、`TestEndToEnd_LocalRunProducesDeliveryCommit`（缓存读一路带到结果文件） |
 

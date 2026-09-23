@@ -76,7 +76,7 @@
 | `edit.literal` 的必填性 | 实现里必填（缺它返回 `bad_selector`），schema 的 `required` 只有 `path`/`content`（`hunt/basic/edit.go:31`） | 模型照 schema 省略 → 本可避免的错误（**已于 2026-09-23 修正**，见 §2.3） |
 | 文档列了 6 个 `hunt_start` 载荷事件，实际未发出 | `hunt_start` / `heartbeat`（无调用点）/ `usage` / `assistant_text` / `tool_call` / `error` 均未发 | 平台侧看不到「开始了」「还活着」「花了多少」 |
 | `check.py --wsl` 在映射盘工作区不可用 | 脚本由 `__file__` 推导工作目录，映射盘（UNC）路径在 `--wsl` 分支里被原样拼进 bash 命令，`cd` 失败（实测 `exit 1: cd: \localhostworkagentsxhunter`） | 规范验证入口曾在这台机器上跑不起来，基准只能**直接调用 WSL 内 go** 得到（**已于 2026-09-23 修正**，见 §2.3） |
-| **IA 编号重复** | `IA-2.11` 出现两次（内核条款 / skill 清单）；`IA-8.15` / `IA-8.16` / `IA-8.17` 各出现两次（协议包通用项 / 单协议形状项） | 引用会指错；**本次不重编号**，索引里加限定词：`IA-2.11(a)` 内核条款 / `IA-2.11(b)` skill 清单，`IA-8.15(a)/(b)` 等 |
+| **IA 编号重复** | `IA-2.11` 出现两次（内核条款 / skill 清单）；`IA-8.15` / `IA-8.16` / `IA-8.17` 各出现两次（协议包通用项 / 单协议形状项） | 引用会指错；**已用限定词消歧、不重编号**（重编号要动架构 §12 与本文档几十处引用，收益只是好看）：架构 §12 与本文档的编号现**逐字一致**，写作 `IA-2.11(a) 内核条款与环境事实` / `IA-2.11(b) skill 发现清单` / `IA-8.15(a) 协议版本基线` / `IA-8.15(b) Messages 协议形状` 等 |
 
 ---
 
@@ -137,7 +137,7 @@
 | <a id="ia-1-11"></a>IA-1.11 | 已落地 | `TestEngine_InferFailureIsEnvError`、`TestEngine_StreamErrorIsEnvError` | — | — |
 | <a id="ia-1-12"></a>IA-1.12 | 已落地 | `TestEngine_OnTurnErrorIsFailed` | — | — |
 | <a id="ia-2-1"></a>IA-2.1 | 已落地 | `TestFirstPrompt_KeepsOrderAndAppendsKernelBlocks`、`TestDefaultPromptPlugins_OrderIsThePromptOrder`、`TestPrepare_FirstPromptCarriesTaskAndConventions` | — | — |
-| <a id="ia-2-11a"></a>IA-2.11(a) 内核条款 | 已落地 | `TestFirstPrompt_KeepsOrderAndAppendsKernelBlocks`、`TestPrepare_FirstPromptCarriesTaskAndConventions` | — | 编号重复，限定词 = 内核条款 |
+| <a id="ia-2-11a"></a>IA-2.11(a) 内核条款与环境事实 | 已落地 | `TestFirstPrompt_KeepsOrderAndAppendsKernelBlocks`、`TestPrepare_FirstPromptCarriesTaskAndConventions` | — | 编号重复，限定词 = 内核条款与环境事实 |
 | <a id="ia-2-2"></a>IA-2.2 | 已落地 | `TestContextBuilder_AssemblesPromptThenHistory` | — | — |
 | <a id="ia-2-3"></a>IA-2.3 | 已落地 | `TestOnTurn_FiltersRunBeforeRecording` | — | — |
 | <a id="ia-2-4"></a>IA-2.4 | 已落地 | 同 `TestOnTurn_FiltersRunBeforeRecording`（值拷贝断言之一） | — | — |
@@ -147,7 +147,7 @@
 | <a id="ia-2-8"></a>IA-2.8 | 待接入 | — | MS-11 | 投影可复现（AC-18） |
 | <a id="ia-2-9"></a>IA-2.9 | 已落地 | `TestInputBudget`、`TestWatermarks` | — | — |
 | <a id="ia-2-10"></a>IA-2.10 | 已落地 | `TestBuild_InjectsRootConventions`、`TestBuild_CaseVariantIsNotRecognized`、`TestBuild_BlankContentIsTreatedAsAbsent`、`TestBuild_OversizeTruncatesWithNotice`、`TestBuild_WithoutBaseCommitFallsBackToWorktree` | — | 嵌套约定附注待排期（见 §5） |
-| <a id="ia-2-11b"></a>IA-2.11(b) skill 清单 | 已落地 | `TestBuild_ListsNameDescriptionAndPath`、`TestBuild_InvalidEntryIsSkippedWithNotice`、`TestBuild_NameMustMatchDirectory`、`TestBuild_IgnoresSkillFilesOutsideDirectory`、`TestBuild_TruncatesBeyondLimit`、`TestBuild_NoSkillsYieldsEmptyPart`、`TestParseFrontmatter`、`TestParseFrontmatter_LengthLimitsComeFromSpec` | — | 编号重复，限定词 = skill 清单 |
+| <a id="ia-2-11b"></a>IA-2.11(b) skill 发现清单 | 已落地 | `TestBuild_ListsNameDescriptionAndPath`、`TestBuild_InvalidEntryIsSkippedWithNotice`、`TestBuild_NameMustMatchDirectory`、`TestBuild_IgnoresSkillFilesOutsideDirectory`、`TestBuild_TruncatesBeyondLimit`、`TestBuild_NoSkillsYieldsEmptyPart`、`TestParseFrontmatter`、`TestParseFrontmatter_LengthLimitsComeFromSpec` | — | 编号重复，限定词 = skill 发现清单 |
 | <a id="ia-2-12"></a>IA-2.12 | 已落地（策略侧） | `TestDecide_WriteToControlDirDenied`、`TestDecide_WriteToSkillsDraftAllowed` | MS-6 | diff 排除规则待接入 |
 | <a id="ia-2-13"></a>IA-2.13 | 已落地 | `TestDefaultPromptPlugins_OrderIsThePromptOrder`、`TestDefaultPromptPlugins_NoDuplicate`、`TestFirstPrompt_KeepsOrderAndAppendsKernelBlocks` | MS-2 | 插件失败按环境错误收敛的用例待补 |
 | <a id="ia-3-1"></a>IA-3.1 | 已落地 | `TestDefaultTools_FaceIsFixed` | — | — |
@@ -169,6 +169,7 @@
 | <a id="ia-3-17"></a>IA-3.17 | 已落地 | `TestSymbolics_SurfaceHasNoContentAddressingSlot`、`TestSymbolics_DeclShapes` | — | — |
 | <a id="ia-3-18"></a>IA-3.18 | 已落地 | `TestPrepare_IncompleteAssemblyFailsLoudly`、`TestExecuteCall_MissingPolicyFailsClosed` | — | — |
 | <a id="ia-3-19"></a>IA-3.19 | 已落地 | `TestFind_MatchesWithLineNumbers`、`TestFind_NoMatchIsSuccessWithExplicitText`、`TestFind_ScopeLimitsSearch`、`TestFind_PathLimitsToSingleFile`、`TestFind_TruncatesHitsButReportsTotal`、`TestFind_RequiresLiteral` | — | — |
+| <a id="ia-3-20"></a>IA-3.20 | 已落地 | `TestBuildTools_RejectsDuplicateName`、`TestBuildTools_RejectsEmptyName`、`TestBuildTools_RejectsCheckpointFromFactory`、`TestBuildTools_KeepsOrderAndAcceptsAFullFace`、`TestBuildTools_NoFactoryIsNotAnError`、`TestPrepare_FailsOnBrokenToolFace` | — | 框架侧校验工具面自洽（架构 §7.3）；此前只有装配层自查，重复 / 匿名声明会一路发到供应商 |
 | <a id="ia-4-1"></a>IA-4.1 | 已落地 | 代码检查（无改动规模维度） | — | — |
 | <a id="ia-4-2"></a>IA-4.2 | 已落地 | `TestExecuteCall_PolicyDenialIsReported` | — | — |
 | <a id="ia-4-3"></a>IA-4.3 | 已落地 | `TestExecuteCall_PolicyDenialIsReported`、`TestExecuteCall_MissingPolicyFailsClosed` | — | — |
@@ -224,8 +225,8 @@
 | <a id="ia-8-15a"></a>IA-8.15(a) 协议版本基线 | 已落地 | 代码检查（三个协议包的包注释） | — | 编号重复，限定词 = 协议版本基线 |
 | <a id="ia-8-16a"></a>IA-8.16(a) 自持传输层 | 已落地 | 代码检查（`go.mod` 无 `require`） | — | 编号重复，限定词 = 自持传输层 |
 | <a id="ia-8-17a"></a>IA-8.17(a) 未知角色 | 已落地 | `TestInfer_RejectsUnknownRole`、`TestToWireMessages_UnknownRoleIsRejected` | — | 编号重复，限定词 = 未知角色 |
-| <a id="ia-8-15b"></a>IA-8.15(b) Messages 形状 | 已落地 | `TestInfer_SendsProtocolRequest`、`TestInfer_UsageIsNotDoubleCounted`、`TestProviderFor_BuildsEveryKnownProtocol` | — | 编号重复，限定词 = Messages 形状 |
-| <a id="ia-8-16b"></a>IA-8.16(b) Responses 形状 | 已落地 | `TestInfer_SendsProtocolRequest`、`TestInfer_AssemblesRawFunctionCallFromDeltas`、`TestInfer_FallsBackToItemArguments` | — | 编号重复，限定词 = Responses 形状 |
+| <a id="ia-8-15b"></a>IA-8.15(b) Messages 协议形状 | 已落地 | `TestInfer_SendsProtocolRequest`、`TestInfer_UsageIsNotDoubleCounted`、`TestProviderFor_BuildsEveryKnownProtocol` | — | 编号重复，限定词 = Messages 协议形状 |
+| <a id="ia-8-16b"></a>IA-8.16(b) Responses 协议形状 | 已落地 | `TestInfer_SendsProtocolRequest`、`TestInfer_AssemblesRawFunctionCallFromDeltas`、`TestInfer_FallsBackToItemArguments` | — | 编号重复，限定词 = Responses 协议形状 |
 | <a id="ia-8-17b"></a>IA-8.17(b) 收尾语义 | 已落地 | `TestInfer_TruncatedWithoutMessageStopIsExplicit`、`TestInfer_TruncatedWithoutCompletedIsExplicit`、`TestInfer_IncompleteIsNormalEnd` | — | 编号重复，限定词 = 收尾语义 |
 | <a id="ia-8-18"></a>IA-8.18 | 已落地 | `TestInfer_ErrorEventIsClassified`（两协议各一） | — | — |
 | <a id="ia-8-19"></a>IA-8.19 | 已落地 | `TestInfer_ReportsCachedInputTokens`、`TestInfer_MissingCacheDetailsReportsZero`、`TestInfer_InputIncludesCacheReadAndCreation`、`TestInfer_NoCacheReportsNativeInput`、`TestEndToEnd_LocalRunProducesDeliveryCommit` | — | — |
@@ -314,6 +315,7 @@
 | ~~`find` 落地~~（MS-1） | **已落地**（2026-09-23）：`hunt/basic/find.go`，复用 `List` ＋ `Read`，命中带「文件 ∶ 行号 ∶ 该行」；枚举面与 `glob` 完全一致；「未找到」是结论而非错误；超 100 处只显示前 100 处但总量照报；单行限宽 160；跳过的大文件（>2MB）与读取失败一律如实附注。用例 6 条（`TestFind_*`） |
 | ~~`edit.literal` 进 schema `required`~~（MS-1） | **已落地**（2026-09-23）：`TestEdit_DeclShape` 逐项断言 `path` / `literal` / `content`；消除 §1.4 的「已知不一致」 |
 | ~~产品 §6「已知不一致」条目~~（MS-1） | **已随修正删除**；产品 §6 一期状态改为「基础 5 个已实现」，并说明 `find` 与 `glob` 共用同一条枚举面 |
+| ~~工具面自洽校验（架构 §7.3）~~ | **已落地**（2026-09-23）：`Session.buildTools` 校验名字非空 / 不重复 / 实现非 nil / 工厂不得自带 `checkpoint`，失败即装配期缺件（退出码 1，与缺 git / 缺策略同一出口）；用例 6 条（`TestBuildTools_*`、`TestPrepare_FailsOnBrokenToolFace`）。同时收敛架构 §7.3 的承诺措辞——删去**不可校验**的「声明名一致」（`Primitive` 没有自述名，名字的唯一来源就是 `Decl().Name`）；并修正 `hunt/hooks.go` 里「装配缺件退出码 2」的陈旧注释（事实为 1） |
 | ~~`check.py --wsl` 在映射盘工作区不可用~~（MS-1） | **已落地**（2026-09-23）：`scripts/check.py` 内建 WSL 路径映射（映射盘 → `/work`）、`shquote` 写保护、cwd 移出映射盘、过滤 PATH 中不可翻译条目；实测 `python scripts/check.py --wsl --race` → `exit 0`。消除 §1.4 的「已知不一致」 |
 
 ---

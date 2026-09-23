@@ -106,7 +106,9 @@ func newTestSession(t *testing.T, st workspace.Storage, policy Policy, sink Even
 		Tools:  func(workspace.Workspace) []Primitive { return prims },
 	})
 	s.storage = st
-	s.buildTools(st)
+	if err := s.buildTools(st); err != nil {
+		t.Fatalf("构造工具面失败：%v", err)
+	}
 	return s
 }
 

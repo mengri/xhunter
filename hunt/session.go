@@ -106,19 +106,40 @@ func (s *Session) RequestCheckpoint(summary string) {
 
 func (s *Session) CheckpointRequested() bool { return s.checkpointRequested }
 
-// buildTools 用装配层给的工厂构造原语清单，记录顺序（顺序即工具面顺序）。
-func (s *Session) buildTools(ws workspace.Workspace) {
+// buildTools 用装配层给的工厂构造原语清单，记录顺序（顺序即工具面顺序），并校验工具面
+// 自身是否成立。
+//
+// 校验只认「工具面自洽」，不认业务名字——有哪些原语、叫什么，是装配层的知识。之所以由
+// 框架兜这一道而不是全押给装配层：重复或匿名的声明会让供应商直接拒收整个请求，而错误
+// 现场在工具面，不在这里报就只剩一条无从追起的上游错误。
+//
+// 返回错误由 Prepare 传播：工具面不成立与缺 git / 缺策略同类——装配期缺件，循环不开始。
+func (s *Session) buildTools(ws workspace.Workspace) error {
 	if s.cfg.Tools == nil {
-		return
+		return nil
 	}
 	prims := s.cfg.Tools(ws)
 	s.tools = make(map[PrimitiveName]Primitive, len(prims))
 	s.order = make([]PrimitiveName, 0, len(prims))
-	for _, p := range prims {
+	for i, p := range prims {
+		if p == nil {
+			return fmt.Errorf("原语清单第 %d 项没有实现", i+1)
+		}
 		name := PrimitiveName(p.Decl().Name)
+		if name == "" {
+			return fmt.Errorf("原语清单第 %d 项没有名字（声明里 Name 为空）", i+1)
+		}
+		// checkpoint 由执行体自带、由其后的 decls 殿后追加：工厂再给一个就会发出两条同名声明。
+		if name == PrimCheckpoint {
+			return fmt.Errorf("原语清单不能包含 %q：它由执行体自带、由 decls 殿后追加", PrimCheckpoint)
+		}
+		if _, dup := s.tools[name]; dup {
+			return fmt.Errorf("原语清单里 %q 出现两次", name)
+		}
 		s.tools[name] = p
 		s.order = append(s.order, name)
 	}
+	return nil
 }
 
 // decls 按顺序给出工具声明，检查点原语殿后。

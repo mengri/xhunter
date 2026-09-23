@@ -3,6 +3,7 @@ package hunt
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"unicode"
@@ -23,7 +24,7 @@ import (
 // 工作区在这里就打开并检查——失败即返回错误，循环根本不会开始，因此不存在「跑到一半
 // 才发现工作区不可用」的中间态。
 //
-// 装配缺件也在这里显式失败（FR-1.8：缺件在首轮推理之前失败，退出码 2）。此前
+// 装配缺件也在这里显式失败（FR-1.8：缺件在首轮推理之前失败，退出码 1）。此前
 // Git / Opener 缺失是**调用即 panic**（被引擎收敛成一句 "panic: invalid memory
 // address"），而 Policy 缺失会被静默跳过——同一份"装配校验"的说法，三种行为。
 func (s *Session) Prepare(ctx context.Context, run *harness.Run) error {
@@ -51,7 +52,10 @@ func (s *Session) Prepare(ctx context.Context, run *harness.Run) error {
 	s.storage = storage
 
 	// 工作区就绪后构造原语并定格工具面：原语读文件需要工作区，声明与执行因此同源。
-	s.buildTools(storage)
+	// 工具面自身不成立也算装配缺件——错误在首轮推理之前暴露，而不是等供应商拒收请求。
+	if err := s.buildTools(storage); err != nil {
+		return fmt.Errorf("工具面不成立：%w", err)
+	}
 	run.Tools = s.decls()
 
 	// 门禁清单从基线读取（一期暂空）。来源优先级「任务下发 > 仓库声明 > 没有」，
