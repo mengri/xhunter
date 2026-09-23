@@ -256,7 +256,7 @@ func (g *phaseGit) PrepareBaseline(context.Context, git.RepoRef) (string, error)
 	return "root", nil
 }
 
-func (g *phaseGit) Diff(context.Context, string) ([]string, error) {
+func (g *phaseGit) Diff(context.Context, git.RepoRef) ([]string, error) {
 	*g.seen = append(*g.seen, g.phase())
 	return nil, nil
 }
@@ -267,7 +267,7 @@ type slowGit struct {
 	delay time.Duration
 }
 
-func (g *slowGit) Diff(context.Context, string) ([]string, error) {
+func (g *slowGit) Diff(context.Context, git.RepoRef) ([]string, error) {
 	time.Sleep(g.delay)
 	return nil, nil
 }

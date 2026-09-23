@@ -13,6 +13,10 @@ type RepoRef struct {
 	Remote     string
 	Branch     string
 	BaseCommit string
+	// MaterialDir 是本次会话的材料目录（工作区相对路径，如 `.xhunter/<session_id>`；空表示本次
+	// 没有材料目录）。它是**本次运行的仓库事实**，交付 diff / patch 据此把它排除（FR-6.1）——
+	// 只排这个目录，`.xhunter/` 下的其它路径（如 `skills.draft/**`）是交付内容，不能一起排掉。
+	MaterialDir string
 }
 
 // Commit 是一次提交的结果。
@@ -34,7 +38,8 @@ type GitWorktree interface {
 	Commit(ctx context.Context, repo RepoRef, msg string) (Commit, error)
 	// Diff 给出相对基线的改动文件清单；Patch 给出同一范围的统一 diff
 	// （git apply 兼容）。两者都是附带交付物，失败不阻断主交付（分支 tip）。
-	Diff(ctx context.Context, baseCommit string) ([]string, error)
-	Patch(ctx context.Context, baseCommit string) (string, error)
+	// 两者都收 RepoRef：BaseCommit 是基准，MaterialDir（非空时）是要排除的会话材料目录。
+	Diff(ctx context.Context, repo RepoRef) ([]string, error)
+	Patch(ctx context.Context, repo RepoRef) (string, error)
 	Clean(ctx context.Context) error
 }

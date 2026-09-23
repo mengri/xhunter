@@ -163,14 +163,14 @@ func (g *Git) Commit(ctx context.Context, repo git.RepoRef, msg string) (git.Com
 // Diff 产出相对基线的改动文件清单。
 //
 // 失败不阻断收尾：调用方（Finalize）只把它当作附带交付物，拿不到就只产出补丁。
-func (g *Git) Diff(ctx context.Context, baseCommit string) ([]string, error) {
+func (g *Git) Diff(ctx context.Context, repo git.RepoRef) ([]string, error) {
 	if g.root == "" {
 		return nil, envFault("no_worktree", "尚未获取基线：无法产出差异")
 	}
-	if strings.TrimSpace(baseCommit) == "" {
+	if strings.TrimSpace(repo.BaseCommit) == "" {
 		return nil, envFault("baseline_unreachable", "缺少基线 commit：无法产出差异")
 	}
-	out, err := g.run(ctx, g.root, "diff", "--name-only", baseCommit)
+	out, err := g.run(ctx, g.root, diffArgs("--name-only", repo)...)
 	if err != nil {
 		return nil, envFault("diff_failed", "产出差异失败："+err.Error())
 	}
@@ -184,18 +184,33 @@ func (g *Git) Diff(ctx context.Context, baseCommit string) ([]string, error) {
 //
 // 与 Diff 同一范围、同一时点：都是附带交付物，主交付始终是分支 tip。
 // 必须在 Clean 之前调用——工作树回收之后就没有可 diff 的对象了。
-func (g *Git) Patch(ctx context.Context, baseCommit string) (string, error) {
+func (g *Git) Patch(ctx context.Context, repo git.RepoRef) (string, error) {
 	if g.root == "" {
 		return "", envFault("no_worktree", "尚未获取基线：无法产出补丁")
 	}
-	if strings.TrimSpace(baseCommit) == "" {
+	if strings.TrimSpace(repo.BaseCommit) == "" {
 		return "", envFault("baseline_unreachable", "缺少基线 commit：无法产出补丁")
 	}
-	out, err := g.runRaw(ctx, g.root, "diff", "--no-color", baseCommit)
+	out, err := g.runRaw(ctx, g.root, diffArgs("--no-color", repo)...)
 	if err != nil {
 		return "", envFault("diff_failed", "产出补丁失败："+err.Error())
 	}
 	return out, nil
+}
+
+// diffArgs 组装 diff / patch 的公共参数：基准 commit ＋（材料目录非空时）排除本次会话材料目录的
+// pathspec。**只排本次会话的材料目录**——`.xhunter/` 下的其它路径（如 `skills.draft/**`）是交付
+// 内容，不能被一起藏掉；MaterialDir 为空时不加 pathspec（保持旧行为）。
+func diffArgs(extra string, repo git.RepoRef) []string {
+	args := []string{"diff"}
+	if extra != "" {
+		args = append(args, extra)
+	}
+	args = append(args, repo.BaseCommit)
+	if md := strings.TrimSpace(repo.MaterialDir); md != "" {
+		args = append(args, "--", ":(exclude)"+md)
+	}
+	return args
 }
 
 // Clean 回收临时工作树。可重复调用：没有工作树时是空操作。

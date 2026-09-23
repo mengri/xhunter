@@ -210,9 +210,9 @@ func (stubBaselineGit) PrepareBaseline(context.Context, git.RepoRef) (string, er
 func (stubBaselineGit) Commit(context.Context, git.RepoRef, string) (git.Commit, error) {
 	return git.Commit{}, nil
 }
-func (stubBaselineGit) Diff(context.Context, string) ([]string, error) { return nil, nil }
-func (stubBaselineGit) Patch(context.Context, string) (string, error)  { return "", nil }
-func (stubBaselineGit) Clean(context.Context) error                    { return nil }
+func (stubBaselineGit) Diff(context.Context, git.RepoRef) ([]string, error) { return nil, nil }
+func (stubBaselineGit) Patch(context.Context, git.RepoRef) (string, error)  { return "", nil }
+func (stubBaselineGit) Clean(context.Context) error                         { return nil }
 
 // stubOpener 交出一个内存工作区。
 type stubOpener struct{}

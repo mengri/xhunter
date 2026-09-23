@@ -77,7 +77,12 @@ func bountyFromEnv(task string, lookup lookupEnv) (hunt.Bounty, error) {
 		branch = "xhunter/" + SessionID(bounty)
 	}
 
-	bounty.Repo = git.RepoRef{Remote: remote, Branch: branch, BaseCommit: base}
+	bounty.Repo = git.RepoRef{
+		Remote: remote, Branch: branch, BaseCommit: base,
+		// 材料目录是"本次运行的仓库事实"：交付 diff/patch 据此把它排除（FR-6.1）。路径的唯一来源
+		// 是 materialDirFor —— 与落盘同源，不两处各拼一遍。
+		MaterialDir: materialDirFor(SessionID(bounty)),
+	}
 
 	// 预算是策略层的输入：没有它，Policy.Exhausted 永远为假，任务只能靠引擎的
 	// 轮数硬顶兜底——而"预算耗尽立即终止并上报耗尽维度"是产品需求（FR-9、AC-5）。

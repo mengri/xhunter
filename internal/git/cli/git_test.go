@@ -285,7 +285,7 @@ func TestDiff_ListsFilesChangedSinceBaseline(t *testing.T) {
 		t.Fatalf("提交失败：%v", err)
 	}
 
-	files, err := g.Diff(context.Background(), f.base)
+	files, err := g.Diff(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("产出差异失败：%v", err)
 	}
@@ -308,7 +308,7 @@ func TestPatch_AppliesCleanlyToBaseline(t *testing.T) {
 	}
 
 	// 无改动时补丁为空（不是错误）。
-	empty, err := g.Patch(context.Background(), f.base)
+	empty, err := g.Patch(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("无改动时产出补丁不该失败：%v", err)
 	}
@@ -321,7 +321,7 @@ func TestPatch_AppliesCleanlyToBaseline(t *testing.T) {
 	if _, err := g.Commit(context.Background(), repo, "改动"); err != nil {
 		t.Fatalf("提交失败：%v", err)
 	}
-	patch, err := g.Patch(context.Background(), f.base)
+	patch, err := g.Patch(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("产出补丁失败：%v", err)
 	}
@@ -413,5 +413,76 @@ func TestNew_NormalizesConfig(t *testing.T) {
 	}
 	if g := New(Config{WorkDir: "/tmp/wt", Remote: "upstream"}); g.workDir != "/tmp/wt" || g.remote != "upstream" {
 		t.Errorf("显式配置应原样采用：%+v", g)
+	}
+}
+
+// 交付 diff / patch 排除**本次会话的材料目录**，但保留同目录下的其它路径（如 skills.draft）：
+// 材料随检查点进分支是对的，但它不是交付内容（FR-6.1）；技能草稿要进补丁供人 review（FR-15.3、AC-25）。
+func TestDiff_ExcludesMaterialDirButKeepsSkillsDraft(t *testing.T) {
+	requireGit(t)
+	f := newFixture(t)
+	const session = "s-material"
+	repo := f.repo("xhunter/s9")
+	repo.MaterialDir = ".xhunter/" + session
+	g := New(Config{WorkDir: f.work})
+	root, err := g.PrepareBaseline(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("获取基线失败：%v", err)
+	}
+
+	writeFile(t, filepath.Join(root, "biz.txt"), "biz\n")
+	writeFile(t, filepath.Join(root, ".xhunter", session, "session.jsonl"), `{"type":"meta"}`+"\n")
+	writeFile(t, filepath.Join(root, ".xhunter", "skills.draft", "sk.md"), "draft\n")
+	if _, err := g.Commit(context.Background(), repo, "改动"); err != nil {
+		t.Fatalf("提交失败：%v", err)
+	}
+
+	files, err := g.Diff(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("产出差异失败：%v", err)
+	}
+	got := strings.Join(files, ",")
+	if strings.Contains(got, ".xhunter/"+session) {
+		t.Errorf("差异清单不该含材料目录：%v", files)
+	}
+	if !strings.Contains(got, "biz.txt") {
+		t.Errorf("差异清单应含业务文件：%v", files)
+	}
+	if !strings.Contains(got, ".xhunter/skills.draft/sk.md") {
+		t.Errorf("差异清单应保留技能草稿：%v", files)
+	}
+
+	patch, err := g.Patch(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("产出补丁失败：%v", err)
+	}
+	if strings.Contains(patch, "session.jsonl") || strings.Contains(patch, ".xhunter/"+session) {
+		t.Errorf("补丁不该含材料目录的内容差异：\n%s", patch)
+	}
+	if !strings.Contains(patch, "skills.draft/sk.md") || !strings.Contains(patch, "biz.txt") {
+		t.Errorf("补丁应含业务文件与技能草稿：\n%s", patch)
+	}
+}
+
+// MaterialDir 为空时不加排除 pathspec：现行为不被破坏（`.xhunter/**` 也照常出现）。
+func TestDiff_NoMaterialDirKeepsEverything(t *testing.T) {
+	requireGit(t)
+	f := newFixture(t)
+	repo := f.repo("xhunter/s10") // 无 MaterialDir
+	g := New(Config{WorkDir: f.work})
+	root, err := g.PrepareBaseline(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("获取基线失败：%v", err)
+	}
+	writeFile(t, filepath.Join(root, ".xhunter", "s-x", "session.jsonl"), "x\n")
+	if _, err := g.Commit(context.Background(), repo, "改动"); err != nil {
+		t.Fatalf("提交失败：%v", err)
+	}
+	files, err := g.Diff(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("产出差异失败：%v", err)
+	}
+	if got := strings.Join(files, ","); !strings.Contains(got, ".xhunter/s-x/session.jsonl") {
+		t.Errorf("无 MaterialDir 时不该排除任何路径：%v", files)
 	}
 }

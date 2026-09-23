@@ -619,7 +619,7 @@ func (s *Session) Finalize(ctx context.Context, run *harness.Run) error {
 
 	// 附带交付物在这里定型：Clean 之后就再也取不到了，而结果文件（FR-1.5、§6）
 	// 要用它们。因此**不依赖事件出口**——没有 sink 时同样要能交出补丁与清单。
-	if files, err := s.cfg.Git.Diff(ctx, s.cfg.Bounty.Repo.BaseCommit); err != nil {
+	if files, err := s.cfg.Git.Diff(ctx, s.cfg.Bounty.Repo); err != nil {
 		s.logf("warn", "改动清单不可用，结果文件将缺 files_changed", "err", err.Error())
 	} else {
 		s.files = files
@@ -627,7 +627,7 @@ func (s *Session) Finalize(ctx context.Context, run *harness.Run) error {
 			_ = s.cfg.Sink.Emit(ExternalEvent{Type: "deliverable", Payload: map[string]any{"files": files}})
 		}
 	}
-	if patch, err := s.cfg.Git.Patch(ctx, s.cfg.Bounty.Repo.BaseCommit); err != nil {
+	if patch, err := s.cfg.Git.Patch(ctx, s.cfg.Bounty.Repo); err != nil {
 		s.logf("warn", "补丁不可用，将只交付分支 tip", "err", err.Error())
 	} else {
 		s.patch = patch

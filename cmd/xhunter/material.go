@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 
 	"xhunter/harness"
@@ -24,6 +25,12 @@ const (
 	materialDir  = ".xhunter"
 	materialFile = "session.jsonl"
 )
+
+// materialDirFor 给出某个会话的材料目录（工作区相对路径）。它是这一路径的**唯一来源**：落盘与
+// 交付排除（`RepoRef.MaterialDir`）都调它，不两处各拼一遍。
+func materialDirFor(sessionID string) string {
+	return path.Join(materialDir, sessionID)
+}
 
 // materialMeta 是材料第一行：版本与任务事实（恢复时据此对齐分支与基线）。
 type materialMeta struct {
@@ -71,7 +78,7 @@ type sessionRecorder struct {
 // Open 绑定材料位置并写好 meta 行：工作区根由 PrepareBaseline 在运行期给出，因此在工作区就绪后
 // 调用一次。同一个会话的材料已存在时不重复写 meta（续跑，MS-7）。
 func (r *sessionRecorder) Open(root string) error {
-	dir := filepath.Join(root, materialDir, r.bounty.SessionID())
+	dir := filepath.Join(root, materialDirFor(r.bounty.SessionID()))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
