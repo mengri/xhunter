@@ -271,7 +271,7 @@
 
 | 编号 | 状态 | 对应 MS-n | 缺口说明 |
 |---|---|---|---|
-| <a id="l1-4"></a>L1-4 门禁清单来源裁决 | 待接入 | MS-5 | `Prepare` 里 `s.gates = nil`（一期暂空），来源裁决未接入 |
+| <a id="l1-4"></a>L1-4 门禁清单来源裁决 | 待接入 | MS-5 | `Prepare` 里 `s.gates = nil`（一期暂空），来源裁决未接入；**契约已定义**（D2：`GateSource` ＋ 档位常量 `bounty`/`repo`/`none` ＋ `Config.Gates` 装配槽），实现待 MS-5 |
 | <a id="l1-5"></a>L1-5 扩展能力描述符 | 待接入 | MS-8 | 组装层注入 `ext.ExtHost` 未接入；**契约已定义**（D2：`Capabilities` / `Locate` / `Fingerprint` / `Close` ＋ `ext.Unimplemented{}` panic 哨兵装配），实现待 MS-8 |
 | <a id="l1-8"></a>L1-8 会话恢复（条件） | 待接入 | MS-7 | `XHUNTER_SESSION_ID` 非空时的 checkout tip ＋ 读回材料未接入 |
 | <a id="l1-9"></a>L1-9 生效配置快照 | 已落地 | MS-2 | 装配完成后冻结一次，进 `hunt_start` 与结果文件 `effective_config`（含原语顺序与殿后 `checkpoint`）；门禁清单随 MS-5。证据 `TestEffectiveConfig_ListsPrimitivesInToolFaceOrder`、`TestPrepare_EmitsHuntStart` |
@@ -337,6 +337,7 @@
 | ~~会话材料随提交强制加入~~（IA-6.1c） | **已落地**（2026-09-23）：`internal/git/cli` 的 `Commit` 在 `add -A` 之后对本次会话材料目录再 `add -f -- <MaterialDir>`——仓库忽略 `.xhunter/`（常见做法）时 `add -A` 不会加入它，材料会写在工作区却不进任何提交、"唯一状态源"悄悄失效且不报错；材料目录尚未落盘则**跳过**（不因它把整个提交判死）；`MaterialDir` 为空时行为完全不变（"无改动不产生空提交"照旧）。用例 `TestCommit_ForceAddsMaterialEvenWhenGitignored`、`TestCommit_WithoutMaterialDirIsUnchanged`、`TestCommit_MissingMaterialDirDoesNotFail`；`cmd` e2e 补断言"分支 tip 含材料文件、交付清单不含材料"。MS-6 由此收口 |
 | ~~修复：会话材料缺末轮用量~~（快照与记账次序） | **已修复**（2026-09-23）：`OnTurn` 里 `snapshot()` 原排在 `charge()` **之前** → 本轮用量要等下一次快照才落盘；`Finalize` 的最终 `snapshot()` 原排在**交付提交之后** → 那份写在工作树里的记录进不了提交、还被 `Clean` 删掉。两处次序对调后，交付分支上的材料含**每轮各一条** usage。收紧 `TestEndToEnd_MaterialIsSelfSufficientForResume`（改断言"每轮各一条"，修复前实测**红**）、新增 `TestRecorder_SnapshotAfterCharge`（钉调用次序） |
 | ~~契约：扩展接入位与 panic 哨兵~~（H7 / MS-8） | **契约已定义**（2026-09-23，未冻结期：先定契约后填实现）：`ext.ExtHost` 补 `Fingerprint() []string`（服务会话材料 `meta.ext` 与生效快照的能力指纹，IA-6.5）；新增 `ext.Unimplemented{}` **panic 哨兵**；`cmd/xhunter` 把它**显式装上**（不再传 `nil`——A 类入口，符号原语声明不实现，走不到）。**实现待 MS-8** |
+| ~~契约：门禁清单来源 ＋ 结果文件 `gates` 形状~~（MS-5 / H4） | **契约已定义**（2026-09-23，未冻结期）：新增 `hunt.GateSource`（`Load(ctx, repo) ([]Gate, source, err)`）与来源档位常量 `bounty` / `repo` / `none`；`hunt.Config` 加装配槽 `Gates`；结果文件加 `gateFile`（`passed` **三态** `*bool`：true / false / null=未运行）与 `resultFile.Gates`（`omitempty`，写入端未接 → 不写该键）。`Prepare` 的来源裁决**不接**（B 类入口，接上任何一次运行都跑不起来，调用点留 MS-5）。**实现待 MS-5** |
 | ~~交付 diff/patch 排除会话材料目录~~（IA-11.6） | **已落地**（2026-09-23）：`git.RepoRef` 加 `MaterialDir`（本次运行的仓库事实）；`GitWorktree.Diff`/`Patch` 改收 `RepoRef`，材料目录非空时加 `:(exclude)` pathspec——**只排本次会话的材料目录**，`.xhunter/` 下其它路径（如 `skills.draft/**`）是交付内容、照进 diff。材料目录路径唯一来源 `materialDirFor`（与落盘同源）；e2e 的临时过滤 `nonMaterial` 撤掉、改成直接断言交付清单不含材料。用例 `TestDiff_ExcludesMaterialDirButKeepsSkillsDraft`、`TestDiff_NoMaterialDirKeepsEverything`、`TestEndToEnd_LocalRunProducesDeliveryCommit` |
 
 ---
@@ -522,7 +523,7 @@
 **目标**：把 §7.8 从规格变成产品能力。这是本排期里最需要先做设计确认的两块之一（另一块是 MS-8）。
 
 **范围**
-- **清单来源裁决**（FR-5.2b）：Bounty 下发 > 基线 commit 的仓库根 `gates.yml` > 无。不限制模型修改该文件。
+- **清单来源裁决**（FR-5.2b）：Bounty 下发 > 基线 commit 的仓库根 `gates.yml` > 无。不限制模型修改该文件。（**契约已定义**（D2）：`hunt.GateSource` ＋ 档位常量 ＋ `Config.Gates` 装配槽。）
 - **执行语义**：`argv` 数组直启、`argv[0]` 为 shell 一律拒绝、`timeout`（`context` ＋ 杀进程组）、`dir`、输出限长保留头尾、非交互。
 - **环境隔离**（FR-5.2i）：最小集 ＋ 清单显式 `env`；Xhunter 自身的 git 凭据绝不下传。
 - **判据 `expect`**：对象 `{kind*, pattern, max, stream}`；判据在全量输出上算。
@@ -532,7 +533,7 @@
 - **收尾补跑**（FR-5.2f）。
 - **上报**：`check_result` 事件；结果文件 `gates` 数组含未运行项（`passed: null`）；门禁名注入 user 段。
 - **豁免护栏**（FR-5.2h）：元门禁 ＋ 强度不得降低 ＋ `gate_config_changed` 事件。
-- 清空 `hunt/hooks.go:59` 的 `s.gates = nil`。
+- 清空 `Prepare` 里的 `s.gates = nil`（来源裁决接上 `Config.Gates`）。
 
 **独立验收的证据**
 - 单测（`hunt/gate`）：`TestCheck_ArgvIsDirectAndRejectsShell`、`TestCheck_ExpectVariants`、`TestCheck_TimeoutIsEnvError`、`TestCheck_NonZeroExitIsQualityFailure`、`TestCheck_CacheHitByFingerprint`、`TestCheck_EnvIsMinimalAndCredentialFree`。
@@ -598,7 +599,7 @@
 **目标**：符号能力以本地进程外挂接入，`symbol_read` / `symbol_edit` 落地（首发语言 Go），基础原语不受影响。
 
 **范围**
-- `ext.ExtHost` 实现：本地 stdio 子进程 ＋ 懒启动 ＋ 随 Hunt 回收 ＋ 崩溃隔离 ＋ 超时（FR-13.1/13.5/13.6）。
+- `ext.ExtHost` 实现：本地 stdio 子进程 ＋ 懒启动 ＋ 随 Hunt 回收 ＋ 崩溃隔离 ＋ 超时（FR-13.1/13.5/13.6）。（**契约已定义**（D2）：`Capabilities` / `Locate` / `Fingerprint` / `Close` ＋ `ext.Unimplemented{}` panic 哨兵。）
 - 能力描述符 `ExtCaps` → 决定符号路径可用性与结果标注；核心不感知后端种类。
 - `symbol_read` / `symbol_edit`：先定位到字节区间，再复用 `hunt/basic` 的读写；写盘仍走 `Committer`。
 - **降级**：扩展缺失/启动失败/超时/语言未注册 → 结构化错误 ＋ 显式提示；工具名不撤回（FR-13.4、AC-11/AC-12/AC-26）；非法源码 → 降级文本并提示（FR-4.5）。

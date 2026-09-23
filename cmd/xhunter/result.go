@@ -34,6 +34,10 @@ type resultFile struct {
 	// 小结）。没有答复就没有这个键（omitempty），不摆空壳。
 	Summary string `json:"summary,omitempty"`
 
+	// Gates 是门禁结果（FR-5.2、使用手册 §6）。**未接线**：写入端（MS-5）接上之前不写该键
+	// （omitempty），不摆空壳。形状见 gateFile（`passed` 三态：true / false / null=未运行）。
+	Gates []gateFile `json:"gates,omitempty"`
+
 	// Needs / Assumptions / Unverified 是模型在正文固定小节里的自陈（FR-6.3/6.4）。用指针不加 omitempty
 	// 是三态要求：「没提供」要写成 null，而不是缺字段、更不是 []——空数组会被读成
 	// "没有需要补全的条件"，那是另一句话（使用手册 §6）。
@@ -55,6 +59,19 @@ type errorFile struct {
 	Kind      string `json:"kind"`
 	Message   string `json:"message"`
 	Retryable bool   `json:"retryable"`
+}
+
+// gateFile 是结果文件里一条门禁的形状（FR-5.2、使用手册 §6）。
+//
+// `passed` 用**三态**（`*bool`）：`true` 通过、`false` 未通过、`null` **未运行**。§6 要求结果文件
+// **必须列出未运行的门禁**（`passed: null`）——用一个 `bool` 会把"没跑"混成"没通过"，那是两句话。
+// 字段语义与 §7.8 一致；**本期只定义形状**，写入端在 MS-5 接上。
+type gateFile struct {
+	Name     string `json:"name"`
+	Passed   *bool  `json:"passed"`
+	ExitCode *int   `json:"exit_code,omitempty"`
+	Source   string `json:"source,omitempty"`
+	Summary  string `json:"summary,omitempty"`
 }
 
 // writeRunOutputs 写出补丁与结果文件。任一写失败都返回错误——交不出交付记录

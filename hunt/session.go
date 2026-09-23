@@ -35,6 +35,9 @@ type Config struct {
 	Context ContextBuilder
 	Session SessionRecorder
 	Sink    EventSink
+	// Gates 是门禁清单的来源（承担「Bounty 下发 > 仓库声明 > 无」里的后两档）。它是**装配槽**——
+	// 契约见 `GateSource`；**调用点（Prepare 的来源裁决）在 MS-5 接上**，本次不接。
+	Gates GateSource
 
 	Filters []NamedFilter
 
