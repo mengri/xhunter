@@ -346,8 +346,12 @@ func (h *noSitesHost) Capabilities(context.Context) ext.ExtCaps { return h.caps 
 func (h *noSitesHost) Locate(context.Context, ext.LocateRequest) (ext.Prepared, error) {
 	return ext.Prepared{File: "a.go", Precision: h.caps.Precision}, nil
 }
-func (h *noSitesHost) Fingerprint() []string { return []string{"stub/1"} }
-func (h *noSitesHost) Close() error          { return nil }
+func (h *noSitesHost) Fingerprint() []string                          { return []string{"stub/1"} }
+func (h *noSitesHost) Parse(context.Context, string) ext.ParseVerdict { return ext.ParseUnknown }
+func (h *noSitesHost) Enclose(context.Context, ext.EncloseRequest) (ext.Prepared, bool, error) {
+	return ext.Prepared{}, false, ext.ErrUnavailable
+}
+func (h *noSitesHost) Close() error { return nil }
 
 // ============================================================ 参数面
 

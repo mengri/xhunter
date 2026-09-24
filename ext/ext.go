@@ -1,8 +1,12 @@
-// Package ext 提供符号解析的抽象能力：符号定位（限定名 → 字节区间）、能力上报。
+// Package ext 提供符号解析的抽象能力：符号定位（限定名 → 字节区间）、结构判据、能力上报。
 //
 // 它是「基础能力包」：只定义抽象接口与结果类型，不认识任何业务形状——「符号化」
 // 怎么和具体的读写操作组合，是消费方（符号读写领域）的事，不是本包的事。底层用
 // 哪种解析器（进程内语法后端、MCP 外挂进程、LSP）由装配层注入。
+//
+// 除了定位，它还承担**结构判据**：自动检查点要判断"这一刻的改动是不是一个结构完整点"
+// （语法完整 ＋ 改动封闭在某个符号内），而"什么算完整"只有符号后端答得出来——
+// 因此判据也在这一层，核心只消费结论。
 package ext
 
 import (
@@ -18,6 +22,22 @@ type Precision string
 const (
 	PrecisionSyntactic Precision = "syntactic"
 	PrecisionSemantic  Precision = "semantic"
+)
+
+// ParseVerdict 是"这个文件语法是否完整"的**三态**结论。
+//
+// 三态是刻意的：语言未注册、文件读不出来时我们**没有判过**，只是没法判——
+// 把 Unknown 读成 Broken，会让未注册语言的仓库每轮都被判"结构不完整"；
+// 读成 OK，则检查点会钉在从未验证过的改动上。
+type ParseVerdict int
+
+const (
+	// ParseUnknown：判不了（语言未注册 / 读不到内容 / 后端不可用）。
+	ParseUnknown ParseVerdict = iota
+	// ParseOK：语法完整。
+	ParseOK
+	// ParseBroken：语法不完整（判据可用，且确实不完整）。
+	ParseBroken
 )
 
 // ExtCaps 是符号后端上报的能力描述。核心只消费它，不感知后端是哪种解析器。
@@ -79,11 +99,26 @@ type LocateRequest struct {
 	All bool
 }
 
+// EncloseRequest 是一次"反向定位"的请求：给定一处字节区间，问它被哪个声明包含。
+//
+// 自动检查点的第二条判据（改动封闭在某个符号内）需要它——正向定位是按名字找符号，
+// 而这里要回答的是"这次改动落在谁的身体里"。
+type EncloseRequest struct {
+	File      string
+	ByteRange workspace.ByteRange
+}
+
 // ExtHost 刻意没有任何写方法——后端因此无法直接写工作区，
 // 它只能返回「改哪里、改成什么」，由消费方执行落盘。
 type ExtHost interface {
 	Capabilities(ctx context.Context) ExtCaps
 	Locate(ctx context.Context, req LocateRequest) (Prepared, error)
+	// Parse 报告文件语法是否完整（结构检查的判据①）。判不了时返回 ParseUnknown——
+	// 那是"没判过"，不是"不完整"。
+	Parse(ctx context.Context, file string) ParseVerdict
+	// Enclose 给出**包含**这处区间的最小声明（结构检查的判据②）。
+	// found=false 表示"没有声明包含它"（结论）；error 表示后端这次判不了。
+	Enclose(ctx context.Context, req EncloseRequest) (Prepared, bool, error)
 	// Fingerprint 给出**扩展能力指纹**：扩展标识 ＋ 版本 ＋ 语言清单（每个元素一个 token）。
 	// 它服务两件事——会话材料（`meta.ext`）与生效配置快照；两侧**不一致只记录、不阻断**
 	// （IA-6.5 / FR-13.7）。返回 `[]string` 是为了直接落进材料里的能力指纹字段位。
@@ -96,8 +131,8 @@ type ExtHost interface {
 var ErrUnavailable = errors.New("符号后端不可用：没有装配符号解析能力")
 
 // Unimplemented 是 ExtHost 的**空实现**：不装配符号后端时用它是"如实上报不可用"，
-// 而不是"走到即炸"——符号能力不可用是一条可以带着跑的事实（符号原语会给出结构化错误），
-// 不是装配缺陷。
+// 而不是"走到即炸"——符号能力不可用是一条可以带着跑的事实（符号原语会给出结构化错误、
+// 结构判据会落成"不可判定"），不是装配缺陷。
 type Unimplemented struct{}
 
 var _ ExtHost = Unimplemented{}
@@ -109,6 +144,14 @@ func (Unimplemented) Capabilities(context.Context) ExtCaps {
 
 func (Unimplemented) Locate(context.Context, LocateRequest) (Prepared, error) {
 	return Prepared{}, ErrUnavailable
+}
+
+// Parse 报"判不了"：没有后端就没有语法判断，那与"语法不完整"是两句话。
+func (Unimplemented) Parse(context.Context, string) ParseVerdict { return ParseUnknown }
+
+// Enclose 报后端不可用（不是"没有包含它的声明"）：后者是结论，这里是判不了。
+func (Unimplemented) Enclose(context.Context, EncloseRequest) (Prepared, bool, error) {
+	return Prepared{}, false, ErrUnavailable
 }
 
 // Fingerprint 给出空指纹（不是 nil）：装了什么就报什么，"没有"是已知事实。

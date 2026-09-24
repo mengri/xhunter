@@ -103,7 +103,7 @@ func TestEndToEnd_LocalRunProducesDeliveryCommit(t *testing.T) {
 	}
 
 	// 交付物在远端的任务分支上。"交付 = 分支 tip"。本例的改动**不落在结构完整点上**
-	// （符号扩展未接入 → 判据不可判定 → 不产生自动检查点），因此轮边界不提交，
+	// （未装配符号能力 → 判据不可判定 → 不产生自动检查点），因此轮边界不提交，
 	// tip 是收尾的**交付提交**（FR-1.3c：无新写操作不提交，收尾必提交）。
 	tip := gitIn(t, fx.remote, "rev-parse", "refs/heads/"+fx.branch)
 	if tip == fx.base {

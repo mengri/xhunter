@@ -304,13 +304,16 @@ func TestDefaultTools_HasNoGitPrimitive(t *testing.T) {
 		}
 	}
 
-	// 原语工厂的入参只有 workspace.Workspace：构造期拿不到 git.GitWorktree。
+	// 原语工厂的入参只有 workspace.Workspace 与 ext.ExtHost：构造期拿不到 git.GitWorktree。
 	fac := reflect.TypeOf(hunt.ToolFactory(nil))
-	if fac.Kind() != reflect.Func || fac.NumIn() != 1 {
+	if fac.Kind() != reflect.Func || fac.NumIn() != 2 {
 		t.Fatalf("ToolFactory 形状变了：%v", fac)
 	}
 	if in := fac.In(0); in != reflect.TypeOf((*workspace.Workspace)(nil)).Elem() {
-		t.Errorf("ToolFactory 入参 = %v，期望 workspace.Workspace（原语构造期拿不到 git）", in)
+		t.Errorf("ToolFactory 第 1 个入参 = %v，期望 workspace.Workspace", in)
+	}
+	if in := fac.In(1); in != reflect.TypeOf((*ext.ExtHost)(nil)).Elem() {
+		t.Errorf("ToolFactory 第 2 个入参 = %v，期望 ext.ExtHost（宿主与工作区同为运行期产物）", in)
 	}
 
 	// hunt.Primitive 方法集里没有任何接受/返回 git.GitWorktree 的入口。

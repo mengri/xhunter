@@ -112,7 +112,7 @@
 - **工具调用由业务 handler 执行**：harness 只从流里收齐「模型要调什么」（`turn.Calls`）与本轮正文（`turn.Text`），执行、落盘、结果回灌、结果加工都在 `OnTurnHandler` 里完成；harness 读回 `turn.Results`/`turn.Failed` 只用于止损与「本轮无调用即完成」的判定。
 - **符号化与降级是原语自身的性质**：`hunt/symbolic` 先定位到字节区间、再复用 `hunt/basic` 的读写；harness 与 basic 都不感知符号，也没有统一的 Dispatch 层。
 - **能力抽象是独立基础包**：`workspace`/`git`/`ext` 各自定义一套抽象接口，原语与其他插件都是它们的消费者；「写盘唯一入口」（`Committer`）在 hunt 层，最终落在 workspace 的 `WriteRange` 上。
-- **工作区是运行期产物**：装配层交的是工厂（`ToolFactory`、`PromptPluginFactory`），`Session.Prepare` 打开工作区后构造原语与插件、定格工具面——「构造顺序 = 依赖顺序」：后端 → 工作区（运行期）→ 原语/插件 → 执行体。
+- **工作区与符号宿主都是运行期产物**：装配层交的是工厂（`ToolFactory`、`ExtHostFactory`、`PromptPluginFactory`），`Session.Prepare` 打开工作区后造宿主、再构造原语与插件、定格工具面——「构造顺序 = 依赖顺序」：后端 → 工作区（运行期）→ 宿主 → 原语/插件 → 执行体。宿主**只造一份**，结构判据与符号原语共用同一个实例。
 - **多 agent 编排不是 harness 的维度，而是原语的内部行为**：harness 只从流里收 `turn.Calls`（不执行），执行落在业务 handler——所以「派子 agent」可以是一个原语的实现细节（原语内部再跑一次循环，把结果当作自己的结果返回），harness 不需要认识它、也不需要为它新增概念。（V 层的路线选择见 §7.8；代价与缺口清单见 `xhunter-memo-multi-agent-route.md`）
 
 由此推出三点：
@@ -262,7 +262,7 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 | 0 | 进程预检 | 组装层 | FR-9.5 | Provider 上限类能力校验；缺失→退出 1 |
 | 1 | 取基线 → 建/推任务分支 → checkout | `Prepare` → `git.GitWorktree.PrepareBaseline` | FR-1.3、INV-11 | 先于一切可能写工作区的动作 |
 | 2 | 打开工作区 | `Prepare` → `workspace.WorkspaceOpener.Open` | — | 根不存在 / 不是目录在此被拒；失败即终止，循环根本不开始 |
-| 3 | 构造原语并定格工具面 | `Prepare` → `Config.Tools(ws)` → `run.Tools` | FR-4.11、FR-1.11④ | 工作区是运行期产物，所以是"打开之后再构造"；此后整任务读同一份声明 |
+| 3 | 造符号宿主并构造原语、定格工具面 | `Prepare` → `Config.Ext(ws)` → `Config.Tools(ws, ex)` → `run.Tools` | FR-4.11、FR-1.11④ | 工作区与宿主都是运行期产物，所以是"打开之后再构造"；宿主同一份实例同时给结构判据与符号原语；此后整任务读同一份声明 |
 | 4 | 门禁清单来源裁决 | `Prepare` | FR-5.2c | Bounty 下发 > 基线 `gates.yml`（仓库根） > 无 |
 | 5 | 扩展能力描述符 | 组装层注入 `ext.ExtHost` | FR-13.4 | 不可用 → 符号路径不可用，工具名字不变 |
 | 6 | 构造两段提示词并定格 | `Prepare` → `buildPromptStage` ×2 → `Context.SetPrompt` | FR-2.6、FR-7.8、FR-15.2/15.3 | 按**装配顺序**调用两段插件，产出 **system / user 两段**；取一次、整任务内冻结 |
@@ -319,7 +319,7 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 | 动作 | 落点 | 依据 | 说明 |
 |---|---|---|---|
 | 检查点决策（**本轮单一提交点**） | `Session.checkpoint` → `git.Commit` | FR-1.3c | 触发条件只有两条：**模型显式请求** 或 **落在结构完整点**；都不满足则不提交。**提交的是本轮已应用的改动**；单次失败不终止——下一轮累积重提 |
-| 结构检查 | `Session`（结构判据） | FR-1.3d | 只读定位判断"语法完整 / 区间封闭"，三态判定 |
+| 结构检查 | `Session.judgeStructural`（经 `ext.ExtHost`） | FR-1.3d | ① 此刻语法完整（`Parse`）② 改动区间封闭在某个符号内（`Enclose`，写盘前就地判）；三态判定，判不了即不提交并如实上报 |
 | 止损 | harness（`Config.MaxFailStreak`）＋ `Policy` | FR-9.4 | **机制硬顶**（连续失败轮数达 `Config.MaxFailStreak`）＋**业务两轴**（连续同类失败：达 2 次先换策略、超上限 3 次终止；连续拒绝：达 3 次终止）。守卫次序写死为「取消 → 通道 → 提交连败 → 止损 → 预算」——连败更根因（退出 1、可重跑）先于同为退出 2 的止损与预算；止损内部同类失败先于连续拒绝 |
 | 事件通道复查 | `OnTurn` 守卫 | FR-10.4 | → 环境错误（退出 1） |
 | 提交连败复查 | `OnTurn` 守卫 | FR-1.3b、FR-1.11② | 连续 3 次提交失败 → 本轮结束即收敛（退出 1），不跑完剩余轮次 |
@@ -559,7 +559,7 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 
 ### 7.7 H7 Ext —— 扩展接入（`ext.ExtHost`，MCP）
 
-符号级能力不在核心里，由本地 MCP 扩展提供。`ext.ExtHost` 是核心侧的客户端与治理契约（实现由装配层注入；实现状态见 xhunter-status.md 状态索引 · H7）。**契约**：`Capabilities(ctx) ExtCaps` / `Locate(ctx, req) (Prepared, error)` / `Fingerprint() []string` / `Close() error`（`Capabilities` 与 `llm.Provider.Capabilities()` 同词汇）。**接口不含任何写方法**——这是 INV-10 的类型级保证。
+符号级能力不在核心里，由本地 MCP 扩展提供。`ext.ExtHost` 是核心侧的客户端与治理契约（实现由装配层注入；实现状态见 xhunter-status.md 状态索引 · H7）。**契约**：`Capabilities(ctx) ExtCaps` / `Locate(ctx, req) (Prepared, error)` / `Parse(ctx, file) ParseVerdict` / `Enclose(ctx, req) (Prepared, bool, error)` / `Fingerprint() []string` / `Close() error`（`Capabilities` 与 `llm.Provider.Capabilities()` 同词汇）。后两个是**结构判据**（自动检查点的唯一判据）：`ParseVerdict` 三态（`ParseOK` / `ParseBroken` / `ParseUnknown`），`Enclose` 的 `found=false` 是"判过、确实没有声明包含它，**结论**"，`error` 是"这次判不了"——两者不得混。**接口不含任何写方法**——这是 INV-10 的类型级保证。
 
 | 职责 | 要求 |
 |---|---|
@@ -1189,7 +1189,7 @@ Bounty(session) ──► H6.Session
 | IA-11.8 | **调用时机与不可见性（INV-11）**：`PrepareBaseline` 是 `Prepare` 的第一个动作，先于任何工具执行；`Commit` 只在轮边界与收尾被调用；两者**都不作为原语暴露**给模型 | （实现状态见 xhunter-status.md 状态索引 · IA-11.8） |
 | IA-11.9 | **检查点自愈与止损（AC-22）**：单次提交失败不中止（下一轮累积重提）；连续失败达上限 → 环境错误 | 自愈部分：代码检查（`checkpoint` 失败只记 warn）；连败上限见 xhunter-status.md 状态索引 · IA-11.9 |
 | IA-11.10 | **时间语义**：检查点提交的是**本轮已应用的改动**（执行在 `OnTurn` 内、提交紧随其后），不含下一轮内容；末轮改动由收尾交付 | （实现状态见 xhunter-status.md 状态索引 · IA-11.10） |
-| IA-11.11 | **自动检查点只落在结构完整点上**（FR-1.3c/1.3d）：无结构判据（扩展未接入）**不提交**，并如实记录跳过原因；**模型显式请求不受此限** | `TestCheckpoint_NoAutoCheckpointOffStructuralPoint`、`TestCheckpoint_LogsNoOpWhenNothingWasCommitted`（hunt） |
+| IA-11.11 | **自动检查点只落在结构完整点上**（FR-1.3c/1.3d）：判据可用但未通过 **不提交**（说「未落在结构完整点」）；判不了（无符号能力 / 语言未注册）也 **不提交** 并如实上报；**模型显式请求不受此限** | `TestCheckpoint_NoAutoCheckpointOffStructuralPoint`、`TestCheckpoint_LogsNoOpWhenNothingWasCommitted`（hunt）；真实判据见 xhunter-status.md 状态索引 · IA-11.11 |
 | IA-11.12 | **门禁驱动的检查点**：门禁通过后立即提交（提交信息含原因）；门禁未通过则抑制自动检查点 | （实现状态见 xhunter-status.md 状态索引 · IA-11.12） |
 | IA-11.13 | **模型请求的检查点（控制原语的消费端）**：模型经 `checkpoint` 表达意图 → 本轮提交，提交信息标明"模型请求"并带上理由；**理由只作素材**——只取首行、剥控制与格式字符、按上限截断，前缀与分隔符由执行体固定；**一次请求只兑现一次**；**无改动则不产生空提交**，但意图照样被消费 | 净化：`TestSanitizeIntent`（hunt）；提交信息合成/一次兑现/空提交抑制见 xhunter-status.md 状态索引 · IA-11.13 |
 

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"xhunter/ext"
 	"xhunter/harness"
 )
 
@@ -99,7 +100,7 @@ func TestCheckpoint_StreakResetsOnEmptyCommitToo(t *testing.T) {
 		Policy: allowAll{},
 		Sink:   &captureSink{},
 	})
-	s.structuralJudge = func() structuralVerdict { return structuralPass }
+	s.ext = &fakeExt{parses: []ext.ParseVerdict{ext.ParseOK}}
 	s.ops = []WriteOp{{File: "a.txt"}}
 	s.commitFailStreak = 2 // 先摆一个连败水位
 

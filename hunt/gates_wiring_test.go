@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"xhunter/ext"
 	"xhunter/git"
 	"xhunter/harness"
 	"xhunter/workspace"
@@ -57,7 +58,7 @@ func finalizeWithGates(t *testing.T, gates []Gate, runner GateRunner, results []
 		Git:    &countingGit{},
 		Policy: allowAll{},
 		Sink:   sink,
-		Tools:  func(workspace.Workspace) []Primitive { return nil },
+		Tools:  func(workspace.Workspace, ext.ExtHost) []Primitive { return nil },
 	})
 	if runner == nil {
 		runner = &stubGateRunner{}
@@ -170,13 +171,13 @@ func TestCheckpoint_GateFailureSuppressesAutoCheckpoint(t *testing.T) {
 		Bounty: Bounty{ID: "b1", Task: "task"},
 		Git:    gitBackend,
 		Policy: allowAll{},
-		Tools:  func(workspace.Workspace) []Primitive { return nil },
+		Tools:  func(workspace.Workspace, ext.ExtHost) []Primitive { return nil },
 	})
 	s.storage = &memStorage{files: map[string]string{}}
 	s.root = t.TempDir()
 	s.ops = []WriteOp{{File: "a.txt", Primitive: "write"}}
 	s.gateFailed = true
-	s.structuralJudge = func() structuralVerdict { return structuralPass }
+	s.ext = &fakeExt{parses: []ext.ParseVerdict{ext.ParseOK}}
 
 	s.checkpoint(context.Background(), &harness.Turn{No: 1})
 	if gitBackend.commits != 0 {
@@ -192,12 +193,12 @@ func TestCheckpoint_WithoutGateFailureAutoCheckpointStillCommits(t *testing.T) {
 		Bounty: Bounty{ID: "b1", Task: "task"},
 		Git:    gitBackend,
 		Policy: allowAll{},
-		Tools:  func(workspace.Workspace) []Primitive { return nil },
+		Tools:  func(workspace.Workspace, ext.ExtHost) []Primitive { return nil },
 	})
 	s.storage = &memStorage{files: map[string]string{}}
 	s.root = t.TempDir()
 	s.ops = []WriteOp{{File: "a.txt", Primitive: "write"}}
-	s.structuralJudge = func() structuralVerdict { return structuralPass }
+	s.ext = &fakeExt{parses: []ext.ParseVerdict{ext.ParseOK}}
 
 	s.checkpoint(context.Background(), &harness.Turn{No: 1})
 	if gitBackend.commits != 1 {

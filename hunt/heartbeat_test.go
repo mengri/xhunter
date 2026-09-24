@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"xhunter/ext"
 	"xhunter/git"
 	"xhunter/harness"
 	"xhunter/llm"
@@ -154,7 +155,7 @@ func TestSession_PhaseTracksStages(t *testing.T) {
 		Opener: stubOpener{},
 		Policy: allowAll{},
 		Sink:   sink,
-		Tools: func(workspace.Workspace) []Primitive {
+		Tools: func(workspace.Workspace, ext.ExtHost) []Primitive {
 			return []Primitive{phasePrim{stubPrim: stubPrim{name: "probe"}, phase: phase, seen: &seen}}
 		},
 		SystemPlugins: func(workspace.Workspace) []PromptPlugin {

@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"xhunter/ext"
 	"xhunter/harness"
 	"xhunter/hunt"
 	"xhunter/hunt/gate"
@@ -186,10 +187,12 @@ func executeHunt(bounty hunt.Bounty, opts runOptions) int {
 	gitBackend := defaultGit()
 	session := hunt.NewSession(hunt.Config{
 		Bounty: bounty,
-		Tools: func(ws workspace.Workspace) []hunt.Primitive {
-			// 一期符号扩展未接入：装 panic 哨兵（未冻结期口径，走到即炸）；符号原语声明不实现，走不到。
-			return defaultTools(ws, defaultExt(ws), gateRunner)
+		// 原语面与结构判据**共用同一个宿主**：符号能力只有一份事实，各造一份会在换成
+		// 外挂后端时变成两个进程。
+		Tools: func(ws workspace.Workspace, ex ext.ExtHost) []hunt.Primitive {
+			return defaultTools(ws, ex, gateRunner)
 		},
+		Ext:    func(ws workspace.Workspace) ext.ExtHost { return defaultExt(ws) },
 		Policy: defaultPolicy(bounty.Budget),
 		Opener: defaultWorkspaces(),
 		Git:    gitBackend,

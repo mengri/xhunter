@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"xhunter/ext"
 	"xhunter/git"
 	"xhunter/harness"
 	"xhunter/hunt"
@@ -201,7 +202,7 @@ func TestRecorder_FlushesAtTurnBoundary(t *testing.T) {
 		Git:     &stubGit{root: root},
 		Opener:  osfs.Opener{},
 		Policy:  defaultPolicy(hunt.Budget{}),
-		Tools:   func(ws workspace.Workspace) []hunt.Primitive { return defaultTools(ws, nil, nil) },
+		Tools:   func(ws workspace.Workspace, ex ext.ExtHost) []hunt.Primitive { return defaultTools(ws, nil, nil) },
 		Context: &contextBuilder{},
 		Session: rec,
 	})

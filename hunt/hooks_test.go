@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"xhunter/ext"
 	"xhunter/git"
 	"xhunter/harness"
 	"xhunter/llm"
@@ -291,7 +292,7 @@ func TestCheckpoint_LogsNoOpWhenNothingWasCommitted(t *testing.T) {
 	}
 }
 
-// 自动检查点只在结构完整点上产生。默认判据是**不可判定**（符号扩展未接入）：那时我们并**没有
+// 自动检查点只在结构完整点上产生。默认判据是**不可判定**（未装配符号能力）：那时我们并**没有
 // 判过**，只是没法判——日志必须这么说，不能报成「未落在结构完整点」（那是把"没法判"说成"判过了
 // 没通过"）。仍然不提交，也不谎报「已创建检查点」。
 func TestCheckpoint_NoAutoCheckpointOffStructuralPoint(t *testing.T) {
@@ -330,7 +331,7 @@ func TestCheckpoint_StructuralFailDoesNotCommit(t *testing.T) {
 		Bounty: Bounty{ID: "b", Task: "t", Repo: gitRepoRef()},
 		Git:    g, Policy: allowAll{}, Sink: sink,
 	})
-	s.structuralJudge = func() structuralVerdict { return structuralFail }
+	s.ext = &fakeExt{parses: []ext.ParseVerdict{ext.ParseBroken}}
 	s.ops = []WriteOp{{File: "a.txt"}}
 	s.checkpoint(context.Background(), &harness.Turn{No: 1})
 
@@ -357,7 +358,7 @@ func TestCheckpoint_StructuralPassCommits(t *testing.T) {
 		Bounty: Bounty{ID: "b", Task: "t", Repo: gitRepoRef()},
 		Git:    g, Policy: allowAll{}, Sink: sink,
 	})
-	s.structuralJudge = func() structuralVerdict { return structuralPass }
+	s.ext = &fakeExt{parses: []ext.ParseVerdict{ext.ParseOK}}
 	s.ops = []WriteOp{{File: "a.txt"}}
 	s.checkpoint(context.Background(), &harness.Turn{No: 1})
 
@@ -464,10 +465,10 @@ func TestCheckpoint_StreakLimitConvergesAsEnvError(t *testing.T) {
 		Opener: stubOpener{},
 		Policy: allowAll{},
 		Sink:   &captureSink{},
-		Tools:  func(workspace.Workspace) []Primitive { return []Primitive{&writingPrim{}} },
+		Tools:  func(workspace.Workspace, ext.ExtHost) []Primitive { return []Primitive{&writingPrim{}} },
+		// 判据设为"通过"，让本轮改动真的走到提交（判不了时会直接跳过提交）。
+		Ext: extFactory(&fakeExt{parses: []ext.ParseVerdict{ext.ParseOK}}),
 	})
-	// 判据设为"通过"，让本轮改动真的走到提交（默认不可判定会直接跳过提交）。
-	s.structuralJudge = func() structuralVerdict { return structuralPass }
 
 	provider := &stubProvider{turns: []turnScript{
 		{calls: []llm.ToolCall{call("c1", "writer", `{}`)}},
@@ -508,7 +509,7 @@ func TestCheckpoint_SingleFailureSelfHeals(t *testing.T) {
 		Bounty: Bounty{ID: "b", Task: "t", Repo: gitRepoRef()},
 		Git:    g, Policy: allowAll{}, Sink: sink,
 	})
-	s.structuralJudge = func() structuralVerdict { return structuralPass }
+	s.ext = &fakeExt{parses: []ext.ParseVerdict{ext.ParseOK}}
 	s.ops = []WriteOp{{File: "a.txt"}}
 
 	s.checkpoint(context.Background(), &harness.Turn{No: 1}) // 失败
@@ -535,7 +536,7 @@ func TestCheckpoint_SuccessResetsStreak(t *testing.T) {
 		Git:    &scriptedCommitGit{fail: []bool{true, true, false, true, true, false}},
 		Policy: allowAll{}, Sink: &captureSink{},
 	})
-	s.structuralJudge = func() structuralVerdict { return structuralPass }
+	s.ext = &fakeExt{parses: []ext.ParseVerdict{ext.ParseOK}}
 	s.ops = []WriteOp{{File: "a.txt"}}
 	for n := 1; n <= 6; n++ {
 		s.checkpoint(context.Background(), &harness.Turn{No: n})

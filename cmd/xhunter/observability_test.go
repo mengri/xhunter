@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"xhunter/ext"
 	"xhunter/git"
 	"xhunter/harness"
 	"xhunter/hunt"
@@ -306,7 +307,7 @@ func TestDefaultAssembly_EffectiveConfigPrimitivesMatchToolFace(t *testing.T) {
 			ID: "b1", Task: "改点什么",
 			Repo: git.RepoRef{Remote: "r", Branch: "b", BaseCommit: "0123456789abcdef"},
 		},
-		Tools: func(ws workspace.Workspace) []hunt.Primitive {
+		Tools: func(ws workspace.Workspace, ex ext.ExtHost) []hunt.Primitive {
 			return defaultTools(ws, nil, nil) // 与 huntCmd 同一份真实清单
 		},
 		Policy:        defaultPolicy(hunt.Budget{}),

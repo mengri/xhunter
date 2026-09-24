@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode"
 
+	"xhunter/ext"
 	"xhunter/harness"
 	"xhunter/llm"
 	"xhunter/workspace"
@@ -90,9 +91,19 @@ func (s *Session) Prepare(ctx context.Context, run *harness.Run) error {
 	// 材料位置随工作区就绪而定：绑定失败只降级、不阻断（材料丢了最多是崩溃后从头跑）。
 	s.openRecorder(root)
 
+	// 符号能力宿主：结构判据与符号原语**共用同一份实例**（见 ExtHostFactory）。未装配即
+	// "本次没有符号能力"——那是一条可以带着跑的事实（结构判据落成不可判定、符号原语给
+	// 结构化错误），不是装配缺陷。
+	s.ext = ext.Unimplemented{}
+	if s.cfg.Ext != nil {
+		if host := s.cfg.Ext(storage); host != nil {
+			s.ext = host
+		}
+	}
+
 	// 工作区就绪后构造原语并定格工具面：原语读文件需要工作区，声明与执行因此同源。
 	// 工具面自身不成立也算装配缺件——错误在首轮推理之前暴露，而不是等供应商拒收请求。
-	if err := s.buildTools(storage); err != nil {
+	if err := s.buildTools(storage, s.ext); err != nil {
 		return fmt.Errorf("工具面不成立：%w", err)
 	}
 	run.Tools = s.decls()
@@ -503,8 +514,8 @@ const (
 //   - 落在**结构完整点**上（语法自洽，改动封闭在符号区间内）。
 //
 // 刻意**没有「按轮提交」这一档**：语法残缺的中间态钉在分支上价值很低——残次品不是可用的
-// 检查点，还会污染提交链。判据**不可判定时不提交**（符号扩展未接入）：那时我们并没有判过，
-// 只是没法判——宁可不留检查点，也不留残次品；收尾的交付提交照常，改动不会因此丢失。
+// 检查点，还会污染提交链。判据**不可判定时不提交**（符号能力不可用，或这份文件判不了）：那时我们
+// 并没有判过，只是没法判——宁可不留检查点，也不留残次品；收尾的交付提交照常，改动不会因此丢失。
 //
 // 单次失败不终止：提交是累积的，下一轮会把所有未提交的改动一并带上。
 func (s *Session) checkpoint(ctx context.Context, turn *harness.Turn) {
@@ -525,7 +536,7 @@ func (s *Session) checkpoint(ctx context.Context, turn *harness.Turn) {
 			s.logf("info", "本轮不产生自动检查点：门禁尚未通过", "turn", turn.No)
 			return
 		}
-		switch s.structuralJudge() {
+		switch s.judgeStructural(ctx) {
 		case structuralPass:
 			// 落在结构完整点上：照常提交。
 		case structuralFail:
@@ -533,8 +544,8 @@ func (s *Session) checkpoint(ctx context.Context, turn *harness.Turn) {
 			s.logf("info", "本轮不产生自动检查点：未落在结构完整点", "turn", turn.No)
 			return
 		case structuralUndecidable:
-			// **没法判**（符号扩展未接入）——不等于"没通过"。不提交，并如实上报（每次运行最多一条）。
-			s.logf("info", "本轮不产生自动检查点：结构判据不可判定（符号扩展未接入）", "turn", turn.No)
+			// **没法判**（符号能力不可用、或这份文件判不了）——不等于"没通过"。不提交，并如实上报。
+			s.logf("info", "本轮不产生自动检查点：结构判据不可判定（符号能力不可用或该语言未注册）", "turn", turn.No)
 			s.emitStructuralUndecidableOnce()
 			return
 		}
@@ -553,6 +564,9 @@ func (s *Session) checkpoint(ctx context.Context, turn *harness.Turn) {
 	s.commitFailStreak = 0
 	s.commitLastErr = nil
 	s.commit = &cm
+	// 待提交改动已随这次提交进分支：结构判据下一轮从新的起点算起（判据问的是"这批改动"，
+	// 不是"这一路走来的每一笔"）。
+	s.pendingFrom = len(s.ops)
 	if cm.Created {
 		s.logf("info", "已创建检查点", "turn", turn.No, "model_requested", requested)
 	} else {
@@ -563,8 +577,9 @@ func (s *Session) checkpoint(ctx context.Context, turn *harness.Turn) {
 
 // structuralVerdict 是结构判据（自动检查点的唯一判据）的三态结果。
 //
-// 三态是刻意的：**"不可判定"不等于"没通过"**。判据由符号扩展提供（「语法自洽（ParseOK）＋
-// 改动区间封闭在某个符号内」）；扩展未接入时我们并不知道改动是否落在结构完整点上，只是**没法判**。
+// 三态是刻意的：**"不可判定"不等于"没通过"**。判据由符号能力提供（「语法自洽（ParseOK）＋
+// 改动区间封闭在某个符号内」）；能力不可用或语言未注册时我们并不知道改动是否落在结构完整点上，
+// 只是**没法判**。
 // 把两者混为一谈，接真判据的人会以为这段已工作，运维也无从区分两种沉默。
 type structuralVerdict int
 
@@ -573,9 +588,96 @@ const (
 	structuralPass structuralVerdict = iota
 	// structuralFail：判据可用、但本轮改动未落在结构完整点上 → 不提交。
 	structuralFail
-	// structuralUndecidable：**没法判**（符号扩展未接入）→ 不提交，并如实上报。
+	// structuralUndecidable：**没法判**（符号能力不可用、或这份文件判不了）→ 不提交，并如实上报。
 	structuralUndecidable
 )
+
+// judgeStructural 给出结构判据的三态：自动检查点的**唯一**判据。
+//
+// 两条判据分工明确，取样时点也不同，这是刻意的：
+//
+//   - 判据①「语法完整」在**判定时**取：检查点要钉的正是此刻的内容，所以要问"现在这些文件
+//     语法完整吗"，而不是"改到一半时完不完整"；
+//   - 判据②「改动封闭在某个符号内」在**写盘前**就地判过、记在 opEnclose 里：字节区间只有
+//     在它产生的那一瞬才与文件内容对齐，事后再问，同一文件内的后续编辑已经把区间平移了。
+//
+// 取样范围是**尚未提交的改动**（s.ops[pendingFrom:]）：检查点提交的是这一批，判据也就只
+// 问这一批。三态的收敛次序固定——**已判出的否定结论优先于"没判过"**：一处改动确实越界了，
+// 那比"另一处没法判"更该决定结论；两条都没有异议才算通过。
+func (s *Session) judgeStructural(ctx context.Context) structuralVerdict {
+	if s.ext == nil {
+		return structuralUndecidable
+	}
+	pending := s.ops[s.pendingFrom:]
+	if len(pending) == 0 {
+		// 没有待提交的改动：没有可反对的东西。判据②无从取样，判据①也无处下手——
+		// 这趟提交会是一次空操作，用不着拿判据去拦。
+		return structuralPass
+	}
+
+	verdict := structuralPass
+
+	// 判据②：写盘前就地判下的封闭性结论（与 s.ops 平行，起点同为 pendingFrom）。
+	for i := s.pendingFrom; i < len(s.ops) && i < len(s.opEnclose); i++ {
+		switch s.opEnclose[i] {
+		case structuralFail:
+			return structuralFail
+		case structuralUndecidable:
+			verdict = structuralUndecidable
+		}
+	}
+
+	// 判据①：此刻这些文件语法完整吗。同一文件只问一次——问的是文件，不是改动笔数。
+	seen := map[string]bool{}
+	for _, op := range pending {
+		if seen[op.File] {
+			continue
+		}
+		seen[op.File] = true
+		switch s.ext.Parse(ctx, op.File) {
+		case ext.ParseBroken:
+			return structuralFail
+		case ext.ParseUnknown:
+			verdict = structuralUndecidable
+		}
+	}
+	return verdict
+}
+
+// judgeEnclosure 在**写盘之前**就地判一次"这次改动是否封闭在某个符号内"（判据②），
+// 与编辑计划一一对应。
+//
+// 判不出来不阻断写盘：判据只决定"值不值得在这里留检查点"，不决定"能不能改"。
+func (s *Session) judgeEnclosure(ctx context.Context, edits []workspace.FileEdit) []structuralVerdict {
+	out := make([]structuralVerdict, len(edits))
+	if s.ext == nil {
+		for i := range out {
+			out[i] = structuralUndecidable
+		}
+		return out
+	}
+	for i, e := range edits {
+		if e.ByteRange == (workspace.ByteRange{}) {
+			// 整文件写入：**文件本身就是单位**，没有"封闭在哪个符号内"可言——判据②对它不适用，
+			// 由判据①（写完之后语法完整）单独覆盖。把新建文件判成"不封闭"会让新建文件
+			// 永远留不下检查点。
+			out[i] = structuralPass
+			continue
+		}
+		_, found, err := s.ext.Enclose(ctx, ext.EncloseRequest{File: e.File, ByteRange: e.ByteRange})
+		switch {
+		case err != nil:
+			// 后端这次判不了（语言未注册、读不到、语法残缺）→ 没判过。
+			out[i] = structuralUndecidable
+		case !found:
+			// 判过、确实没有声明包含它：改动横跨了符号边界，或落在声明之间。
+			out[i] = structuralFail
+		default:
+			out[i] = structuralPass
+		}
+	}
+	return out
+}
 
 // emitStructuralUndecidableOnce 上报一次「结构判据不可判定」——**每次运行最多一条**：这是运行级的
 // 常量事实，不是每轮新闻；每轮一条会把事件流刷满（与 usage 降级同一取舍）。只在真的要用判据时
@@ -591,7 +693,7 @@ func (s *Session) emitStructuralUndecidableOnce() {
 	_ = s.cfg.Sink.Emit(ExternalEvent{Type: "degraded", Payload: map[string]any{
 		"scope":   "checkpoint",
 		"subject": "structural",
-		"reason":  "结构判据不可判定（符号扩展未接入），本轮不产生自动检查点",
+		"reason":  "结构判据不可判定（符号能力不可用或该语言未注册），本轮不产生自动检查点",
 	}})
 }
 

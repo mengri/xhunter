@@ -47,12 +47,14 @@
 
 | 原语 | 落点 | 行为 |
 |---|---|---|
-| `symbol_read` / `symbol_edit` / `symbol_rename` | `hunt/symbolic/symbolic.go:73`（实现保留） | **一期未注册**（装配层不交给模型，模型看不到）；随 MS-8 接入后注册，届时能力缺失才返回结构化错误（不可重试） |
-| `check` | `hunt/gate/gate.go:42` | 同上 |
+| `symbol_read` / `symbol_edit` / `symbol_rename` | `hunt/symbolic/symbolic.go` | **已随 MS-8 注册**：能力不可用 / 语言未注册时返回结构化错误（`ext_unavailable` / `language_unregistered`），工具名不撤回、不降级为文本替换 |
+| `check` | `hunt/gate/gate.go` | **已随 MS-5 实现**：跑具名门禁并按清单判据判定；执行器缺失是**可重试**的装配缺件（`gate_unavailable`） |
 
 > 工具面已定格为 **9 + 1**（`cmd/xhunter/primitives.go` 九个原语 ＋ `Session.decls()` 殿后追加 `checkpoint`），与 FR-4.11 一致——**环境能力不决定注册、同一构建内不增减；随能力接入而扩展**：三个符号原语随 MS-8 接回清单（内置语法级后端已接入），`check` 随 MS-5 接上执行器。这条纪律由 `TestDefaultTools_FaceIsFixed`、`TestDefaultTools_FaceIsIdenticalWhetherTheBackendIsAvailable`、`TestDefaultTools_SymbolPrimitivesAreRegistered` 守住。
 >
 > 注：`find` 原列于本表，**已于 2026-09-23 落地**（见 §2.3），现为「已落地」。
+>
+> 本表已无「声明齐备、调用返回 `not_implemented`」的原语（符号三原语随 MS-8、`check` 随 MS-5 落地）；表头与位置保留以兼容既有引用。
 
 ### 1.3 规格在、代码缺（缺口清单）
 
@@ -61,8 +63,8 @@
 | 恢复的轮数 / 预算口径 | `Load` 读回的轮数按**记录条数**算、不取 `turn.no` 最大值（恢复后本趟轮号从 1 **重新起计**，材料里会出现两段都从 1 开始的 `turn` 记录）；**轮数预算不跨恢复续算**（本次轮号重新起计，无累计口径）；token 预算已续算（`Prepare` 补喂 `Restored.Usage` 的输入/输出）。见 §4.3 MS-7 |
 | 上下文压缩 | `contextBuilder` 只有组装（`Assemble`），无水位、无下压 |
 | 门禁全链 | 已落地：`Prepare` 做来源裁决（下发 > 基线 `gates.yml` > 无），`check` 跑具名条目、按清单判据判定；收尾补跑 + 终态裁决 + 检查点抑制均已接线（`hunt/hooks.go`、`hunt/gates.go`） |
-| 符号能力与扩展宿主 | `ext/ext.go` 只有接口，无实现；`hunt/symbolic` 声明不实现 |
-| 结构检查（自动检查点的判据） | `Session.structuralJudge` 默认返回**不可判定**——判据随符号扩展接入；**接入前不产生自动检查点**（不可判定 → 不提交），跳过原因如实进日志与 `degraded`（`scope: checkpoint`） |
+| 符号能力与扩展宿主 | `ext/syntax`（内置语法级后端，进程内、零外部依赖）已实现 `ext.ExtHost`；`hunt/symbolic` 三原语已注册。**待补**：第三方后端的外挂通道（MCP over stdio） |
+| 结构检查（自动检查点的判据） | 已落地：`Session.judgeStructural` 接真判据（① `Parse` 语法完整 ＋ ② `Enclose` 区间封闭，三态收敛）；判不了 → 不提交 ＋ 如实上报（`degraded`，`scope: checkpoint`，每次运行最多一条） |
 | **用量口径（输出明细与缓存写）** | 输入侧已按统一口径落地（见 §2.3）：全部输入含缓存读/写、缓存读为子集。仍未取的：OpenAI 的输出明细（`completion_tokens_details` / `output_tokens_details`：reasoning / audio / accepted·rejected prediction），以及把「缓存写」单列出来（Anthropic 的写溢价 1.25×/2× 目前按普通输入价计） |
 | 差异排除材料目录 | `internal/git/cli/git.go:173` — `Diff`/`Patch` 无 `.xhunter/<session_id>/**` 排除 |
 
@@ -88,7 +90,7 @@
 | 编号 | 状态 | 对应 MS-n | 说明 |
 |---|---|---|---|
 | <a id="fr-1-3b"></a>FR-1.3b（提交连败上限） | 已落地 | MS-4 | 检查点**连续**提交失败达 3 次（包内常量，不留可配字段）→ 本轮结束即收敛 `checkpoint_failed_streak`（退出 1）；成功即归零。用例 `TestCheckpoint_StreakLimitConvergesAsEnvError`、`TestCheckpoint_SuccessResetsStreak` |
-| <a id="fr-1-3d"></a>FR-1.3d（结构检查） | 部分已落地 | MS-4 / MS-9 | 判据三态（`structuralVerdict`）与「不可判定 → 不提交并如实上报」**已落地**（默认 undecidable，发 `degraded` `scope: checkpoint`）；真实判据随符号扩展接入（MS-9）。用例 `TestCheckpoint_NoAutoCheckpointOffStructuralPoint`、`TestCheckpoint_StructuralFailDoesNotCommit`、`TestCheckpoint_StructuralPassCommits` |
+| <a id="fr-1-3d"></a>FR-1.3d（结构检查） | 已落地 | MS-4 / MS-9 | 判据已接真：① **此刻**目标文件语法完整（`ext.ParseVerdict`）；② 改动区间封闭在某个符号内（`ext.Enclose`，在**写盘前**就地判、与 `s.ops` 平行记下）。三态收敛：通过 → 提交；判过未通过 → 不提交（说「未落在结构完整点」）；判不了 → 不提交 ＋ 一条 `degraded`。取样范围是**尚未提交的改动**，整文件写入不适用判据②。用例 `TestStructural_ParseOKFlipCommits`、`TestStructural_IncompleteSyntaxSuppresses`、`TestStructural_UndecidableDoesNotCommit`、`TestStructural_EditOutsideAnySymbolSuppresses`、`TestStructural_CommittedOpsLeaveTheJudgementWindow`、`TestEndToEnd_CheckpointLandsOnCompleteSyntax`、`TestEndToEnd_IncompleteSyntaxSuppressesCheckpoint` |
 | <a id="fr-1-10"></a>FR-1.10（Bounty 生成器 / 本地驱动） | 已落地 | MS-12 | `xhunter run --repo <path> --task <text> [--out <path>]`：**只读**探测本地仓库事实（远端 / 基线 HEAD / 任务分支 / 门禁候选）→ 生成 Bounty（`--out` 可选出清单）→ 用**同一份装配**执行一次 Hunt；工作区由 Xhunter clone 到临时目录，用户当前仓库只被只读探测、不受影响。用例 `TestRunCmd_ClonesIntoIsolatedWorkspace`、`TestRunCmd_ProbeIsReadOnly`、`TestRunCmd_MissingRepoFlag`、`TestRunCmd_RepoPathMissing`、`TestRunCmd_NotAGitRepo`、`TestRunCmd_NoRemote`、`TestRunCmd_EmptyRepo`、`TestEndToEnd_LocalRunDrivesBountyFromRepo` |
 | <a id="fr-1-11"></a>FR-1.11①/②（流看门狗 / 提交连败提前收敛） | 已落地 | MS-12（①）/ MS-4（②） | ①接收段不活动超时：`harness.Config.StreamIdleTimeout`（**0 = 取默认 120s；正数 = 不活动上界；负数 = 关闭看门狗**——关闭只在程序内可达、不暴露给部署侧）；相邻两事件之间（含首事件之前）静默超上界即**先落终态、再 `Cancel()`** → 环境错误（退出 1），不进入轮边界。用例 `TestWatchdog_IdleStreamCancelsAsEnvError`、`TestWatchdog_TimeoutCannotBeNoToolCall`、`TestWatchdog_ActivityResetsTimer`、`TestWatchdog_WaitsForFirstEvent`、`TestWatchdog_DisabledWhenNegative`、`TestWatchdog_CancelOutranksTimeout`、`TestWatchdog_TimeoutStopsBeforeOnTurn`、`TestEndToEnd_IdleStreamConvergesToEnvError`、`TestConfigSnapshot_StreamIdleTimeoutFollowsEnv`（部署事实 → 装配 → `config_snapshot` 真值链）；②见 FR-1.3b（已落地） |
 | <a id="fr-2-2"></a>FR-2.2（内容检索 `find`） | 已落地 | MS-1 | 2026-09-23 落地（见 §2.3） |
@@ -249,10 +251,10 @@
 | <a id="ia-11-5"></a>IA-11.5 | 已落地 | `TestCommit_RejectsNonFastForward` | — | — |
 | <a id="ia-11-6"></a>IA-11.6 | 已落地 | `TestDiff_ListsFilesChangedSinceBaseline`、`TestPatch_AppliesCleanlyToBaseline`、`TestDiff_ExcludesMaterialDirButKeepsSkillsDraft`、`TestDiff_NoMaterialDirKeepsEverything`、`TestEndToEnd_LocalRunProducesDeliveryCommit` | MS-6 | `Diff`/`Patch` 按 `RepoRef.MaterialDir` 排除本次会话材料目录，**同目录下其他路径（如 `skills.draft/**`）保留**；`MaterialDir` 为空时不加排除 |
 | <a id="ia-11-7"></a>IA-11.7 | 已落地 | `TestClean_RemovesWorktreeAndIsIdempotent` | — | — |
-| <a id="ia-11-8"></a>IA-11.8 | 已落地 | `TestWiring_PrepareBaselineRunsBeforeAnyTool`、`TestCheckpoint_CommitOnlyAtTurnBoundaryAndFinalize`、`TestDefaultTools_HasNoGitPrimitive` | MS-4 | `PrepareBaseline` 是第一个动作（先于 Open / 构造原语 / 构造正文）；Commit 只在轮边界与收尾；工具面不含 git 原语（类型级证据：工厂入参只有 `workspace.Workspace`、`Primitive` 方法集不涉 `git.GitWorktree`） |
+| <a id="ia-11-8"></a>IA-11.8 | 已落地 | `TestWiring_PrepareBaselineRunsBeforeAnyTool`、`TestCheckpoint_CommitOnlyAtTurnBoundaryAndFinalize`、`TestDefaultTools_HasNoGitPrimitive` | MS-4 | `PrepareBaseline` 是第一个动作（先于 Open / 构造原语 / 构造正文）；Commit 只在轮边界与收尾；工具面不含 git 原语（类型级证据：工厂入参只有 `workspace.Workspace` 与 `ext.ExtHost`、`Primitive` 方法集不涉 `git.GitWorktree`） |
 | <a id="ia-11-9"></a>IA-11.9 | 已落地 | `TestCheckpoint_SingleFailureSelfHeals`、`TestCheckpoint_StreakLimitConvergesAsEnvError`、`TestCheckpoint_SuccessResetsStreak` | MS-4 | 自愈（单次失败只记 warn、下一轮重提）＋ 连败上限（连续 3 次 → `checkpoint_failed_streak`，退出 1） |
 | <a id="ia-11-10"></a>IA-11.10 | 已落地 | `TestCheckpoint_CommitsOnlyThisTurnsChanges` | MS-4 | 第 N 轮的检查点提交发生在第 N 轮工具之后、第 N+1 轮工具之前；末轮未落检查点的改动由收尾交付提交带上（交付口径） |
-| <a id="ia-11-11"></a>IA-11.11 | 已落地 | `TestCheckpoint_NoAutoCheckpointOffStructuralPoint`、`TestCheckpoint_StructuralFailDoesNotCommit`、`TestCheckpoint_StructuralPassCommits`、`TestCheckpoint_UndecidableReportsDegradedOnce`、`TestCheckpoint_LogsNoOpWhenNothingWasCommitted` | MS-4 / MS-9 | 三态（pass/fail/undecidable）与不可判定如实上报已落地；真实判据随符号扩展接入（MS-9） |
+| <a id="ia-11-11"></a>IA-11.11 | 已落地 | `TestCheckpoint_NoAutoCheckpointOffStructuralPoint`、`TestCheckpoint_StructuralFailDoesNotCommit`、`TestCheckpoint_StructuralPassCommits`、`TestCheckpoint_UndecidableReportsDegradedOnce`、`TestCheckpoint_LogsNoOpWhenNothingWasCommitted`、`TestStructural_ParseOKFlipCommits`、`TestStructural_IncompleteSyntaxSuppresses`、`TestStructural_UndecidableDoesNotCommit` | MS-4 / MS-9 | 三态（pass/fail/undecidable）与不可判定如实上报已落地；真实判据（MS-9）已接 `ext.ExtHost` 的 `Parse` / `Enclose` |
 | <a id="ia-11-12"></a>IA-11.12 | 已落地 | — | MS-5 | 门禁驱动检查点：通过 → 本轮必提交；未通过 → 抑制后续自动检查点（优先于结构判据）。用例 `TestCheckpoint_GateFailureSuppressesAutoCheckpoint`、`TestCheckpoint_WithoutGateFailureAutoCheckpointStillCommits`、`TestCheck_PassedGateRequestsCheckpoint`、`TestCheck_FailedGateDoesNotRequestCheckpoint` |
 | <a id="ia-11-13"></a>IA-11.13 | 已落地 | `TestCheckpoint_ModelRequestIsConsumedOnceAndSkipsEmptyCommit`、`TestCheckpointMessage_Composition`、`TestSanitizeIntent` | MS-4 | 一次请求只兑现一次（重复请求不覆盖首次理由、消费后意图清空）；无改动不产生空提交但意图照样消费；提交信息由执行体合成（前缀/分隔符固定，模型改不了） |
 | <a id="ia-12-1"></a>IA-12.1 | 已落地 | `TestWiring_SatisfiesContracts` | — | — |
@@ -278,8 +280,8 @@
 | <a id="l2-事件通道"></a>L2-事件通道健康 | 已落地 | MS-2 | `OnTurn` 入口复查 `Sink.Failed()`：通道已断则本轮零工具执行，收敛 `event_channel_failed`（退出 1）。用例 `TestOnTurn_StopsBeforeWorkWhenChannelAlreadyFailed` |
 | <a id="l2-压缩"></a>L2-压缩 | 待接入 | MS-11 | `ContextBuilder` 内无压缩；**契约已定义**（D4：`CompactionConfig` ＋ `context_compacted` 载荷），实现待 MS-11 |
 | <a id="l4-流看门狗"></a>L4-流看门狗 | 已落地 | MS-12 | 接收段不活动超时随 MS-12 接入：相邻两事件之间（含首事件之前）静默超上界 → **先落终态、再 `Cancel()`**，收敛为 `stream_idle_timeout`（环境错误，退出 1）；心跳不算活动、取消优先于超时、超时结构上不落 `no_tool_call`。取值口径：`StreamIdleTimeout` **0 = 取默认 120s / 正数 = 不活动上界 / 负数 = 关闭看门狗**（关闭不暴露给部署侧）。用例 `TestWatchdog_IdleStreamCancelsAsEnvError`、`TestWatchdog_TimeoutCannotBeNoToolCall`、`TestWatchdog_CancelOutranksTimeout`、`TestEndToEnd_IdleStreamConvergesToEnvError` |
-| <a id="l6-检查点"></a>L6-检查点决策 | 部分待接入 | MS-4 / MS-5 / MS-9 | 模型显式请求 ＋ 门禁驱动（MS-5 已落地）＋ 收尾已落地；结构判据（MS-9）待接入 |
-| <a id="l6-结构检查"></a>L6-结构检查 | 待接入 | MS-9 | 判据未接入；「不可判定 → 不提交」已落地 |
+| <a id="l6-检查点"></a>L6-检查点决策 | 已落地 | MS-4 / MS-5 / MS-9 | 模型显式请求 ＋ 门禁驱动（MS-5）＋ 结构判据（MS-9）＋ 收尾交付提交，四条触发链已补全 |
+| <a id="l6-结构检查"></a>L6-结构检查 | 已落地 | MS-9 | 判据已接入（`judgeStructural`）：① 此刻语法完整 ② 改动封闭在符号内；三态收敛，判不了即不提交并如实上报。用例 `TestStructural_*`（8 条）、`TestHost_Parse*` / `TestHost_Enclose*`（`ext/syntax`）、`TestEndToEnd_CheckpointLandsOnCompleteSyntax` |
 | <a id="l6-事件通道复查"></a>L6-事件通道复查 | 已落地 | MS-2 | 轮末守卫复查（取消之后、预算之前）：本轮发出时断则不再进入下一轮，收敛 `event_channel_failed`（退出 1）。用例 `TestOnTurn_StopsAfterTurnWhenChannelFailsDuringTurn`、`TestOnTurn_ChannelFailureDoesNotOverrideCancellation` |
 | <a id="l6-提交连败"></a>L6-提交连败复查 | 已落地 | MS-4 | 连续 3 次提交失败 → 本轮结束即收敛为环境错误（退出 1），不跑完剩余轮次。用例 `TestCheckpoint_StreakLimitConvergesAsEnvError` |
 | <a id="l7-gates"></a>L7-gates 补跑 | 已落地 | MS-5 | 收尾补跑**未跑过**的 `required` 门禁（预算已耗尽则不补跑、按未运行判失败）；执行失败记 degraded(`scope: gate`) 并按未运行计入终态。用例 `TestFinalize_BackfillRunsOnlyRequiredGatesThatNeverRan`、`TestFinalize_RequiredGateNeverRunFailsTheDelivery`、`TestFinalize_RequiredGateFailureFailsTheDelivery`、`TestFinalize_OptionalGateDoesNotRequireEvidence` |
@@ -330,7 +332,7 @@
 | ~~事件通道健康复查~~（MS-2） | **已落地**（2026-09-23）：`EventSink` 加自述健康状态 `Failed()`（覆盖事件与心跳两条写路径），`OnTurn` 轮前（L2）与轮末（L6）复查出口断线即收敛 `event_channel_failed`（退出 1）——早停，不跑完剩余轮次；取消优先；进程末尾 `sink.Failed()` 收口保留为兜底。用例 `TestOnTurn_StopsBeforeWorkWhenChannelAlreadyFailed`、`TestOnTurn_StopsAfterTurnWhenChannelFailsDuringTurn`、`TestOnTurn_ChannelFailureDoesNotOverrideCancellation`（`hunt`）、`TestEventSink_FailedCoversHeartbeatWrites`（`cmd/xhunter`），并扩 `TestEndToEnd_BrokenEventChannelIsEnvError` |
 | ~~`unverified` 采集（FR-6.4 第三类）~~（MS-2） | **已落地**（2026-09-23）：新增固定小节 `## 未验证`（小节名的唯一来源是常量，解析与内核条款同改）；`Declared` 加 `Unverified`、`sectionTarget` 加第三分支、`AppendDeclared` 一并登记；结果文件加 `unverified`（三态，未提供 → `null`）。**只陈述、不判定**——它不改变终态（只有 `needs` 非空才收敛 `blocked`）。用例 `TestParseDeclared_ThreeSectionsAreSeparated`、`TestParseDeclared_UnverifiedAloneIsNotNeeds`、`TestParseDeclared_UnverifiedThreeState`、`TestFinalize_UnverifiedDoesNotBlock`（`hunt`）、`TestResultFile_UnverifiedIsThreeState`（`cmd/xhunter`） |
 | ~~MS-2 收口验收（纯 NDJSON ＋ 事件序列 ＋ 增量语义 ＋ 插件失败）~~ | **已落地**（2026-09-23）：`TestEventSink_StdoutIsPureNDJSON`（stdout 逐行合法 JSON ＋ 信封四字段 ＋ `ts` RFC3339）、`TestEndToEnd_EventSequenceIsComplete`（首尾、`tool_call`↔`tool_result` 配对、`deliverable` 在 `hunt_end` 前）、`TestPolicy_ChargeReceivesIncrements`（`Policy.Charge` 收增量、非增长轮不上报）、`TestPrepare_PluginFailureConvergesAsEnvError`（插件失败 → `prepare_failed`/退出 1）。MS-2 由此收口 |
-| ~~结构判据三态与"不可判定"如实上报~~（MS-4） | **已落地**（2026-09-23）：`structuralPoint() bool`（恒 false）换成三态 `structuralVerdict`（pass/fail/undecidable）；默认实现是 **undecidable**（符号扩展未接入——我们没**判过**，不是"没通过"），日志如实说「结构判据不可判定」、并发一条 `degraded`（`scope: checkpoint`，每次运行最多一条）；pass 照常提交、fail 说「未落在结构完整点」。判据留了**包内可替换位置**（`Session.structuralJudge`，未加公开配置字段）。用例 `TestCheckpoint_NoAutoCheckpointOffStructuralPoint`、`TestCheckpoint_StructuralFailDoesNotCommit`、`TestCheckpoint_StructuralPassCommits`、`TestCheckpoint_UndecidableReportsDegradedOnce` |
+| ~~结构判据三态与"不可判定"如实上报~~（MS-4） | **已落地**（2026-09-23）：`structuralPoint() bool`（恒 false）换成三态 `structuralVerdict`（pass/fail/undecidable）；默认实现是 **undecidable**（符号扩展未接入——我们没**判过**，不是"没通过"），日志如实说「结构判据不可判定」、并发一条 `degraded`（`scope: checkpoint`，每次运行最多一条）；pass 照常提交、fail 说「未落在结构完整点」。判据当时留了**包内可替换位置**（`Session.structuralJudge`，未加公开配置字段）——**已于 2026-09-25 随 MS-9 撤掉**，换成真判据 `Session.judgeStructural`（见 §2.3）。用例 `TestCheckpoint_NoAutoCheckpointOffStructuralPoint`、`TestCheckpoint_StructuralFailDoesNotCommit`、`TestCheckpoint_StructuralPassCommits`、`TestCheckpoint_UndecidableReportsDegradedOnce` |
 | ~~检查点连败上限~~（MS-4 / FR-1.3b / IA-11.9 / AC-22） | **已落地**（2026-09-23）：`Session` 记**连续**提交失败数（成功即归零，含 `Created=false` 的空操作；只统计阶段性检查点提交，交付提交不计入）；达包内常量 `checkpointFailStreakLimit=3` 时由 `OnTurn` 守卫统一收敛为 `checkpoint_failed_streak`（退出 1），本轮结束即收敛、不跑完剩余轮次。守卫次序固定为「取消 → 通道 → 提交连败 → 预算」。用例 `TestCheckpoint_StreakLimitConvergesAsEnvError`、`TestCheckpoint_SingleFailureSelfHeals`、`TestCheckpoint_SuccessResetsStreak` |
 | ~~检查点时序、不可见性与意图兑现断言~~（MS-4 / IA-11.8 / IA-11.10 / IA-11.13） | **已落地**（2026-09-23）：IA-11.8（`TestWiring_PrepareBaselineRunsBeforeAnyTool`、`TestCheckpoint_CommitOnlyAtTurnBoundaryAndFinalize`、`TestDefaultTools_HasNoGitPrimitive`——git 不可见性用类型级证据）、IA-11.10（`TestCheckpoint_CommitsOnlyThisTurnsChanges`）、IA-11.13（`TestCheckpoint_ModelRequestIsConsumedOnceAndSkipsEmptyCommit`、`TestCheckpointMessage_Composition`）。MS-4 由此收口 |
 | ~~会话材料落盘 ＋ Recorder 接口一次加齐~~（MS-6） | **部分已落地**（2026-09-23）：`hunt.SessionRecorder` 方法集**一次加齐**（`Open` / `RecordTurn` / `RecordOp` / `RecordUsage` / `Ops` / `Snapshot`）；`cmd/xhunter` 把材料落成 JSONL（`.xhunter/<session_id>/session.jsonl`，首行 meta 带 `schema_version`，追加写、周期 flush），中立的 `llm.Message`/`ToolCall`/`ToolResult` 与 `harness.Turn`/`hunt.WriteOp` 直接复用为记录形状（不另写平行 DTO）。用例 `TestSave_MaterialLandsUnderSessionDirWithSchemaVersion`、`TestMaterial_LoadRejectsUnknownSchemaVersion`（`cmd`）、`TestRecorder_RecordsOpsAndUsageFromTheSession`、`TestRecorder_OpenFailureDegradesWithoutFailingPrepare`、`TestSnapshot_FailureDoesNotBlockTheRun`（`hunt`）。**余**：恢复（MS-7） |
@@ -342,6 +344,7 @@
 | ~~交付 diff/patch 排除会话材料目录~~（IA-11.6） | **已落地**（2026-09-23）：`git.RepoRef` 加 `MaterialDir`（本次运行的仓库事实）；`GitWorktree.Diff`/`Patch` 改收 `RepoRef`，材料目录非空时加 `:(exclude)` pathspec——**只排本次会话的材料目录**，`.xhunter/` 下其它路径（如 `skills.draft/**`）是交付内容、照进 diff。材料目录路径唯一来源 `materialDirFor`（与落盘同源）；e2e 的临时过滤 `nonMaterial` 撤掉、改成直接断言交付清单不含材料。用例 `TestDiff_ExcludesMaterialDirButKeepsSkillsDraft`、`TestDiff_NoMaterialDirKeepsEverything`、`TestEndToEnd_LocalRunProducesDeliveryCommit` |
 | ~~一期移除符号操作（工具面口径变更）~~ | **已随 MS-8 反转**（2026-09-24）：装配层把 `symbol_read` / `symbol_edit` / `symbol_rename` 接回工具面（符号后端已接入）（**一期不注册**，模型看不到；`hunt/symbolic` 实现保留，随 MS-8 恢复注册）；工具面定格为 **6 + 1**（`read`/`write`/`edit`/`find`/`glob`/`check` ＋ 殿后 `checkpoint`；`check` 一期注册但返回 `not_implemented`，是刻意的不对称）。**「工具面恒定」由双轴改单轴**——环境能力不决定注册、同一构建内不增减，**随能力接入而扩展**；代价如实记：跨构建版本工具名集合会变，「前缀与 schema 稳定（缓存友好）」只在同一构建内成立。用例 `TestDefaultTools_FaceIsFixed`、`TestDefaultTools_FaceIsIdenticalWhetherTheBackendIsAvailable` |
 | ~~流看门狗（FR-1.11① / L4-流看门狗）~~（MS-12） | **已落地**（2026-09-24）：`harness` 接收段用 `select` + `time.Timer` 落看门狗——相邻两事件之间（含首事件之前）静默超 `StreamIdleTimeout` 即收敛。默认值唯一来源 `defaultStreamIdleTimeout`（120s）；**0 = 取默认、负数 = 关闭看门狗、正数 = 上界**。**超时先落终态、再 `sess.Cancel()`**：返回时 `run.Terminal != nil`，结构上不可能落进 `no_tool_call`；取消优先于超时（两路同时就绪时超时分支再复查 ctx）。部署事实 `XHUNTER_STREAM_IDLE_TIMEOUT`（Go duration；未设取默认，非法即启动期退出 1；"关闭"只程序内可达）。生效值经装配层注入 `AssemblyFacts.StreamIdleTimeoutMS` 进 `config_snapshot.stream_idle_timeout_ms`（0 = 不限/关闭）。用例 `TestWatchdog_*`（7 条）、`TestDefaultConfig_StreamIdleTimeoutDefaultsTo120s`、`TestConfig_ZeroIdleTimeoutTakesDefaultNegativeStays`、`TestParseStreamIdleTimeout_DefaultOverrideAndRejects`、`TestConfigSnapshot_CarriesStreamIdleTimeout`、`TestEndToEnd_IdleStreamConvergesToEnvError` |
+| ~~结构检查判据接入（FR-1.3d / IA-11.11 / L6-结构检查）~~（MS-9） | **已落地**（2026-09-25）：`Session.structuralJudge`（包内可替换位置）撤掉，换成真判据 `Session.judgeStructural`——判据①「此刻语法完整」在**判定时**取（`ext.ExtHost.Parse`），判据②「改动封闭在某个符号内」在**写盘前**就地取、记在与 `s.ops` 平行的 `opEnclose`（字节区间只有在它产生的那一瞬才与文件内容对齐，事后重问会被同文件后续编辑平移）。取样范围是**尚未提交的改动**（`pendingFrom` 起点，一次成功提交即推进——否则一次早年的越界编辑会永久关掉自动检查点）；整文件写入（含新建）不适用判据②，由判据①单独覆盖。宿主由装配层经 `hunt.ExtHostFactory` 注入、与符号原语**共用同一份实例**（`hunt.ToolFactory` 随之加 `ext.ExtHost` 入参）。`ext` 契约加 `Parse` / `Enclose` 与三态 `ParseVerdict`；`ext/syntax` 用 `go/parser` 实现（未注册语言一律"判不了"，不谎报"不封闭"）。触发链补全：门禁通过 > 模型显式 > 结构检查通过 > 不提交。用例 `TestStructural_ParseOKFlipCommits`、`TestStructural_IncompleteSyntaxSuppresses`、`TestStructural_UndecidableDoesNotCommit`、`TestStructural_EditOutsideAnySymbolSuppresses`、`TestStructural_WholeFileWriteIsNotJudgedAsUnenclosed`、`TestStructural_CommittedOpsLeaveTheJudgementWindow`、`TestStructural_ParseIsAskedOncePerFile`、`TestStructural_UndecidableDoesNotBlockWriting`（`hunt`）、`TestHost_Parse*` / `TestHost_Enclose*`（`ext/syntax`，10 条）、`TestEndToEnd_CheckpointLandsOnCompleteSyntax`、`TestEndToEnd_IncompleteSyntaxSuppressesCheckpoint`（`cmd/xhunter`）。MS-9 由此收口 |
 | ~~本地驱动（FR-1.10 / usage§1.2·Bounty生成器）~~（MS-12） | **已落地**（2026-09-24）：新增 `xhunter run --repo <path> --task <text> [--out <path>]`——只读探测（`internal/git/cli.ProbeLocalRepo`，仅 `rev-parse`/`remote`/`cat-file -e`，绝不 checkout/add/commit/fetch/push；门禁候选从基线 commit 读 `HEAD:gates.yml`）→ 组装 Bounty（分支/材料目录/预算复用既有唯一来源 `branchFor`/`materialDirFor`/`parseBudget`）→ **经同一条 `executeHunt`** 执行一次 Hunt。从 `huntCmd` 抽出 `executeHunt` 后两条驱动路径共用一份装配（零行为变化，既有 e2e 全绿）。用例 `TestRunCmd_ClonesIntoIsolatedWorkspace`、`TestRunCmd_ProbeIsReadOnly`、四类启动期失败、`TestEndToEnd_LocalRunDrivesBountyFromRepo` |
 
 ---
@@ -402,7 +405,7 @@
 | **MS-6** | 会话材料落盘 | M1.5 前置 | MS-4 | 中 | FR-12.2/12.2b/12.3、IA-6.1/6.1b/6.1c | **已完成**（2026-09-23；材料落盘、Recorder 接口一次加齐、交付 diff/patch 排除材料目录、随检查点 `add -f` 全部落地，见 §2.3） |
 | **MS-7** | 会话恢复（resume） | M1.5 | MS-6 | 大 | FR-12.1/12.6、AC-7、IA-6.2/6.3/6.4 | **已完成**（2026-09-24；`Load` 真读回、`Prepare` 纯读先于 `Open`、回灌上下文＋新条件追加、`session_delta` 接线、token 预算续算，见 §4.3） |
 | **MS-8** | 扩展接入与符号读写 | M2 | MS-2 | 大 | FR-13、FR-4.1/4.2/4.4~4.8/4.13、IA-7.1~7.6 | **部分完成**（2026-09-24：内置语法级后端 ＋ 符号三原语注册 ＋ `symbol_read`/`symbol_edit` 落地，见 §4.3；**缺口**：第三方后端的 MCP 外挂通道与假扩展夹具用例） |
-| **MS-9** | 结构检查与 `on_structure` 默认档 | M2 收尾 | MS-5、MS-8 | 中 | FR-1.3d、IA-11.12 | 未开始 |
+| **MS-9** | 结构检查与 `on_structure` 默认档 | M2 收尾 | MS-5、MS-8 | 中 | FR-1.3d、IA-11.12 | **已完成**（2026-09-25；真判据接 `ext.ExtHost` 的 `Parse` / `Enclose`、取样时点与窗口定死、触发链补全，见 §2.3 与 §4.3） |
 | **MS-10** | `symbol_rename`（跨文件重命名）与规模上报 | M3 | MS-8 | 中 | FR-4.3、FR-6.2 | **已完成**（2026-09-24；语法级一次改完声明与全部出现点，规模与编辑计划同源，未穷尽如实标注，见 §4.3 与 §2.3） |
 | **MS-11** | 上下文压缩 | 二期 | MS-6、MS-7 | 大 | FR-14 全部、AC-17/AC-18 | 未开始 |
 | **MS-12** | 运行段看护与本地驱动 | 二期 | MS-3、MS-2 | 中 | FR-1.11①、FR-1.10 | **已完成**（2026-09-24；流看门狗与本地驱动落地，见 §4.3 与 §2.3） |
@@ -638,22 +641,23 @@
 
 ---
 
-#### MS-9 结构检查（自动检查点的判据）
+#### MS-9 结构检查（自动检查点的判据）—— **已完成**（2026-09-25）
 
-**目标**：让 `Session.structuralJudge`（三态 `structuralVerdict`）接上真实判据（pass/fail），自动检查点从此落在结构完整点上（`undecidable` 分支保留给"判据不在"的情形）。
-
-**范围**
-- 判据：① 目标文件语法完整（`ParseOK`）；② 单次编辑的字节区间封闭在某个符号范围内（依赖 MS-8）。
-- **三态**：通过 → 提交；可用但未通过 → 不提交；不可判定（已落地）→ 不提交 ＋ 如实上报。
+**落地形态**
+- 判据接在 `ext.ExtHost` 上：① `Parse`（**此刻**目标文件语法完整）＋ ② `Enclose`（改动区间封闭在某个符号内）。`Session.structuralJudge` 这个"包内可替换位置"已撤掉，换成真判据 `Session.judgeStructural`（三态 `structuralVerdict` 保留）。
+- **取样时点两条不同**：① 在判定时取（检查点钉的是此刻内容）；② 在**写盘前**就地取、与 `s.ops` 平行记进 `opEnclose`——字节区间只有在它产生的那一瞬才与文件内容对齐。
+- **取样范围是尚未提交的改动**（`pendingFrom`）：一次成功的提交把起点推到末尾，判据因此问的是"这批改动"，不是"这一路走来的每一笔"。整文件写入（含新建）不适用判据②，由判据①单独覆盖。
+- 宿主由装配层经 `hunt.ExtHostFactory` 注入、与符号原语**共用同一份实例**（`hunt.ToolFactory` 随之加 `ext.ExtHost` 入参）；未装配即"没有符号能力"，判据落成不可判定。
 - 触发链补全：门禁通过 > 模型显式 > 结构检查通过 > 都不满足则不提交。
 
 **独立验收的证据**
-- `TestStructural_ParseOKFlipCommits`、`TestStructural_IncompleteSyntaxSuppresses`、`TestStructural_UndecidableDoesNotCommit`。
-- 未注册语言仓库的 e2e：只在收尾提交一次，且事件与生效快照标注「结构判据不可判定」。
+- `TestStructural_ParseOKFlipCommits`（残缺 → 补齐后提交）、`TestStructural_IncompleteSyntaxSuppresses`、`TestStructural_UndecidableDoesNotCommit`、`TestStructural_EditOutsideAnySymbolSuppresses`、`TestStructural_WholeFileWriteIsNotJudgedAsUnenclosed`、`TestStructural_CommittedOpsLeaveTheJudgementWindow`、`TestStructural_ParseIsAskedOncePerFile`、`TestStructural_UndecidableDoesNotBlockWriting`。
+- `ext/syntax`：`TestHost_ParseOKOnCompleteSyntax`、`TestHost_ParseBrokenOnIncompleteSyntax`、`TestHost_ParseUnknownOnUnregisteredLanguage`、`TestHost_EncloseFindsTheSmallestEnclosingDeclaration`、`TestHost_EncloseReportsNotEnclosedOutsideDeclarations`、`TestHost_EncloseOnUnregisteredLanguageIsNotAVerdict` 等 10 条。
+- e2e（真 git ＋ 真语法后端）：`TestEndToEnd_CheckpointLandsOnCompleteSyntax`、`TestEndToEnd_IncompleteSyntaxSuppressesCheckpoint`。
 
 **依赖**：MS-5、MS-8。
 
-**风险**：`ParseOK` 依赖扩展——判据不可用时绝不能退化成「按轮提交」，也不能静默不报。
+**风险**：`ParseOK` 依赖符号能力——判据不可用时绝不能退化成「按轮提交」，也不能静默不报（判不了即不提交 ＋ 一条 `degraded`）。
 
 ---
 
@@ -803,6 +807,7 @@
 | 19 | **基础设施允许第三方依赖**（2026-09-24 用户裁决）：门禁清单的 YAML 解析引入 `gopkg.in/yaml.v3`。**边界**：开放的是"基础设施类"通用库；模型接入仍**不得使用厂商 SDK**（协议线格式一律手写，NFR-1 的这条不变） |
 | 21 | **首发符号后端形态**（2026-09-24）：内置**语法级**后端（`ext/syntax`，标准库语法树、进程内、首发 Go），它是首发也是兜底；第三方后端走**外挂通道**（MCP over stdio，待补）。核心只认 `ext.ExtHost`，换后端不改业务代码 |
 | 22 | **语法级也做 `symbol_rename`**（2026-09-24）：出现点来自语法树扫描（结构化，非文本替换）＋ 如实标注未穷尽；列不出出现点即结构化错误。**不做**的只有"半套重命名"，不是重命名本身 |
+| 23 | **结构判据的取样时点与窗口**（2026-09-25）：①「语法完整」在**判定时**取（问的是此刻内容）；②「区间封闭」在**写盘前**就地取并存下来（字节区间只对它产生的那一瞬有效）；窗口是**尚未提交的改动**，一次成功提交即推进——否则一次早年的越界编辑会永久关掉自动检查点。整文件写入不适用判据②（文件本身就是单位），由判据①单独覆盖 |
 
 | 20 | **门禁终态口径**（2026-09-24）：执行失败（起不来 / 超时）**不是质量结论**——按"未运行"计入终态并发 `degraded(scope: gate)`；`required` 门禁未通过或从未运行 → `status=failed` 且**退出码 0**，改动照常交付。终态只改写引擎给出的 `succeeded`，机制性终止不被抹掉 |
 

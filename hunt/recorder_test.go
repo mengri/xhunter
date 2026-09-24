@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"xhunter/ext"
 	"xhunter/harness"
 	"xhunter/llm"
 	"xhunter/workspace"
@@ -68,7 +69,7 @@ func TestSnapshot_FailureDoesNotBlockTheRun(t *testing.T) {
 	s := NewSession(Config{
 		Bounty: Bounty{ID: "b1", Task: "t", Repo: gitRepoRef()},
 		Git:    &stubBaselineGit{}, Opener: stubOpener{}, Policy: allowAll{}, Sink: sink, Session: rec,
-		Tools: func(workspace.Workspace) []Primitive { return []Primitive{&writingPrim{}} },
+		Tools: func(workspace.Workspace, ext.ExtHost) []Primitive { return []Primitive{&writingPrim{}} },
 	})
 	provider := &stubProvider{turns: []turnScript{
 		{calls: []llm.ToolCall{call("c1", "writer", `{}`)}},
@@ -98,7 +99,7 @@ func TestRecorder_RecordsOpsAndUsageFromTheSession(t *testing.T) {
 	s := NewSession(Config{
 		Bounty: Bounty{ID: "b1", Task: "t", Repo: gitRepoRef()},
 		Git:    &stubBaselineGit{}, Opener: stubOpener{}, Policy: allowAll{}, Sink: sink, Session: rec,
-		Tools: func(workspace.Workspace) []Primitive { return []Primitive{&writingPrim{}} },
+		Tools: func(workspace.Workspace, ext.ExtHost) []Primitive { return []Primitive{&writingPrim{}} },
 	})
 	provider := &stubProvider{turns: []turnScript{
 		{calls: []llm.ToolCall{call("c1", "writer", `{}`)}, usage: llm.Usage{InputTokens: 10, OutputTokens: 4, CachedInputTokens: 2}},

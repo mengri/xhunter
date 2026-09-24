@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"xhunter/ext"
 	"xhunter/harness"
 	"xhunter/workspace"
 )
@@ -37,7 +38,7 @@ func prepareConfig(sink EventSink) Config {
 		Opener: stubOpener{},
 		Policy: allowAll{},
 		Sink:   sink,
-		Tools: func(workspace.Workspace) []Primitive {
+		Tools: func(workspace.Workspace, ext.ExtHost) []Primitive {
 			return []Primitive{
 				stubPrim{name: "read"}, stubPrim{name: "write"}, stubPrim{name: "edit"},
 				stubPrim{name: "find"}, stubPrim{name: "glob"},

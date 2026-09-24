@@ -11,15 +11,21 @@ import (
 	"sync/atomic"
 	"time"
 
+	"xhunter/ext"
 	"xhunter/git"
 	"xhunter/harness"
 	"xhunter/llm"
 	"xhunter/workspace"
 )
 
-// ToolFactory 把已就绪的工作区变成有序的原语清单。工作区是运行期产物，原语读文件
-// 需要它，因此装配层交工厂、Session 在工作区就绪后调用。顺序即工具面顺序。
-type ToolFactory func(ws workspace.Workspace) []Primitive
+// ToolFactory 把已就绪的工作区与符号宿主变成有序的原语清单。二者都是运行期产物（宿主读
+// 源码也要工作区），因此装配层交工厂、Session 在它们就绪后调用。顺序即工具面顺序。
+type ToolFactory func(ws workspace.Workspace, ex ext.ExtHost) []Primitive
+
+// ExtHostFactory 把已就绪的工作区变成符号能力宿主。宿主同样是运行期产物，与 ToolFactory
+// 同理交工厂；Session 只调一次，把**同一个实例**同时交给结构判据与原语面——两处看到的
+// 能力必须是同一份（各造一份会在换成外挂后端时变成两个进程）。
+type ExtHostFactory func(ws workspace.Workspace) ext.ExtHost
 
 // Config 是 Session 的装配参数。上下文、会话、事件出口都是业务自己的协作者
 // （harness 不认识它们）；原语清单、策略、工作区与 git 的实现同样由装配层注入。
@@ -44,6 +50,10 @@ type Config struct {
 	// 起子进程、要缓存，这些是装配层才知道的事实。收尾补跑与 check 原语**共用同一份**——
 	// 否则同一条门禁在两处可能跑出两个结论。
 	GateRunner GateRunner
+	// Ext 是符号能力宿主的工厂（结构判据与符号原语共用同一份实例）。为 nil 表示「本次没有
+	// 装配符号能力」——那是可带着跑的事实：结构判据落成"不可判定"（不提交、如实上报），
+	// 符号原语给出结构化错误。
+	Ext ExtHostFactory
 
 	Filters []NamedFilter
 
@@ -128,11 +138,17 @@ type Session struct {
 	// 默认是空操作——所以 Prepare 未成功时 Finalize 照常调用一次也不会炸，也不会漏停。
 	stopHeartbeat func()
 
-	// structuralJudge 给出本轮改动的**结构判据三态**；它是判据的**包内可替换位置**——符号扩展
-	// 接入时替换它即可（见 structuralVerdict）。NewSession 默认"不可判定"：扩展未接入时我们
-	// 并**没有判过**，只是没法判，那与"判过但没通过"是两句话。刻意不给 hunt.Config 加一个
-	// 只有一个取值的公开字段。
-	structuralJudge func() structuralVerdict
+	// ext 是符号能力宿主：由装配层给的工厂在工作区就绪后造出，与符号原语**共用同一份实例**。
+	// 未装配时是零值——判据此刻落成"不可判定"（见 judgeStructural），而不是"判过但没通过"。
+	ext ext.ExtHost
+	// opEnclose 与 s.ops **平行**：每条写操作在**落盘之前**就地判下的"封闭性"结论。
+	// 不用函数现算，是因为字节区间只有在它产生的那一瞬才与文件内容对齐——同一文件里的
+	// 后一次编辑会把先前记录的区间整体平移，事后重问答不准。
+	opEnclose []structuralVerdict
+	// pendingFrom 是「尚未提交的改动」在 s.ops 中的起点：一次成功的检查点提交把起点推到末尾。
+	// 判据问的是"这批待提交的改动是不是结构完整点"，而不是"这一路走来每一笔都好吗"——
+	// 后者会让一次早年的越界编辑永久关掉自动检查点。
+	pendingFrom int
 	// structuralDegradedReported 保证"不可判定"的 degraded **每次运行最多一条**。
 	structuralDegradedReported bool
 
@@ -243,8 +259,6 @@ func NewSession(cfg Config) *Session {
 		cfg:           cfg,
 		ledger:        &Ledger{},
 		stopHeartbeat: func() {},
-		// 默认判据：不可判定（符号扩展未接入）。三态见 structuralVerdict。
-		structuralJudge: func() structuralVerdict { return structuralUndecidable },
 		// 本轮处置从"继续"起步；OnTurn 每轮开工再复位一次。
 		stopLoss: StopContinue,
 	}
@@ -342,11 +356,11 @@ func (s *Session) Declared() Declared { return s.declared }
 // 现场在工具面，不在这里报就只剩一条无从追起的上游错误。
 //
 // 返回错误由 Prepare 传播：工具面不成立与缺 git / 缺策略同类——装配期缺件，循环不开始。
-func (s *Session) buildTools(ws workspace.Workspace) error {
+func (s *Session) buildTools(ws workspace.Workspace, ex ext.ExtHost) error {
 	if s.cfg.Tools == nil {
 		return nil
 	}
-	prims := s.cfg.Tools(ws)
+	prims := s.cfg.Tools(ws, ex)
 	s.tools = make(map[PrimitiveName]Primitive, len(prims))
 	s.order = make([]PrimitiveName, 0, len(prims))
 	for i, p := range prims {
@@ -471,6 +485,9 @@ func (s *Session) executeCall(ctx context.Context, turn *harness.Turn, tc llm.To
 
 	// 落盘统一在这里：原语只产出编辑计划，写盘唯一入口由 Committer 保证。
 	if len(edits) > 0 {
+		// 结构判据②在落盘**之前**就地判：此刻的字节区间才是准的（见 judgeEnclosure）。
+		// 判不出来不阻断写盘——判据只决定"值不值得留检查点"，不决定"能不能改"。
+		verdicts := s.judgeEnclosure(ctx, edits)
 		ops, err := newCommitter(s.storage, s.ledger).Commit(edits)
 		if err != nil {
 			f := &llm.Fault{Kind: "commit_failed", Message: "落盘失败：" + err.Error(), Retryable: true}
@@ -483,6 +500,7 @@ func (s *Session) executeCall(ctx context.Context, turn *harness.Turn, tc llm.To
 		}
 		res.Ops = ops
 		s.ops = append(s.ops, ops...)
+		s.opEnclose = append(s.opEnclose, verdicts...)
 		s.recordOps(ops)
 	}
 

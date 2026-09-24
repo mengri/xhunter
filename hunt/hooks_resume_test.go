@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"xhunter/ext"
 	"xhunter/harness"
 	"xhunter/llm"
 	"xhunter/workspace"
@@ -94,7 +95,7 @@ func TestPrepare_ResumeSeedsContextWithoutExecutingTools(t *testing.T) {
 		Policy:  allowAll{},
 		Session: rec,
 		Context: &resumeContext{},
-		Tools:   func(workspace.Workspace) []Primitive { return []Primitive{prim} },
+		Tools:   func(workspace.Workspace, ext.ExtHost) []Primitive { return []Primitive{prim} },
 	})
 
 	if err := s.Prepare(context.Background(), &harness.Run{}); err != nil {

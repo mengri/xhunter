@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"xhunter/ext"
 	"xhunter/harness"
 	"xhunter/llm"
 	"xhunter/workspace"
@@ -115,10 +116,10 @@ func newTestSession(t *testing.T, st workspace.Storage, policy Policy, sink Even
 	s := NewSession(Config{
 		Policy: policy,
 		Sink:   sink,
-		Tools:  func(workspace.Workspace) []Primitive { return prims },
+		Tools:  func(workspace.Workspace, ext.ExtHost) []Primitive { return prims },
 	})
 	s.storage = st
-	if err := s.buildTools(st); err != nil {
+	if err := s.buildTools(st, ext.Unimplemented{}); err != nil {
 		t.Fatalf("构造工具面失败：%v", err)
 	}
 	return s

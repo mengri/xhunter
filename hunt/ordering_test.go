@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"xhunter/ext"
 	"xhunter/git"
 	"xhunter/harness"
 	"xhunter/llm"
@@ -55,7 +56,7 @@ func TestWiring_PrepareBaselineRunsBeforeAnyTool(t *testing.T) {
 		Opener: orderOpener{order: &order},
 		Policy: allowAll{},
 		Sink:   &captureSink{},
-		Tools: func(workspace.Workspace) []Primitive {
+		Tools: func(workspace.Workspace, ext.ExtHost) []Primitive {
 			order = append(order, "tools")
 			return nil
 		},
@@ -140,9 +141,11 @@ func TestCheckpoint_CommitOnlyAtTurnBoundaryAndFinalize(t *testing.T) {
 		Opener: stubOpener{},
 		Policy: turnsBudgetPolicy{limit: 2}, // 第 2 轮后耗尽预算 → 进入收尾（交付提交）
 		Sink:   &captureSink{},
-		Tools:  func(workspace.Workspace) []Primitive { return []Primitive{&orderedWritingPrim{order: &order}} },
+		Tools: func(workspace.Workspace, ext.ExtHost) []Primitive {
+			return []Primitive{&orderedWritingPrim{order: &order}}
+		},
+		Ext: extFactory(&fakeExt{parses: []ext.ParseVerdict{ext.ParseOK}}),
 	})
-	s.structuralJudge = func() structuralVerdict { return structuralPass }
 
 	provider := &stubProvider{turns: []turnScript{
 		{calls: []llm.ToolCall{call("c1", "writer", `{}`)}},
@@ -186,17 +189,13 @@ func TestCheckpoint_CommitsOnlyThisTurnsChanges(t *testing.T) {
 		Opener: stubOpener{},
 		Policy: turnsBudgetPolicy{limit: 2},
 		Sink:   &captureSink{},
-		Tools:  func(workspace.Workspace) []Primitive { return []Primitive{&orderedWritingPrim{order: &order}} },
+		Tools: func(workspace.Workspace, ext.ExtHost) []Primitive {
+			return []Primitive{&orderedWritingPrim{order: &order}}
+		},
 	})
-	// 判据：第 1 轮通过、第 2 轮未通过（让末轮改动落在检查点之外，只能靠交付提交带走）。
-	calls := 0
-	s.structuralJudge = func() structuralVerdict {
-		calls++
-		if calls == 1 {
-			return structuralPass
-		}
-		return structuralFail
-	}
+	// 判据：第 1 轮判"语法完整"、第 2 轮判"语法不完整"（让末轮改动落在检查点之外，
+	// 只能靠交付提交带走）。宿主按脚本依次回答——三态怎么收敛仍是被测代码的事。
+	s.cfg.Ext = extFactory(&fakeExt{parses: []ext.ParseVerdict{ext.ParseOK, ext.ParseBroken}})
 
 	provider := &stubProvider{turns: []turnScript{
 		{calls: []llm.ToolCall{call("c1", "writer", `{}`)}},

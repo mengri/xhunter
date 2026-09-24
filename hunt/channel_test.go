@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"xhunter/ext"
 	"xhunter/harness"
 	"xhunter/llm"
 	"xhunter/workspace"
@@ -102,7 +103,7 @@ func TestOnTurn_StopsAfterTurnWhenChannelFailsDuringTurn(t *testing.T) {
 		Opener: stubOpener{},
 		Policy: allowAll{},
 		Sink:   sink,
-		Tools:  func(workspace.Workspace) []Primitive { return []Primitive{prim} },
+		Tools:  func(workspace.Workspace, ext.ExtHost) []Primitive { return []Primitive{prim} },
 	})
 
 	provider := &stubProvider{turns: []turnScript{

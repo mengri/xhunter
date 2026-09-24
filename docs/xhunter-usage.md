@@ -173,7 +173,7 @@ xhunter version
 {"type":"deliverable","files":["..."]}
 {"type":"degraded","scope":"prompt.skills","subject":"...","reason":"..."}   // 非致命降级：跳过/截断了什么
                                               // scope: "usage" 表示上游未回报用量（此时结果文件 usage.reported=false）
-                                              // scope: "checkpoint" 表示结构判据不可判定（符号扩展未接入），本轮不产生自动检查点
+                                              // scope: "checkpoint" 表示结构判据不可判定（无符号能力或该语言未注册），本轮不产生自动检查点
 {"type":"error","kind":"...","retryable":false,"context":"..."}
 {"type":"hunt_end","status":"succeeded|blocked|failed|cancelled","reason":"..."}
 ```
