@@ -1,22 +1,34 @@
 package hunt
 
-// 本文件定义**尚未接线的外部事件载荷形状**（以使用手册 §5 为准）；只定义形状与发出点注释，
-// 发出点随各自里程碑接入——现在发出去会是假数字（来源还不存在）。
+// 本文件定义外部事件的载荷形状（以使用手册 §5 为准）；哪种已发出见各自注释。
 
 // configSnapshotPayload 是 `config_snapshot` 事件的载荷（使用手册 §5）：把"这次运行实际生效的
-// 三个阈值"一次性报给平台，供其解释后续的机制性终止。
+// 四个阈值"一次性报给平台，供其解释后续的机制性终止。
 //
-// 三个阈值各自从哪来：
-//   - MaxFailStreak：**机制侧**连续失败阈值（`harness.Config.MaxFailStreak`）；
-//   - MaxDeniedStreak：**策略侧**连续拒绝阈值（MS-3 的止损阈值，**现在还不存在**）；
-//   - MaxTurnsHard：轮数硬顶（0 = 不限）。
+// 各阈值从哪来：
+//   - MaxFailStreak：**机制侧**连续失败阈值（`harness.Config.MaxFailStreak`，装配层注入）；
+//   - MaxTurnsHard：轮数硬顶（0 = 不限，装配层注入）；
+//   - MaxDeniedStreak：**策略侧**连续拒绝阈值（`policy.Facts()`，策略自述）；
+//   - MaxSameKindStreak：**策略侧**连续同类失败上限（`policy.Facts()`，策略自述）。
 //
-// **发出点不接**：`MaxDeniedStreak` 的来源（MS-3）还不存在，现在发出去就是假数字；等 MS-3 把
-// 阈值定死后，在 `Session.Prepare` 与 `hunt_start` 同时点接入（见 `hooks.go` 的 `emitHuntStart`）。
+// **发出点**：`Session.Prepare` 与 `hunt_start` 同时点（见 `hooks.go` 的 `emitHuntStart`）——
+// 两个止损阈值来自策略、两个机制硬顶来自装配层注入的 harness 生效配置，四者都在起飞时已定。
 type configSnapshotPayload struct {
-	MaxDeniedStreak int `json:"max_denied_streak"`
-	MaxFailStreak   int `json:"max_fail_streak"`
-	MaxTurnsHard    int `json:"max_turns_hard"`
+	MaxDeniedStreak   int `json:"max_denied_streak"`
+	MaxSameKindStreak int `json:"max_same_kind_streak"`
+	MaxFailStreak     int `json:"max_fail_streak"`
+	MaxTurnsHard      int `json:"max_turns_hard"`
+}
+
+// payload 把载荷摊成事件用的 map：事件载荷是 `map[string]any`，结构体不能直接塞进
+// `ExternalEvent.Payload`（会被序列化成嵌套对象、对不上契约的平铺形状）。
+func (p configSnapshotPayload) payload() map[string]any {
+	return map[string]any{
+		"max_denied_streak":    p.MaxDeniedStreak,
+		"max_same_kind_streak": p.MaxSameKindStreak,
+		"max_fail_streak":      p.MaxFailStreak,
+		"max_turns_hard":       p.MaxTurnsHard,
+	}
 }
 
 // contextCompactedPayload 是 `context_compacted` 事件的载荷（使用手册 §5）：每次压缩产出一条，

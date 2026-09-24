@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -852,4 +853,163 @@ func sseWithText(text string) string {
 		`data: {"choices":[{"delta":{},"finish_reason":"stop"}]}` + "\n\n" +
 		`data: {"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":3,"prompt_tokens_details":{"cached_tokens":16}}}` + "\n\n" +
 		"data: [DONE]\n\n"
+}
+
+// MS-3 端到端：连续同类失败达阈值先换策略、超上限才失败。假上游每轮发同一个会失败的工具调用
+// （名字不认识 → unknown_tool，属"模型自身的同类错误"），断言第 3 轮的**请求体**里带上了
+// 换策略提示（用**提示独有**子串「不要重复刚才的动作」，而非内核条款里也有的「换一种做法」），
+// 且终态为 stop_loss_same_kind / 退出 2。
+func TestEndToEnd_RepeatedFailureSwitchesBeforeFailing(t *testing.T) {
+	requireGitForE2E(t)
+	fx := newRepoFixture(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", filepath.Join(tmp, "work"))
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+
+	var mu sync.Mutex
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			http.NotFound(w, r)
+			return
+		}
+		raw, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(raw))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		// 每轮都调一个工具面里不存在的工具 → unknown_tool（同一类失败）。
+		io.WriteString(w, sseWithToolCall("c", "nope", `{}`))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	taskPath := writeRunInputs(t, tmp, "随便试")
+	setRunEnv(t, fx, srv.URL+"/v1")
+
+	stdout, stderr := swapStdStreams(t)
+	code := run([]string{"--bounty", taskPath})
+	stdoutText, stderrText := drainStdStreams(t, stdout, stderr)
+
+	if code != exitAborted {
+		t.Fatalf("止损终止应退出 2，实际 %d\nstdout:\n%s\nstderr:\n%s", code, stdoutText, stderrText)
+	}
+	end := eventPayload(t, stdoutText, "hunt_end")
+	if reason, _ := end["reason"].(string); !strings.HasPrefix(reason, "stop_loss_same_kind") {
+		t.Errorf("hunt_end.reason = %v，期望以 stop_loss_same_kind 开头", end["reason"])
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(bodies) != 3 {
+		t.Fatalf("同类失败应恰跑 3 轮（第 2 轮换策略、第 3 轮终止），实际 %d 轮", len(bodies))
+	}
+	// 断言必须用**提示独有**的子串，不能用「换一种做法」：请求体的 system 内核条款里本就含
+	// 「换一种做法」（hunt/kernel.go 的 kernelClauses），拿它断言恒真、咬不住契约。
+	// 「不要重复刚才的动作」只在策略的 StopSwitch 提示里出现（internal/policy/policy.go）。
+	if !strings.Contains(bodies[2], "不要重复刚才的动作") {
+		t.Errorf("第 3 轮的请求体应带上换策略提示（不要重复刚才的动作）：%s", bodies[2])
+	}
+}
+
+// MS-3 端到端：连续策略拒绝达阈值即终止。假上游每轮发一次写 `.xhunter/...`（默认策略必然拒绝
+// ——写引擎自有材料等于篡改会话记录），到第 3 轮由业务止损收敛为 stop_loss_denied / 退出 2。
+//
+// 「每轮 1 次拒绝」是刻意的最小形态：机制止损也在第 3 轮收敛，业务止损必须在那之前先判并胜出
+// （否则 stop_loss_denied 永不可达）——本用例正是这条次序的端到端证据。
+func TestEndToEnd_DeniedStreakFailsTheRun(t *testing.T) {
+	requireGitForE2E(t)
+	fx := newRepoFixture(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", filepath.Join(tmp, "work"))
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, sseWithToolCall("c", "write", `{"path":".xhunter/session.jsonl","content":"x"}`))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	taskPath := writeRunInputs(t, tmp, "随便写")
+	setRunEnv(t, fx, srv.URL+"/v1")
+
+	stdout, stderr := swapStdStreams(t)
+	code := run([]string{"--bounty", taskPath})
+	stdoutText, stderrText := drainStdStreams(t, stdout, stderr)
+
+	if code != exitAborted {
+		t.Fatalf("连续拒绝达阈值应退出 2，实际 %d\nstdout:\n%s\nstderr:\n%s", code, stdoutText, stderrText)
+	}
+	end := eventPayload(t, stdoutText, "hunt_end")
+	if reason, _ := end["reason"].(string); !strings.HasPrefix(reason, "stop_loss_denied") {
+		t.Errorf("hunt_end.reason = %v，期望以 stop_loss_denied 开头", end["reason"])
+	}
+	if n := strings.Count(stdoutText, `"type":"policy_denied"`); n < 3 {
+		t.Errorf("应有至少 3 条 policy_denied（连续拒绝达 3），实际 %d：\n%s", n, stdoutText)
+	}
+}
+
+// MS-3：`hunt_start` 之后紧随一条 `config_snapshot`，四个阈值等于字面量（真值来自实现：
+// 两个止损阈值由策略自述、两个机制硬顶由装配层注入的 harness 生效配置）。
+func TestPrepare_EmitsConfigSnapshot(t *testing.T) {
+	r := runSuccessOnce(t)
+	if r.code != exitOK {
+		t.Fatalf("成功运行应退出 0，实际 %d\nstdout:\n%s\nstderr:\n%s", r.code, r.stdout, r.stderr)
+	}
+
+	type ev struct {
+		typ string
+		p   map[string]any
+	}
+	var evs []ev
+	for _, line := range nonEmptyLines(r.stdout) {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatalf("stdout 出现非事件行：%q", line)
+		}
+		typ, _ := m["type"].(string)
+		evs = append(evs, ev{typ: typ, p: m})
+	}
+	startIdx := -1
+	for i, e := range evs {
+		if e.typ == "hunt_start" {
+			startIdx = i
+			break
+		}
+	}
+	if startIdx < 0 {
+		t.Fatal("事件流缺少 hunt_start")
+	}
+	if startIdx+1 >= len(evs) || evs[startIdx+1].typ != "config_snapshot" {
+		t.Fatalf("hunt_start 之后应紧随一条 config_snapshot，实得：%v", evs)
+	}
+	p := evs[startIdx+1].p
+	// 期望值写字面量：常量被改时会立刻变红（不引用被测常量做期望）。
+	checks := map[string]float64{
+		"max_denied_streak":    3,
+		"max_same_kind_streak": 3,
+		"max_fail_streak":      3,
+		"max_turns_hard":       1000,
+	}
+	for k, want := range checks {
+		got, ok := p[k].(float64)
+		if !ok {
+			t.Errorf("config_snapshot 缺字段 %s：%v", k, p)
+			continue
+		}
+		if got != want {
+			t.Errorf("config_snapshot.%s = %v，期望字面量 %v", k, got, want)
+		}
+	}
 }

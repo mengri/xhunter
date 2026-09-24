@@ -21,6 +21,14 @@ type AssemblyFacts struct {
 	Ext []string
 	// Platform 是目标平台（GOOS/GOARCH）。
 	Platform string
+	// MaxFailStreak / MaxTurnsHard 是**机制侧**的硬顶（harness 连续失败阈值 / 轮数硬顶），只用于
+	// `config_snapshot` 事件如实报出"这次运行实际生效的机制阈值"，**不进 EffectiveConfig**——
+	// 机制硬顶是 harness 的运行参数，不属于"本次生效的规则装配清单"。
+	//
+	// 这条事实只能由装配层注入：它构造 harness.Config 并交给循环，Session 拿不到（harness 不认识
+	// Session，也没有反向查询的通道）。0 表示未注入，如实表达"不知道"，不编一个看着像默认值的数。
+	MaxFailStreak int
+	MaxTurnsHard  int
 }
 
 // EffectiveConfig 是生效配置快照的形状。

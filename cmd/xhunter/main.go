@@ -141,6 +141,10 @@ func huntCmd(args []string) int {
 	sink := &eventSink{events: os.Stdout, logs: logs, start: time.Now(),
 		bountyID: string(bounty.ID), traceID: bounty.TraceID}
 
+	// 机制硬顶用同一份配置贯穿两处：装配层报进 config_snapshot、循环按它执行。在两处各写一遍
+	// 3/1000 迟早会漂，所以这里是唯一来源。
+	hcfg := harness.DefaultConfig()
+
 	// 业务执行体：向循环提供三组 handler，同时是原语看到的 Facts。上下文、会话材料与
 	// 事件出口都由它自己持有——循环不认识这些东西。
 	session := hunt.NewSession(hunt.Config{
@@ -158,7 +162,7 @@ func huntCmd(args []string) int {
 		SystemPlugins: defaultSystemPlugins,
 		UserPlugins:   defaultUserPlugins,
 		// 生效配置快照里「只有装配层知道」的那部分：装配它就等于声明"本次生效的是什么"。
-		Assembly: assemblyFacts(),
+		Assembly: assemblyFacts(hcfg),
 		// 心跳间隔来自部署事实（0 = 取 Session 默认 30s）。
 		Heartbeat: heartbeat,
 	})
@@ -173,6 +177,9 @@ func huntCmd(args []string) int {
 		fmt.Fprintf(os.Stderr, "装配不完整：%v\n", err)
 		return exitEnv
 	}
+	// 把与 config_snapshot 同源的机制硬顶交给循环：默认配置已够用，这里显式覆盖是为了让
+	// "报出的"与"实际执行的"是同一份。
+	engine = engine.WithConfig(hcfg)
 
 	fmt.Fprintf(os.Stderr, "已装配：任务 %q 仓库 %s 分支 %s 基线 %.12s 协议 %s 模型 %s\n",
 		firstLine(bounty.Task), bounty.Repo.Remote, bounty.Repo.Branch, bounty.Repo.BaseCommit,

@@ -17,6 +17,12 @@ type Config struct {
 	StreamIdleTimeout time.Duration
 }
 
+// DefaultConfig 返回与 withDefaults 之后**实际生效**同一份的默认配置。
+//
+// 装配层用它把机制侧硬顶（连续失败阈值 / 轮数硬顶）如实报进 config_snapshot——在 cmd 里另抄
+// 一份 3/1000 迟早会与 withDefaults 漂开，而这两个数正是平台解释机制性终止所依据的。
+func DefaultConfig() Config { return Config{}.withDefaults() }
+
 func (c Config) withDefaults() Config {
 	if c.MaxTurns <= 0 {
 		c.MaxTurns = 1000

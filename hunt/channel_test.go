@@ -94,7 +94,7 @@ func TestOnTurn_StopsBeforeWorkWhenChannelAlreadyFailed(t *testing.T) {
 // 轮末复查（L6）：本轮发出时把通道写断了——本轮工具已执行完（那是已发生的事实），但不再进入
 // 下一轮。用真实 harness.Engine ＋ 假上游断言"只跑了这一轮"。
 func TestOnTurn_StopsAfterTurnWhenChannelFailsDuringTurn(t *testing.T) {
-	sink := newBrokenSink(1) // hunt_start（第 1 条）成功；本轮的两条发出即断
+	sink := newBrokenSink(2) // hunt_start + config_snapshot（启动两条）成功；本轮的两条发出即断
 	prim := &countingPrim{stubPrim: stubPrim{name: "probe"}}
 	s := NewSession(Config{
 		Bounty: Bounty{ID: "b1", Task: "t", Repo: gitRepoRef()},

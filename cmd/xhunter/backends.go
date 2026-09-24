@@ -4,6 +4,7 @@ import (
 	"runtime"
 
 	"xhunter/git"
+	"xhunter/harness"
 	"xhunter/hunt"
 	"xhunter/internal/git/cli"
 	"xhunter/internal/policy"
@@ -34,12 +35,16 @@ func defaultPolicy(budget hunt.Budget) hunt.Policy {
 //
 // 策略口径来自策略实现自述（边界常量是它的知识，装配层不另抄一份）；检查点行为是本期固定
 // 档；扩展指纹本期为空（扩展未接入，空数组如实表示"没有扩展"）；目标平台与内核环境事实
-// 同源（GOOS/GOARCH）。
-func assemblyFacts() hunt.AssemblyFacts {
+// 同源（GOOS/GOARCH）；机制硬顶取自实际生效的 harness 配置，供 config_snapshot 如实报出。
+func assemblyFacts(hcfg harness.Config) hunt.AssemblyFacts {
 	return hunt.AssemblyFacts{
 		Policy:     policy.Facts(),
 		Checkpoint: checkpointBehaviour,
 		Ext:        []string{}, // 一期没有扩展：空数组如实表示"没有"，不是"不知道"（nil → null）
 		Platform:   runtime.GOOS + "/" + runtime.GOARCH,
+		// 机制硬顶从实际生效的 harness 配置里取（与 harness.New 用的是同一份），这里不另抄
+		// 3/1000——否则改了 withDefaults、快照报的还是旧数。
+		MaxFailStreak: hcfg.MaxFailStreak,
+		MaxTurnsHard:  hcfg.MaxTurns,
 	}
 }

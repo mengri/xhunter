@@ -169,9 +169,9 @@ func (s *Session) freezeEffectiveConfig(systemPlugins, userPlugins []PromptPlugi
 
 // emitHuntStart 上报一次起飞事件：任务与仓库事实 ＋ 生效配置快照。
 //
-// **`config_snapshot` 的发出点也在这里**（与起飞同时点：报出这次运行实际生效的三个阈值）——
-// **本次不接**：`max_denied_streak` 的来源（MS-3 的止损阈值）还不存在，发出去就是假数字。
-// 形状见 `configSnapshotPayload`；等 MS-3 把阈值定死后，在下面与 `hunt_start` 一起发。
+// **`config_snapshot` 的发出点也在这里**（与起飞同一时点）：把"这次运行实际生效的四个阈值"
+// 一次报给平台——两个止损阈值来自策略自述、两个机制硬顶来自装配层注入的 harness 生效配置。
+// 形状见 `configSnapshotPayload`；与 `hunt_start` 前后紧挨发出。
 //
 // 信封四字段（type / bounty_id / trace_id / ts）由出口统一盖章，这里只交业务载荷。
 // 快照取的是冻结的那一份（s.effective），与结果文件同源。缺出口时是空操作——事件是
@@ -187,6 +187,33 @@ func (s *Session) emitHuntStart() {
 		"task":             taskSubject(s.cfg.Bounty),
 		"effective_config": s.effective,
 	}})
+	_ = s.cfg.Sink.Emit(ExternalEvent{Type: "config_snapshot", Payload: s.configSnapshot().payload()})
+}
+
+// configSnapshot 汇总"这次运行实际生效的阈值"，供 `config_snapshot` 事件。
+//
+// 两个止损阈值是策略自述的边界常量（从生效配置快照的策略口径里取——策略不另抄一份）；两个机制
+// 硬顶由装配层在 AssemblyFacts 里注入（只有装配层知道 harness 实际生效的配置）。取不到的键按 0，
+// 如实表达"不知道"，不编一个看着像默认值的数字。
+func (s *Session) configSnapshot() configSnapshotPayload {
+	return configSnapshotPayload{
+		MaxDeniedStreak:   intFact(s.effective.Policy, "max_denied_streak"),
+		MaxSameKindStreak: intFact(s.effective.Policy, "max_same_kind_streak"),
+		MaxFailStreak:     s.cfg.Assembly.MaxFailStreak,
+		MaxTurnsHard:      s.cfg.Assembly.MaxTurnsHard,
+	}
+}
+
+// intFact 从策略自述的 map 里取一个整数键；缺失或类型不符按 0（"不知道"如实表达为 0）。
+func intFact(m map[string]any, key string) int {
+	switch v := m[key].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	default:
+		return 0
+	}
 }
 
 // firstPrompt 把两段正文摆成首轮消息：system 在前、user 在后。
