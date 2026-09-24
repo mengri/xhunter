@@ -192,15 +192,16 @@ func (s *Session) emitHuntStart() {
 
 // configSnapshot 汇总"这次运行实际生效的阈值"，供 `config_snapshot` 事件。
 //
-// 两个止损阈值是策略自述的边界常量（从生效配置快照的策略口径里取——策略不另抄一份）；两个机制
-// 硬顶由装配层在 AssemblyFacts 里注入（只有装配层知道 harness 实际生效的配置）。取不到的键按 0，
-// 如实表达"不知道"，不编一个看着像默认值的数字。
+// 两个止损阈值是策略自述的边界常量（从生效配置快照的策略口径里取——策略不另抄一份）；机制侧
+// 三条阈值（连续失败、轮数硬顶、接收段不活动超时）由装配层在 AssemblyFacts 里注入（只有装配层
+// 知道 harness 实际生效的配置）。取不到的键按 0，如实表达"不知道"，不编一个看着像默认值的数字。
 func (s *Session) configSnapshot() configSnapshotPayload {
 	return configSnapshotPayload{
-		MaxDeniedStreak:   intFact(s.effective.Policy, "max_denied_streak"),
-		MaxSameKindStreak: intFact(s.effective.Policy, "max_same_kind_streak"),
-		MaxFailStreak:     s.cfg.Assembly.MaxFailStreak,
-		MaxTurnsHard:      s.cfg.Assembly.MaxTurnsHard,
+		MaxDeniedStreak:     intFact(s.effective.Policy, "max_denied_streak"),
+		MaxSameKindStreak:   intFact(s.effective.Policy, "max_same_kind_streak"),
+		MaxFailStreak:       s.cfg.Assembly.MaxFailStreak,
+		MaxTurnsHard:        s.cfg.Assembly.MaxTurnsHard,
+		StreamIdleTimeoutMS: s.cfg.Assembly.StreamIdleTimeoutMS,
 	}
 }
 

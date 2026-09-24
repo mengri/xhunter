@@ -12,8 +12,10 @@ import (
 type Config struct {
 	MaxTurns      int // 轮次硬上限，兜住编排缺陷导致的死循环
 	MaxFailStreak int // 连续多少轮工具失败即止损
-	// StreamIdleTimeout 是**接收段的"不活动"超时**（FR-1.11①、架构 §6.3 L4）。读法：
-	// **0 = 不限；非 0 = 不活动上限**——别读成"没配就是 120s"（默认由 withDefaults 给）。
+	// StreamIdleTimeout 是**接收段的"不活动"超时**：相邻两个事件之间（含首个事件之前）允许的
+	// 最长静默。取值：0 = 取默认（defaultStreamIdleTimeout，装配层不设即是它）；正数 = 不活动上界；
+	// 负数 = 关闭看门狗。**注意**：「不配」是取默认，「关掉」是另一件事——关闭只在程序内可达，
+	// 不暴露给部署侧（部署侧关掉它等于让上游挂起永不中止）。
 	StreamIdleTimeout time.Duration
 }
 
@@ -23,6 +25,10 @@ type Config struct {
 // 一份 3/1000 迟早会与 withDefaults 漂开，而这两个数正是平台解释机制性终止所依据的。
 func DefaultConfig() Config { return Config{}.withDefaults() }
 
+// defaultStreamIdleTimeout 是接收段不活动超时的**默认值**。它是默认值的**唯一来源**：
+// 装配层不设（0）即用它，任何地方再抄一个 120s 都会与这里漂开。
+const defaultStreamIdleTimeout = 120 * time.Second
+
 func (c Config) withDefaults() Config {
 	if c.MaxTurns <= 0 {
 		c.MaxTurns = 1000
@@ -30,9 +36,9 @@ func (c Config) withDefaults() Config {
 	if c.MaxFailStreak <= 0 {
 		c.MaxFailStreak = 3
 	}
-	// 文档写定的默认：不活动 120s。装配层不设时走这里。
-	if c.StreamIdleTimeout <= 0 {
-		c.StreamIdleTimeout = 120 * time.Second
+	// 0 = 取默认；负数**原样保留** = 关闭看门狗（「不配」与「关掉」是两件事，不能混为一谈）。
+	if c.StreamIdleTimeout == 0 {
+		c.StreamIdleTimeout = defaultStreamIdleTimeout
 	}
 	return c
 }
@@ -188,33 +194,7 @@ func (e *Engine) Run(ctx context.Context, in Input) (out Outcome) {
 		}
 
 		turn := &Turn{No: n, Messages: run.Messages}
-	stream:
-		for ev := range sess.Events() {
-			// 流看门狗（FR-1.11①、架构 §6.3 L4）的**接入点**在这里：不活动超时 → `sess.Cancel()`
-			// → 环境错误（退出 1）。计时器在 MS-12 落——本次只留接入点与口径，不实现 select 计时器。
-			if ctx.Err() != nil {
-				_ = sess.Cancel()
-				run.terminate(StatusCancelled, "cancelled", ExitCancelled)
-				break stream
-			}
-			switch ev.Kind {
-			case llm.EvText:
-				turn.Text += ev.Text
-			case llm.EvToolUse:
-				turn.Calls = append(turn.Calls, ev.Call)
-			case llm.EvUsage:
-				run.Usage.InputTokens += ev.Usage.InputTokens
-				run.Usage.OutputTokens += ev.Usage.OutputTokens
-				run.Usage.CachedInputTokens += ev.Usage.CachedInputTokens
-			case llm.EvError:
-				kind := "stream_error"
-				if ev.Err != nil {
-					kind = ev.Err.Kind
-				}
-				run.terminate(StatusFailed, "stream_error: "+kind, ExitEnv)
-				break stream
-			}
-		}
+		e.receiveTurn(ctx, run, turn, sess)
 		if run.Terminal != nil {
 			break
 		}
@@ -264,6 +244,79 @@ func (e *Engine) Run(ctx context.Context, in Input) (out Outcome) {
 
 	// 裸 return：终态由函数开头的 defer 统一取（见那里的说明），这一行不自己再取一次。
 	return
+}
+
+// receiveTurn 收一轮的流：累积正文/工具调用/用量，直到流结束、流内报错、被取消，
+// 或相邻两事件之间静默超过上界。计时器只活在本次调用内，随 return 停止（每轮一个）。
+//
+// 超时**先落终态、再取消**（顺序不可颠倒）：`receiveTurn` 返回时 `run.Terminal != nil`，
+// 调用处的 `if run.Terminal != nil { break }` 因此必然命中——结构上不可能落进下面那句
+// 「本轮无工具调用 → no_tool_call」，不靠"记得写终态"。
+func (e *Engine) receiveTurn(ctx context.Context, run *Run, turn *Turn, sess llm.Session) {
+	var idleC <-chan time.Time // 关闭看门狗时为 nil：该分支永不就绪
+	kick := func() {}          // 未启用时是空操作
+	if d := e.cfg.StreamIdleTimeout; d > 0 {
+		t := time.NewTimer(d)
+		defer t.Stop() // 只在本函数返回时触发一次——计时器不可能跨轮泄漏
+		idleC = t.C
+		kick = func() {
+			// 只有先停掉并（按需）排空，Reset 才安全；否则已就绪的信号会被漏掉。
+			if !t.Stop() {
+				select {
+				case <-t.C:
+				default:
+				}
+			}
+			t.Reset(d)
+		}
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			_ = sess.Cancel()
+			run.terminate(StatusCancelled, "cancelled", ExitCancelled)
+			return
+		case <-idleC:
+			// 取消优先：两路同时就绪时 select 随机，故超时分支再确认一次 ctx。
+			if ctx.Err() != nil {
+				_ = sess.Cancel()
+				run.terminate(StatusCancelled, "cancelled", ExitCancelled)
+				return
+			}
+			// 先落终态、再取消：返回时终态已定，调用处不会再落进 no_tool_call。
+			run.terminate(StatusFailed, "stream_idle_timeout", ExitEnv)
+			_ = sess.Cancel()
+			return
+		case ev, ok := <-sess.Events():
+			if !ok { // 通道关闭 = 流结束
+				return
+			}
+			kick()                // 收到任何事件都算一次活动：不活动计时从这一刻重新起算
+			if ctx.Err() != nil { // 消费到事件时也复查取消
+				_ = sess.Cancel()
+				run.terminate(StatusCancelled, "cancelled", ExitCancelled)
+				return
+			}
+			switch ev.Kind {
+			case llm.EvText:
+				turn.Text += ev.Text
+			case llm.EvToolUse:
+				turn.Calls = append(turn.Calls, ev.Call)
+			case llm.EvUsage:
+				run.Usage.InputTokens += ev.Usage.InputTokens
+				run.Usage.OutputTokens += ev.Usage.OutputTokens
+				run.Usage.CachedInputTokens += ev.Usage.CachedInputTokens
+			case llm.EvError:
+				kind := "stream_error"
+				if ev.Err != nil {
+					kind = ev.Err.Kind
+				}
+				run.terminate(StatusFailed, "stream_error: "+kind, ExitEnv)
+				return
+			}
+		}
+	}
 }
 
 // finalize 跑收尾 handler。它自己再炸一次也不让进程崩掉——已经走到最后一步了，

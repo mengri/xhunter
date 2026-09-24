@@ -997,10 +997,11 @@ func TestPrepare_EmitsConfigSnapshot(t *testing.T) {
 	p := evs[startIdx+1].p
 	// 期望值写字面量：常量被改时会立刻变红（不引用被测常量做期望）。
 	checks := map[string]float64{
-		"max_denied_streak":    3,
-		"max_same_kind_streak": 3,
-		"max_fail_streak":      3,
-		"max_turns_hard":       1000,
+		"max_denied_streak":      3,
+		"max_same_kind_streak":   3,
+		"max_fail_streak":        3,
+		"max_turns_hard":         1000,
+		"stream_idle_timeout_ms": 120000,
 	}
 	for k, want := range checks {
 		got, ok := p[k].(float64)

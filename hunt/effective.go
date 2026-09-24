@@ -29,6 +29,11 @@ type AssemblyFacts struct {
 	// Session，也没有反向查询的通道）。0 表示未注入，如实表达"不知道"，不编一个看着像默认值的数。
 	MaxFailStreak int
 	MaxTurnsHard  int
+	// StreamIdleTimeoutMS 是接收段不活动超时的**生效值**（毫秒；0 = 不限/关闭）。与上面两条机制硬顶
+	// **同源同通道**：只用于 `config_snapshot` 如实报出，**不进 EffectiveConfig**——它是 harness 的
+	// 运行参数，不属于"本次生效的规则装配清单"。只能由装配层注入：它构造 harness.Config 并交给
+	// 循环，Session 拿不到（harness 不认识 Session）。
+	StreamIdleTimeoutMS int
 }
 
 // EffectiveConfig 是生效配置快照的形状。

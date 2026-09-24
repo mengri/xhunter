@@ -46,5 +46,8 @@ func assemblyFacts(hcfg harness.Config) hunt.AssemblyFacts {
 		// 3/1000——否则改了 withDefaults、快照报的还是旧数。
 		MaxFailStreak: hcfg.MaxFailStreak,
 		MaxTurnsHard:  hcfg.MaxTurns,
+		// 接收段不活动超时的生效值（毫秒；0 = 不限/关闭）。与上面两条硬顶**同源同通道**上报，
+		// 只进 config_snapshot、不进 EffectiveConfig。
+		StreamIdleTimeoutMS: int(hcfg.StreamIdleTimeout.Milliseconds()),
 	}
 }
