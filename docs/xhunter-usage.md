@@ -234,6 +234,7 @@ xhunter version
   "assumptions": ["..."],
   "unverified": ["..."],
   "summary": "...",
+  "session_delta": {"turns_from": 0, "turns_to": 0, "ops_count": 0},
   "usage": {"reported": true, "input_tokens": 0, "output_tokens": 0, "cached_input_tokens": 0, "turns": 0, "elapsed_ms": 0},
   "error": {"kind": "prepare_failed", "message": "...", "retryable": true}
 }
@@ -242,6 +243,8 @@ xhunter version
 > `error` 仅失败时出现；`retryable` 与退出码同源（环境问题才为 `true`）。
 > `needs` / `assumptions` 是模型在正文固定小节里的自陈（FR-6.3）：`needs` 非空即表示模型选择停下，`status` 为 `blocked`（退出码 0，改动照常交付）。**未提供写成 `null`，不是 `[]`**——空数组会被读成"没有需要补全的条件"，那是另一句话。
 > `usage.reported: false` 表示**上游未回报用量**——各项为 0 **不代表真的没用**，事件流里有对应的 `degraded` 记录（FR-9.7）。
+> `files_changed` 与 `patch`（`patch_path` 指向的补丁）一律相对**原始基线 commit**（`base_commit`）——**恢复趟也是**：它们描述的是"这条交付分支对基线的整体差异"，不随恢复而改变基准。
+> `session_delta` **才是相对上次运行的增量**、**仅恢复时出现**（同一 `XHUNTER_SESSION_ID` 的续跑）：`turns_from` / `turns_to` 是本次覆盖的轮次区间（从「恢复的轮数 + 1」起），`ops_count` 是**本次运行**的写操作数；新任务不带该键（形状与语义收在 `hunt.SessionDelta`，随交付事实定型）。与上一条对照读：**`files_changed`／`patch` 是"分支 vs 基线"，`session_delta` 是"本次 vs 上次"**。
 > `patch_path` 仅在给了 `--patch` 且补丁产出成功时出现；补丁**排除会话材料目录**
 > （`.xhunter/<session_id>/**`，FR-6.1）——实现状态见 xhunter-status.md 状态索引 · IA-11.6。
 

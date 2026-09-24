@@ -267,7 +267,7 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 | 5 | 扩展能力描述符 | 组装层注入 `ext.ExtHost` | FR-13.4 | 不可用 → 符号路径不可用，工具名字不变 |
 | 6 | 构造两段提示词并定格 | `Prepare` → `buildPromptStage` ×2 → `Context.SetPrompt` | FR-2.6、FR-7.8、FR-15.2/15.3 | 按**装配顺序**调用两段插件，产出 **system / user 两段**；取一次、整任务内冻结 |
 | 7 | 组装首轮消息 | `Prepare` → `Context.Assemble()` → `run.Messages` | FR-7.1 | 提示词 ＋ 历史（首轮历史为空） |
-| 8 | 会话恢复（条件） | `Prepare`（会话非空时） | FR-12.1、FR-13.7 | 投递给出 `XHUNTER_SESSION_ID` 才执行：checkout 分支 tip ＋ 读回材料；指纹不一致拒绝（退出 1）。（接入点已就位（D3：`Prepare` 里 `Bounty.Session != nil` 时调 `SessionRecorder.Load()`）；`Load` 的实现在 MS-7） |
+| 8 | 会话恢复（条件） | `Prepare`（会话非空时，且在 `Open` 之前） | FR-12.1、FR-13.7 | 投递给出 `XHUNTER_SESSION_ID` 才执行：checkout 分支 tip ＋ 读回材料（`SessionRecorder.Load(root)`，**纯读、先于 `openRecorder`**——`Open` 会为不存在的材料建目录并写 meta，先 Open 就分不清"上次留下的材料"与"刚刚为本趟建的空材料"）；材料不存在 → 零值（不算恢复），存在但读不出来 → 退出 1、不自动迁移。实现见 MS-7 |
 | 9 | 生效配置快照 | `Prepare` / 组装层 | FR-11.6 | 装配清单进结果文件（§4） |
 
 事件：`hunt_start`、heartbeat(bootstrap)。失败：环境错误 → `Finalize`（退出 1）。
@@ -534,7 +534,7 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 
 ### 7.6 H6 Session —— 会话材料与检查点恢复（`hunt.SessionRecorder`）
 
-**契约**（`hunt/runtime.go`）：`Open(root string) error` / `RecordTurn(rec harness.Turn)` / `RecordOp(op WriteOp)` / `RecordUsage(u llm.Usage)` / `Ops() []WriteOp` / `Snapshot() error` / `Load() (Restored, error)`。**方法集一次加齐**——写操作序列是恢复的唯一刚需，此前没有通道（`WriteOp` 只被 `Session.ops` 攥着），与材料的落盘实现一起加、不分两次扩公开接口。`Ops()`（本次运行累积）与 `Load()`（读回上次运行**落盘**的那份）**职责不重叠**；`Restored` 是读回的形状（轮次 / 写操作序列 / 用量）。`Delta` / `Fingerprint` 仍不加：没有消费方（同 `llm.Caps` 原则：只声明真正被用到的能力）。（记录项与恢复流程见下；实现状态见 xhunter-status.md 状态索引 · H6）
+**契约**（`hunt/runtime.go`）：`Open(root string) error` / `RecordTurn(rec harness.Turn)` / `RecordOp(op WriteOp)` / `RecordUsage(u llm.Usage)` / `Ops() []WriteOp` / `Snapshot() error` / `Load(root string) (Restored, error)`。**`Load` 是纯读**——不建目录、不写 meta，必须发生在 `Open` 之前（`Open` 会为不存在的材料写 meta，先 Open 就分不清"上次留下的材料"与"刚刚为本趟建的空材料"）。**方法集一次加齐**——写操作序列是恢复的唯一刚需，此前没有通道（`WriteOp` 只被 `Session.ops` 攥着），与材料的落盘实现一起加、不分两次扩公开接口。`Ops()`（本次运行累积）与 `Load()`（读回上次运行**落盘**的那份）**职责不重叠**；`Restored` 是读回的形状（轮次 / 写操作序列 / 用量）。`Delta` / `Fingerprint` 仍不加：没有消费方（同 `llm.Caps` 原则：只声明真正被用到的能力）。（记录项与恢复流程见下；实现状态见 xhunter-status.md 状态索引 · H6）
 
 **记录**（全程）：
 
@@ -547,9 +547,9 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 **恢复**（session 非空时，在首轮推理之前执行——落在 `Prepare` 里；**不重放写操作**）：
 
 1. 获取基线（按 SHA 浅克隆，不可得则完整克隆）→ **在基线 commit 上创建并推送任务分支**（已存在且 tip 为基线或其后代即幂等）→ **checkout 分支 tip（最后一个检查点）**——该状态即上次工作区，**无需重新执行任何写操作**
-2. 读回**会话材料**（`.xhunter/<session_id>/`，随检查点提交进分支，git 保证完整性；`SessionRecorder.Load()` → `Restored`）→ 台账出已完成轮次与写操作序列
+2. 读回**会话材料**（`.xhunter/<session_id>/`，随检查点提交进分支，git 保证完整性；`SessionRecorder.Load(root)` → `Restored`）→ 台账出已完成轮次与写操作序列。材料**不存在** → 零值（不算恢复）；存在但读不出来（坏行 / `schema_version` 不认识 / 未知记录类型）→ 退出 1
 3. **零工具执行**：恢复过程不调用任何原语；材料损坏或 `schema_version` 不兼容 → 退出码 1，平台 fallback 重跑（FR-12.6）
-4. 回灌上下文（过 `ContextBuilder` 的压缩）→ 设为 `run.Messages`，从**下一轮**继续——不重做已完成轮次
+4. 回灌上下文（把读回的轮次按原有顺序 `ContextBuilder.Append`）＋ 把本次投递的补充条件作为新 user 消息追加在历史之后 → 设为 `run.Messages`，从**下一轮**继续——不重做已完成轮次
 
 **代价（明确接受）**：检查点之间的改动（最多在途一轮）不在工作区里，由模型在续跑轮重做。用"最多一轮的 token"换掉"重放器 + 忠实性证明"。
 
@@ -929,9 +929,9 @@ Bounty(session) ──► H6.Session
                         │
          ①获取基线 + 创建并推送任务分支（tip = base_commit；工作区须干净）
                         │
-         ②读回会话材料（checkout 分支 tip 即上次工作区；不重放写操作）
+         ②读回会话材料（纯读，先于打开记录器；checkout 分支 tip 即上次工作区；不重放写操作）
                         │
-         ③回灌上下文（H2 压缩后）────► messages
+         ③回灌上下文（H2 压缩后）＋ 本次补充条件（追加在历史之后）────► messages
                         │
                         ▼
                   H1.Loop 进入 assemble，从断点续跑
@@ -1101,7 +1101,7 @@ Bounty(session) ──► H6.Session
 
 ### 12.6 H6 — `hunt.SessionRecorder`
 
-**契约**：`Open(root string) error` / `RecordTurn(rec harness.Turn)` / `RecordOp(op WriteOp)` / `RecordUsage(u llm.Usage)` / `Ops() []WriteOp` / `Snapshot() error`——方法集**一次加齐**（写操作序列是恢复的唯一刚需，此前没有通道）；`Delta` / `Fingerprint` 等有消费方再加。实现状态见 xhunter-status.md 状态索引 · H6。
+**契约**：`Open(root string) error` / `RecordTurn(rec harness.Turn)` / `RecordOp(op WriteOp)` / `RecordUsage(u llm.Usage)` / `Ops() []WriteOp` / `Snapshot() error` / `Load(root string) (Restored, error)`——方法集**一次加齐**（写操作序列是恢复的唯一刚需，此前没有通道）；`Delta` / `Fingerprint` 等有消费方再加。实现状态见 xhunter-status.md 状态索引 · H6。
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|

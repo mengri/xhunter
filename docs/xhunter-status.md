@@ -41,6 +41,7 @@
 | 事件出口 | 信封四字段统一盖章；已发 `hunt_start` · `config_snapshot` · `tool_call` · `tool_result` · `assistant_text` · `usage` · `heartbeat` · `error` · `policy_denied` · `degraded` · `deliverable` · `hunt_end` | `hunt/session.go`（工具调用/结果/策略拒绝）、`hunt/hooks.go`（起飞/正文/用量/降级/终态） |
 | 结果文件 | `--result` 无论成败都写；含终态/退出码/仓库事实/提交/改动清单/用量/error | `cmd/xhunter/result.go`（IA-12.9） |
 | 模型声明终态（`needs` / `assumptions`） | `hunt/declare.go`（解析固定小节）＋ `Session.OnTurn`（轮边界登记）＋ `Session.Finalize`（收尾收敛为 `blocked`）；事件 `needs_input` / `assumption`；结果文件 `needs` / `assumptions` | `hunt/declare_test.go`（IA-1.13）、`cmd/xhunter/result_test.go` |
+| 会话恢复（resume） | `hunt/hooks.go`（`Prepare` 纯读回灌 ＋ 新条件追加）＋ `cmd/xhunter/material.go`（`Load`）＋ `hunt/session.go`（`SessionDelta`） | `TestEndToEnd_ResumeContinuesFromLastCheckpoint`、`TestLoad_ReadsTurnsOpsAndUsageInOrder`、`TestPrepare_ResumeSeedsContextWithoutExecutingTools` |
 
 ### 1.2 声明齐备、调用返回 `not_implemented`
 
@@ -57,7 +58,7 @@
 
 | 缺口 | 现状证据 |
 |---|---|
-| 会话恢复（resume） | 材料已落盘（`.xhunter/<session_id>/session.jsonl`，MS-6）；checkout 分支 tip ＋ 读回材料 ＋ 回灌上下文属 MS-7 |
+| 恢复的轮数 / 预算口径 | `Load` 读回的轮数按**记录条数**算、不取 `turn.no` 最大值（恢复后本趟轮号从 1 **重新起计**，材料里会出现两段都从 1 开始的 `turn` 记录）；**轮数预算不跨恢复续算**（本次轮号重新起计，无累计口径）；token 预算已续算（`Prepare` 补喂 `Restored.Usage` 的输入/输出）。见 §4.3 MS-7 |
 | 上下文压缩 | `contextBuilder` 只有组装（`Assemble`），无水位、无下压 |
 | 门禁全链 | `hunt/hooks.go:59` — `s.gates = nil`，一期暂空 |
 | 符号能力与扩展宿主 | `ext/ext.go` 只有接口，无实现；`hunt/symbolic` 声明不实现 |
@@ -102,13 +103,13 @@
 | <a id="fr-11-1"></a>FR-11.1（每次模型/工具调用产出结构化事件，含耗时与用量） | 部分已落地 | MS-2 | 模型侧已有 `assistant_text` / `usage`（每轮增量）；工具侧 `tool_call`（`args`）/ `tool_result`（含 `duration_ms`）；终态 `hunt_end` 带累计用量。**余**：`check_result`（MS-5）、`context_compacted`（MS-11）等随各自里程碑接入 |
 | <a id="fr-11-2"></a>FR-11.2（错误结构化） | 已落地 | MS-2 | 终态 `failed` 发一条 `error`（`kind`＝原因首段 / `retryable`＝与退出码同源 / `context`＝阶段与轮次）；取消与 `blocked` 不发。`kind` / `retryable` 的口径上收为 `hunt.ErrorKind` / `hunt.RetryableForExitCode`，事件与结果文件同源。用例 `TestFinalize_EmitsErrorOnFailureMatchingExitCode`、`TestFinalize_NoErrorEventOnBlockedOrCancelled` |
 | <a id="fr-11-6"></a>FR-11.6（生效配置快照） | 已落地 | MS-2 | 装配完成后冻结一次，进 `hunt_start` 与结果文件 `effective_config`；门禁清单随 MS-5 接入。用例 `TestEffectiveConfig_ListsPrimitivesInToolFaceOrder`、`TestEffectiveConfig_CarriesPluginAndFilterNames`、`TestEffectiveConfig_CarriesAssemblyFacts`、`TestPrepare_EmitsHuntStart`、`TestResultFile_EffectiveConfigIsWritten` |
-| <a id="fr-12-1"></a>FR-12.1（会话恢复 resume） | 待接入 | MS-7 | 恢复未实现 |
-| <a id="fr-12-2"></a>FR-12.2/12.2b/12.2c/12.3（会话材料） | 部分已落地 | MS-6 | 材料已落盘（`.xhunter/<session_id>/session.jsonl`，meta 带 `schema_version`、按任务隔离、追加写）；**余**：恢复（MS-7） |
+| <a id="fr-12-1"></a>FR-12.1（会话恢复 resume） | 已落地 | MS-7 | `Prepare` 读回材料（**纯读、先于 `Open`**）→ 回灌上下文 → 从下一轮继续；全程**零工具执行、零模型调用、不重放写操作**（工作区已由分支 tip 给出）。用例 `TestEndToEnd_ResumeContinuesFromLastCheckpoint`、`TestPrepare_ResumeSeedsContextWithoutExecutingTools`、`TestPrepare_ResumeAppendsNewConditionsAfterRestoredHistory`、`TestPrepare_FreshSessionWithoutMaterialIsNotResumed` |
+| <a id="fr-12-2"></a>FR-12.2/12.2b/12.2c/12.3（会话材料） | 已落地 | MS-6 / MS-7 | 材料已落盘（`.xhunter/<session_id>/session.jsonl`，meta 带 `schema_version`、按任务隔离、追加写）；**读回**随 MS-7 落地（`Load` 纯读、先于 `Open`；turn/op/usage 三类按行序解析、usage 按记录累加）。用例 `TestLoad_ReadsTurnsOpsAndUsageInOrder`、`TestLoad_MissingMaterialIsZeroValueNotAnError`、`TestLoad_UnknownRecordTypeIsAnError`、`TestSave_MaterialLandsUnderSessionDirWithSchemaVersion` |
 | <a id="fr-13-1"></a>FR-13.1~13.9（扩展接入） | 待接入 | MS-8 | `ext.ExtHost` 无实现 |
 | <a id="fr-14-1"></a>FR-14.1~14.8（上下文压缩） | 待接入 | MS-11 | `ContextBuilder` 只有组装 |
 | <a id="fr-15-2"></a>FR-15.2/15.5/15.6（skill 清单注入与解析容错） | 已落地 | — | `prompt/skills`；正文按需读取（FR-15.3） |
 | <a id="ac-6"></a>AC-6（SIGTERM 取消） | 已落地 | — | 进程级断言 `TestEndToEnd_SigtermConvergesToCancelled`；其余信号形态待补（见 §5） |
-| <a id="ac-7"></a>AC-7（崩溃重派 resume） | 待接入 | MS-7 | 依赖会话材料与恢复 |
+| <a id="ac-7"></a>AC-7（崩溃重派 resume） | 已落地 | MS-7 | 投递同一 `XHUNTER_SESSION_ID` → checkout 分支 tip（最后检查点）＋ 读回材料 ＋ 从下一轮继续（不重做已完成轮次）；恢复失败（版本不兼容 / 坏材料）退出 1。用例 `TestEndToEnd_ResumeContinuesFromLastCheckpoint`、`TestEndToEnd_ResumeCorruptedMaterialIsEnvError`、`TestEndToEnd_ResumeAfterClarificationAppliesNewConditions`、`TestEndToEnd_FreshSessionWithoutMaterialIsNotAnError` |
 | <a id="ac-8"></a>AC-8（凭据不落事件/日志/patch/材料） | 待补 | §5 | 需 CI 级静态扫描，非单测能覆盖 |
 | <a id="ac-9"></a>AC-9（stdout 全为合法事件行） | 已落地 | MS-2 | 逐行合法 JSON ＋ 信封四字段（`ts` 为 RFC3339），无杂质。用例 `TestEventSink_StdoutIsPureNDJSON`、`TestHuntCmd_EventsGoToStdoutAndLogsGoToStderr` |
 | <a id="ac-17"></a>AC-17（压缩保真） | 待接入 | MS-11 | 压缩未接入；**契约已定义**（D4：`CompactionConfig` ＋ 压缩位在 `ContextBuilder` 内），实现待 MS-11 |
@@ -194,9 +195,9 @@
 | <a id="ia-6-1"></a>IA-6.1 | 已落地 | `TestSave_MaterialLandsUnderSessionDirWithSchemaVersion`、`TestRecorder_RecordsOpsAndUsageFromTheSession`、`TestMaterial_LoadRejectsUnknownSchemaVersion`、`TestEndToEnd_MaterialIsSelfSufficientForResume`、`TestRecorder_SnapshotAfterCharge` | MS-6 | 材料自含续跑信息（对话历史 ＋ 写操作序列 ＋ **每轮**用量 ＋ 能力指纹位），meta 带 `schema_version`；读取端版本不认识即报错 |
 | <a id="ia-6-1b"></a>IA-6.1b | 已落地 | `TestSave_MaterialLandsUnderSessionDirWithSchemaVersion` | MS-6 | 按任务隔离 `.xhunter/<session_id>/session.jsonl`；不同 session 互不覆盖 |
 | <a id="ia-6-1c"></a>IA-6.1c | 已落地 | `TestCommit_ForceAddsMaterialEvenWhenGitignored`、`TestCommit_MissingMaterialDirDoesNotFail`、`TestCommit_WithoutMaterialDirIsUnchanged` | MS-6 | `Commit` 在 `add -A` 后对本次会话材料目录再 `add -f`（仓库忽略 `.xhunter/` 时材料仍随提交）；目录尚未落盘则跳过、不判死；`MaterialDir` 为空时不加 |
-| <a id="ia-6-2"></a>IA-6.2 | 待接入 | — | MS-7 | 恢复过程零工具执行 |
-| <a id="ia-6-3"></a>IA-6.3 | 待接入 | — | MS-7 | 恢复从下一轮继续（FR-12.1） |
-| <a id="ia-6-4"></a>IA-6.4 | 待接入 | — | MS-7 | `schema_version` 不兼容 → 环境错误（FR-12.6） |
+| <a id="ia-6-2"></a>IA-6.2 | 已落地 | `TestPrepare_ResumeSeedsContextWithoutExecutingTools` | MS-7 | 恢复段不执行任何原语、不提交；写操作序列**不重放**（工作区已由分支 tip 给出） |
+| <a id="ia-6-3"></a>IA-6.3 | 已落地 | `TestEndToEnd_ResumeContinuesFromLastCheckpoint`、`TestPrepare_ResumeAppendsNewConditionsAfterRestoredHistory` | MS-7 | 回灌读回的轮次（按原有顺序）后从下一轮继续；本次补充条件作为新 user 消息追加在历史之后 |
+| <a id="ia-6-4"></a>IA-6.4 | 已落地 | `TestEndToEnd_ResumeCorruptedMaterialIsEnvError`、`TestMaterial_LoadRejectsUnknownSchemaVersion` | MS-7 | `schema_version` 不兼容 → 退出 1（`prepare_failed`、可重试），不自动迁移；材料**不存在**是零值、不是错误 |
 | <a id="ia-6-5"></a>IA-6.5 | 待接入 | — | MS-8 | 材料含扩展能力指纹（FR-13.7） |
 | <a id="ia-6-5b"></a>IA-6.5b | 已落地 | `TestDecide_WriteToControlDirDenied` | — | 策略侧已落地；git 侧靠工具面不含 git 原语 |
 | <a id="ia-6-6"></a>IA-6.6 | 已落地 | `TestSnapshot_FailureDoesNotBlockTheRun`、`TestRecorder_OpenFailureDegradesWithoutFailingPrepare` | — | 材料绑定/落盘失败只降级（warn），不阻断任务 |
@@ -269,10 +270,10 @@
 | 编号 | 状态 | 对应 MS-n | 缺口说明 |
 |---|---|---|---|
 | <a id="l1-4"></a>L1-4 门禁清单来源裁决 | 待接入 | MS-5 | `Prepare` 里 `s.gates = nil`（一期暂空），来源裁决未接入；**契约已定义**（D2：`GateSource` ＋ 档位常量 `bounty`/`repo`/`none` ＋ `Config.Gates` 装配槽），实现待 MS-5 |
-| ~~契约：会话恢复接入位 ＋ 结果文件 `session_delta` 字段位~~（MS-7） | **契约已定义**（2026-09-23，未冻结期）：`hunt.Restored`（轮次 / 写操作序列 / 用量）＋ `SessionRecorder.Load()`（与 `Ops()` 分工：本次运行 vs 读回上次）；`Prepare` 在 `Bounty.Session != nil` 时接上读回入口（`Load` 实现是 **panic 哨兵**"恢复未实现：MS-7"——真去 resume 立刻炸、不当新任务跑）；结果文件加 `session_delta`（`{turns_from, turns_to, ops_count}`，`omitempty`，写入端未接）。**归属修正**：`session_delta` 原挂 MS-6（归属写错——`turns_from` 只在恢复时才有意义），改挂 **MS-7** |
+| ~~契约：会话恢复接入位 ＋ 结果文件 `session_delta` 字段位~~（MS-7） | **已落地**（2026-09-24）：`hunt.Restored`（轮次 / 写操作序列 / 用量）＋ `SessionRecorder.Load(root string)`（**纯读、先于 `Open`**；与 `Ops()` 分工：本次运行 vs 读回上次）；`Prepare` 在 `Bounty.Session != nil` 时读回并回灌上下文；结果文件 `session_delta`（形状上收为 `hunt.SessionDelta`，`{turns_from, turns_to, ops_count}`，`omitempty`——**仅恢复时出现**）。**归属修正**：`session_delta` 原挂 MS-6，改挂 **MS-7**。用例 `TestEndToEnd_ResumeContinuesFromLastCheckpoint`、`TestPrepare_ResumeSeedsPolicyBudgetWithRestoredUsage` |
 | ~~契约：流看门狗、压缩位与 config_snapshot 形状~~（MS-11 / MS-12） | **契约已定义**（2026-09-23，未冻结期）：`harness.Config.StreamIdleTimeout`（接收段不活动超时；0=不限、缺省 120s；接入点在接收循环、注释标明计时器留 MS-12）；`hunt.CompactionConfig`（三档水位 ＋ 冷却，水位来自 `providerconfig.Resolved.Watermarks`）＋ `context_compacted` 载荷（`level`/`released_tokens`/`watermark`）＋ `config_snapshot` 载荷（三个阈值及其来源）。**发出点均不接**（`config_snapshot` 的 `max_denied_streak` 来源未定死 / 压缩未实现）。**更正（MS-12，2026-09-24）**：`StreamIdleTimeout` 的「0=不限」口径**当时就不成立**（`withDefaults` 一直把 0 变成 120s），现更正为 **0 = 取默认 120s / 正数 = 不活动上界 / 负数 = 关闭看门狗**，且计时器已随 MS-12 落地（见 §2.3）。实现待 MS-11 / MS-12 / MS-3 |
 | <a id="l1-5"></a>L1-5 扩展能力描述符 | 待接入 | MS-8 | 组装层注入 `ext.ExtHost` 未接入；**契约已定义**（D2：`Capabilities` / `Locate` / `Fingerprint` / `Close` ＋ `ext.Unimplemented{}` panic 哨兵装配），实现待 MS-8 |
-| <a id="l1-8"></a>L1-8 会话恢复（条件） | 待接入 | MS-7 | `XHUNTER_SESSION_ID` 非空时的 checkout tip ＋ 读回材料未接入；**接入点已就位**（D3：`Prepare` 在 `Bounty.Session != nil` 时调 `SessionRecorder.Load()`，`Load` / `Restored` 契约已定义），实现待 MS-7 |
+| <a id="l1-8"></a>L1-8 会话恢复（条件） | 已落地 | MS-7 | `XHUNTER_SESSION_ID` 非空时：`Prepare` 在 `openRecorder` 之前**纯读**回材料（`Load(root)`）→ 回灌上下文 → 从下一轮继续；材料不存在 → 零值（不算恢复），存在但读不出来 → 环境错误（退出 1）。用例 `TestPrepare_ResumeSeedsContextWithoutExecutingTools`、`TestEndToEnd_ResumeCorruptedMaterialIsEnvError` |
 | <a id="l1-9"></a>L1-9 生效配置快照 | 已落地 | MS-2 | 装配完成后冻结一次，进 `hunt_start` 与结果文件 `effective_config`（含原语顺序与殿后 `checkpoint`）；门禁清单随 MS-5。证据 `TestEffectiveConfig_ListsPrimitivesInToolFaceOrder`、`TestPrepare_EmitsHuntStart` |
 | <a id="l2-事件通道"></a>L2-事件通道健康 | 已落地 | MS-2 | `OnTurn` 入口复查 `Sink.Failed()`：通道已断则本轮零工具执行，收敛 `event_channel_failed`（退出 1）。用例 `TestOnTurn_StopsBeforeWorkWhenChannelAlreadyFailed` |
 | <a id="l2-压缩"></a>L2-压缩 | 待接入 | MS-11 | `ContextBuilder` 内无压缩；**契约已定义**（D4：`CompactionConfig` ＋ `context_compacted` 载荷），实现待 MS-11 |
@@ -292,7 +293,7 @@
 | <a id="h3-tools"></a>H3 Tools | 基础＋流水线已落地 / 符号与门禁待接入 | 见 IA-3.x；符号属 MS-8/MS-10，门禁属 MS-5 |
 | <a id="h4-policy"></a>H4 Policy | 见 H4-裁决点 | 见上 |
 | <a id="h5-stream"></a>H5 Stream | 出口/信封 ＋ 心跳已落地 / 落盘待接入 | 心跳已接入（MS-2）；session 落盘 MS-6 |
-| <a id="h6-session"></a>H6 Session | 待接入 | 只记内存；材料 MS-6、恢复 MS-7 |
+| <a id="h6-session"></a>H6 Session | 已落地 | 材料落盘（MS-6）与恢复（MS-7）均已落地：`Load(root)` 纯读回灌、`SessionDelta` 随交付事实定型 |
 | <a id="h7-ext"></a>H7 Ext | 待接入 | `ext.ExtHost` 无实现（MS-8） |
 
 **使用手册（usage）外部契约的状态键**：
@@ -301,7 +302,7 @@
 |---|---|---|---|
 | <a id="usage-1-2-bounty"></a>usage§1.2·Bounty生成器 | 已落地 | MS-12 | `xhunter run --repo <path> --task <text> [--out <path>]`：探测 → 生成 Bounty（`--out` 可选）→ 用同一份装配执行一次 Hunt。当前 CLI 子命令只有 `version` 与 `run`，以及缺省执行形态 `--bounty <path>`（另有 `--log-file`/`--result`/`--patch`）；不存在 `models` 子命令 |
 | <a id="usage-5-events"></a>usage§5·已发出事件 | 部分已发出 | MS-2 | 已发：`hunt_start`、`hunt_end`（带累计用量）、`tool_call`、`tool_result`、`assistant_text`、`usage`（每轮增量）、`heartbeat`（按间隔、带阶段）、`error`、`policy_denied`、`deliverable`、`degraded`（含 `scope: usage`）、`needs_input`、`assumption`；其余事件类型为契约目标，随各自里程碑接线：`check_result` / `gate_config_changed`（MS-5）、`context_compacted`（MS-11；**形状已定义（D4）**）、`config_snapshot`（MS-3/MS-4；**形状已定义（D4）**） |
-| <a id="usage-6-fields"></a>usage§6·待接入字段 | 部分待接入 | MS-2 / MS-6 | 已接线：`needs` / `assumptions`（2026-09-23）、`effective_config`（2026-09-23）、`summary`（2026-09-23）、`unverified`（2026-09-23）。仍未接线：`gates`（MS-5）、`session_delta`（MS-7——**归属修正**：原挂 MS-6 是写错，`turns_from` 只在恢复时才有意义） |
+| <a id="usage-6-fields"></a>usage§6·待接入字段 | 部分待接入 | MS-2 / MS-6 / MS-7 | 已接线：`needs` / `assumptions`（2026-09-23）、`effective_config`（2026-09-23）、`summary`（2026-09-23）、`unverified`（2026-09-23）、`session_delta`（2026-09-24，MS-7——**仅恢复时出现**，随交付事实定型、`omitempty`）。仍未接线：`gates`（MS-5） |
 
 ### 2.3 已结清（本周期）
 
@@ -353,7 +354,7 @@
 
 | 主题 | §2 索引键 |
 |---|---|
-| 会话材料与恢复 | `IA-6.2`、`IA-6.3`、`IA-6.4`、`IA-6.5`、`L1-8`、`FR-12.1`、`FR-12.2`、`AC-7` |
+| 会话材料（仅余扩展能力指纹） | `IA-6.5`（MS-8） |
 | 压缩 | `IA-2.5`、`IA-2.6`、`IA-2.7`、`IA-2.8`、`L2-压缩`、`FR-14.1`、`AC-17`、`AC-18` |
 | 门禁 | `IA-3.16`（`check` 声明不实现）、`IA-11.12`、`L1-4`、`L7-gates`、`FR-5.2b`、`产品§6` |
 | 符号能力 | `IA-3.5`、`IA-7.1`~`IA-7.7`、`L1-5`、`FR-4.1`、`FR-4.3`、`FR-13.1`、`产品§6` |
@@ -368,7 +369,6 @@
 | 进程级信号（其余信号形态） | `IA-12.8` |
 | 扩展崩溃隔离 | `IA-7.6` |
 | 凭据静态扫描 | `IA-6.8`、`IA-8.4`、`AC-8` |
-| 恢复正确性 | `AC-7`、`IA-6.2`、`IA-6.3` |
 | 嵌套约定附注 | `IA-2.10` |
 | 「工具面恒定」对照 | `IA-7.1` |
 | 「唯一来源」的重复实现（如另写一份 `branchFor`） | 静态扫描/人工审查——**无法用行为用例检出**（重复代码行为等价，同 AC-8 / IA-8.4 / IA-6.8 的静态扫描类） |
@@ -386,7 +386,7 @@
 | 阶段 | 范围（设计文档 §8） | 现状 |
 |---|---|---|
 | **M1 最小可用** | 进程契约、git 基线获取与**任务分支 + 阶段性检查点 + 交付推送**、**基础原语 5 个**（`read`/`write`/`edit`/`find`/`glob`）、**工具面定格为 6 + 1**（三个符号原语本期**不注册**、随 MS-8 接入；`check` 本期注册、返回 `not_implemented`）、内置提示词、整体 diff 交付、策略与预算、事件流、**会话材料随检查点提交**。目标平台 linux/amd64 | **主干已跑通**（见 §1.1）；**会话材料随检查点提交**尚未落地（属 MS-6） |
-| **M1.5 会话恢复** | resume：checkout 任务分支 tip + 读回会话材料 + 回灌上下文继续（不重放写操作）；恢复失败 fallback 重跑 | **未落地**（MS-6 → MS-7） |
+| **M1.5 会话恢复** | resume：checkout 任务分支 tip + 读回会话材料 + 回灌上下文继续（不重放写操作）；恢复失败 fallback 重跑 | **已落地**（MS-6 → MS-7） |
 | **M2 读精度与符号替换** | MCP 扩展接入框架 + 首个符号扩展（`symbol_read`/`symbol_edit`，首发语言 Go） | **未落地**（MS-8） |
 | **M3 手术能力与校验** | `symbol_rename`（含引用解析）、改动规模上报、扩充扩展语言覆盖 | **未落地**（MS-9 / MS-10） |
 
@@ -402,7 +402,7 @@
 | **MS-4** | 检查点分档与提交健壮性 | 一期收口 | MS-1 | 中 | FR-1.3b/1.3c/1.11②、IA-11.8/11.10/11.11/11.13 | **已完成**（2026-09-23；结构判据三态、连败上限、时序/不可见性/意图兑现断言全部落地，见 §2.3） |
 | **MS-5** | 门禁落地（`check` 实现 ＋ 全链护栏） | 一期收口 | MS-4 | 大 | FR-5.2b~5.2i、IA-11.12 | 未开始 |
 | **MS-6** | 会话材料落盘 | M1.5 前置 | MS-4 | 中 | FR-12.2/12.2b/12.3、IA-6.1/6.1b/6.1c | **已完成**（2026-09-23；材料落盘、Recorder 接口一次加齐、交付 diff/patch 排除材料目录、随检查点 `add -f` 全部落地，见 §2.3） |
-| **MS-7** | 会话恢复（resume） | M1.5 | MS-6 | 大 | FR-12.1/12.6、AC-7、IA-6.2/6.3/6.4 | 未开始 |
+| **MS-7** | 会话恢复（resume） | M1.5 | MS-6 | 大 | FR-12.1/12.6、AC-7、IA-6.2/6.3/6.4 | **已完成**（2026-09-24；`Load` 真读回、`Prepare` 纯读先于 `Open`、回灌上下文＋新条件追加、`session_delta` 接线、token 预算续算，见 §4.3） |
 | **MS-8** | 扩展接入与符号读写 | M2 | MS-2 | 大 | FR-13、FR-4.1/4.2/4.4~4.8/4.13、IA-7.1~7.6 | 未开始 |
 | **MS-9** | 结构检查与 `on_structure` 默认档 | M2 收尾 | MS-5、MS-8 | 中 | FR-1.3d、IA-11.12 | 未开始 |
 | **MS-10** | `symbol_rename`（跨文件重命名）与规模上报 | M3 | MS-8 | 中 | FR-4.3、FR-6.2 | 未开始 |
@@ -577,23 +577,32 @@
 
 #### MS-7 会话恢复（resume）
 
+**状态**：**已完成**（2026-09-24）。
+
 **目标**：跨机器 failover 成立：崩溃后向新机器投递同一会话，接着最后一个检查点继续，**不重放写操作**。
 
 **范围**
-- 投递给出 `XHUNTER_SESSION_ID` → `Prepare` 里：checkout 任务分支 tip → 读回材料（`SessionRecorder.Load()`）→ 回灌上下文（过 `ContextBuilder`）→ 从下一轮继续。（**接入点已就位（D3）**；`Load` 的实现在 MS-7。）
-- **零工具执行、零模型调用**：恢复段不调用任何原语。
-- **恢复失败** → 退出码 1；材料**不存在**是正常情况，与「损坏」分开。
+- 投递给出 `XHUNTER_SESSION_ID` → `Prepare` 里：checkout 任务分支 tip → 读回材料（`SessionRecorder.Load(root)`，**纯读、先于 `openRecorder`**）→ 回灌上下文（把读回的轮次按原有顺序 `ContextBuilder.Append`）→ 把本次补充条件作为新 user 消息追加在历史之后 → 从下一轮继续。（**已落地**。）
+- **零工具执行、零模型调用**：恢复段不调用任何原语、不提交；`Restored.Ops` 不重放、不并入本次 `s.ops`。用例 `TestPrepare_ResumeSeedsContextWithoutExecutingTools`、`TestEndToEnd_ResumeContinuesFromLastCheckpoint`。
+- **恢复失败** → 退出码 1；材料**不存在**是正常情况，与「损坏」分开。用例 `TestEndToEnd_ResumeCorruptedMaterialIsEnvError`、`TestEndToEnd_FreshSessionWithoutMaterialIsNotAnError`。
 - 分支语义沿用已有实现（`TestPrepareBaseline_ResumeChecksOutBranchTip`）。
-- **澄清后续跑**：新 Bounty 的补充条件作为新的 user 消息追加在回灌历史之后；断言对象是假上游收到的请求内容。
+- **token 预算续算**：`Prepare` 把 `Restored.Usage` 的输入/输出补喂一次策略，使同一任务多次重派不重置 token 上限（**不动**本次运行的水位）。用例 `TestPrepare_ResumeSeedsPolicyBudgetWithRestoredUsage`。
+- **澄清后续跑**：新 Bounty 的补充条件作为新的 user 消息追加在回灌历史之后（定位语 `本次投递的补充条件：`）；断言对象是假上游收到的请求内容。用例 `TestEndToEnd_ResumeAfterClarificationAppliesNewConditions`、`TestPrepare_ResumeAppendsNewConditionsAfterRestoredHistory`。
 
 **独立验收的证据**
-- e2e：`TestEndToEnd_ResumeContinuesFromLastCheckpoint`——断言：工作区 == 最后检查点、未重做已完成轮次、恢复段零写操作。
-- `TestEndToEnd_ResumeCorruptedMaterialIsEnvError`（退出 1）。
-- `TestEndToEnd_FreshSessionWithoutMaterialIsNotAnError`。
-- `TestEndToEnd_ResumeAfterClarificationAppliesNewConditions`。
+- e2e：`TestEndToEnd_ResumeContinuesFromLastCheckpoint`——断言：第二趟首轮请求体含第一趟历史、第二趟零写操作（`session_delta.ops_count == 0`）、分支 tip 未推进、`session_delta == {turns_from:2, turns_to:2, ops_count:0}`（字面量）。
+- `TestEndToEnd_ResumeCorruptedMaterialIsEnvError`（退出 1、`prepare_failed`、可重试）。
+- `TestEndToEnd_FreshSessionWithoutMaterialIsNotAnError`（结果文件**不含** `session_delta` 键）。
+- `TestEndToEnd_ResumeAfterClarificationAppliesNewConditions`（新条件下标 > 回灌历史下标）。
+- 读回单测：`TestLoad_MissingMaterialIsZeroValueNotAnError`、`TestLoad_ReadsTurnsOpsAndUsageInOrder`、`TestLoad_UnknownRecordTypeIsAnError`。
 - AC-7 的完整断言。
 
 **依赖**：MS-6。**不做**：压缩回灌（MS-11 接上同一管线）。
+
+**口径（明确接受）**
+- **交付 diff 一律相对原始基线 commit**（`files_changed` 与 `patch`，**恢复趟也是**）：交付物是**分支对基线**的整体差异——MR 评审要看的正是"这条交付分支改了什么"。若改成"相对恢复 tip"，平台在续跑趟会看到**空清单**，比"多报一条上一趟的改动"更坏。续跑趟的**增量**由 `session_delta`（`turns_from` / `turns_to` / `ops_count`）单独回答，两者不重复表达同一件事。
+- **轮数预算不跨恢复续算**（本次轮号从 1 重新起计，无累计口径）；token 预算已续算（`Prepare` 补喂 `Restored.Usage` 输入/输出）。轮数一律按**记录条数**算，不取 `turn.no` 最大值——恢复后材料里会出现两段都从 1 开始的 `turn` 记录。用例 `TestPrepare_ResumeCountsTurnsByRecordsNotByMaxTurnNo`。
+- **"存在即已恢复"**：判据只有一处——`Load` 返回的 `SchemaVersion != 0`。材料存在（含"只有 meta、零记录"的退化情形）即算已恢复；该退化情形在正常路径上不可达（材料要进分支必先有轮次与写操作），此处口径只为"存在即恢复"这一条判据自洽。用例 `TestLoad_MetaOnlyMaterialIsNotAnError`、`TestPrepare_MetaOnlyMaterialIsTreatedAsResumed`。
 
 **风险**：假上游夹具要能「制造崩溃点」，并让第二次运行的请求序列可断言——最容易被低估。
 
@@ -736,7 +745,7 @@
 | **信号组合** | SIGTERM 的进程级断言已落地（`TestEndToEnd_SigtermConvergesToCancelled`，AC-6）；SIGKILL / 中断时机的更多组合仍可补 |
 | **单步驱动（FR-1.9 形态 C）** | 明确不进一期 |
 | **多 agent 路线**（备忘录，未采纳） | V 层已定判据路线，多 agent 不作为补法；若将来要做，落点是**操作原语**（`harness` 不动），缺口清单（用量回流 / 事件嵌套标识 / 递归上限 / 工具面冲突）见 `docs/xhunter-memo-multi-agent-route.md`。其中**最硬的是第 7 条**：「子 agent 裁剪工具面」与已承诺的「**同一构建版本内**工具面恒定 ＋ **环境能力不决定注册** ＋ **随能力接入而扩展**」（AC-26）直接冲突——**同一构建、同一能力集之下所有 agent 的工具面必须一致**（不再是"双轴都不变"）；要按角色给不同工具面，必须先改这条口径或解决该冲突再编码 |
-| **冻结前回收：panic 哨兵**（**冻结前置条件**） | 未冻结期以 `panic` 哨兵装配了尚未实现的装配扩展点（见 §7.1 决策 18、架构 §8 例外）。**冻结前必须逐条回收**：把每个 panic 哨兵换成**显式失败或如实降级**，并补用例——"走到即炸"只允许存在于未冻结期。**进度**：`Policy.ObserveFailure` / `DeniedCount`（哨兵 5、6）已随 MS-3 回收为运行期如实判定；**尚余 5 处**：`ext/ext.go` 四处（`ExtHost` 的 `Capabilities` / `Locate` / `Fingerprint` / `Close`，待 MS-8）、`cmd/xhunter/material.go:132` 一处（会话恢复 `Load`，待 MS-7） |
+| **冻结前回收：panic 哨兵**（**冻结前置条件**） | 未冻结期以 `panic` 哨兵装配了尚未实现的装配扩展点（见 §7.1 决策 18、架构 §8 例外）。**冻结前必须逐条回收**：把每个 panic 哨兵换成**显式失败或如实降级**，并补用例——"走到即炸"只允许存在于未冻结期。**进度**：`Policy.ObserveFailure` / `DeniedCount`（哨兵 5、6）已随 MS-3 回收为运行期如实判定；**尚余 4 处**：`ext/ext.go` 四处（`ExtHost` 的 `Capabilities` / `Locate` / `Fingerprint` / `Close`，待 MS-8）。`cmd/xhunter/material.go` 的 `Load` 哨兵**已随 MS-7 回收**（真实现：纯读回灌） |
 
 ---
 
