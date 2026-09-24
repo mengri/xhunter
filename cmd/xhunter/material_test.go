@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"xhunter/git"
@@ -81,15 +82,121 @@ func TestMaterial_LoadRejectsUnknownSchemaVersion(t *testing.T) {
 	if err := os.WriteFile(good, []byte(`{"type":"meta","schema_version":1}`+"\n"+`{"type":"turn","no":1}`+"\n"), 0o644); err != nil {
 		t.Fatalf("写夹具失败：%v", err)
 	}
-	if _, err := loadMaterial(good); err != nil {
+	if version, _, err := loadMaterial(good); err != nil {
 		t.Errorf("认得的版本不该报错：%v", err)
+	} else if version != 1 {
+		t.Errorf("loadMaterial 应交出 meta 的 schema_version，实得 %d", version)
 	}
 
 	bad := filepath.Join(dir, "bad.jsonl")
 	if err := os.WriteFile(bad, []byte(`{"type":"meta","schema_version":999}`+"\n"), 0o644); err != nil {
 		t.Fatalf("写夹具失败：%v", err)
 	}
-	if _, err := loadMaterial(bad); err == nil {
+	if _, _, err := loadMaterial(bad); err == nil {
 		t.Error("不认识的 schema_version 必须报错（不自动迁移）")
+	}
+}
+
+// 材料不存在 → 零值 + nil 错误（"不存在"与"损坏"分开）。**不得**顺手把材料建出来——
+// 读材料是纯读，建目录/写 meta 是 `Open` 的活；先建出来就再也分不清"上次留下的"与"刚建的"。
+func TestLoad_MissingMaterialIsZeroValueNotAnError(t *testing.T) {
+	root := t.TempDir()
+	rec := &sessionRecorder{bounty: hunt.Bounty{Session: &hunt.SessionRef{ID: "s-miss"}}}
+
+	got, err := rec.Load(root)
+	if err != nil {
+		t.Fatalf("材料不存在不是错误，实得：%v", err)
+	}
+	if got.SchemaVersion != 0 {
+		t.Errorf("SchemaVersion = %d，期望 0（零值）", got.SchemaVersion)
+	}
+	if len(got.Turns) != 0 || len(got.Ops) != 0 {
+		t.Errorf("零值 Restored 不该带轮次/写操作：%+v", got)
+	}
+	if got.Usage != (llm.Usage{}) {
+		t.Errorf("零值 Restored 不该带用量：%+v", got.Usage)
+	}
+	// 纯读：Load 之后材料路径仍不存在。
+	p := filepath.Join(root, materialDirFor("s-miss"), materialFile)
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Errorf("Load 不该创建材料文件（纯读），却见到：%v", err)
+	}
+}
+
+// 读回按行序解析三类记录：turn / op / usage；usage 按记录累加。
+func TestLoad_ReadsTurnsOpsAndUsageInOrder(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, materialDirFor("s-read"))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("建目录失败：%v", err)
+	}
+	body := strings.Join([]string{
+		`{"type":"meta","schema_version":1,"session_id":"s-read"}`,
+		`{"type":"turn","no":1,"text":"第一轮"}`,
+		`{"type":"op","tool":"write","file":"a.txt","range":{"start":0,"end":0},"before":"","after":"x","turn":1}`,
+		`{"type":"usage","input_tokens":10,"output_tokens":4,"cached_input_tokens":2}`,
+		`{"type":"turn","no":2,"text":"第二轮"}`,
+		`{"type":"usage","input_tokens":5,"output_tokens":2,"cached_input_tokens":1}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, materialFile), []byte(body), 0o644); err != nil {
+		t.Fatalf("写材料失败：%v", err)
+	}
+
+	got, err := (&sessionRecorder{bounty: hunt.Bounty{Session: &hunt.SessionRef{ID: "s-read"}}}).Load(root)
+	if err != nil {
+		t.Fatalf("Load 失败：%v", err)
+	}
+	if got.SchemaVersion != 1 {
+		t.Errorf("SchemaVersion = %d，期望 1", got.SchemaVersion)
+	}
+	if len(got.Turns) != 2 || got.Turns[0].Text != "第一轮" || got.Turns[1].Text != "第二轮" {
+		t.Errorf("轮次应按行序读回两条：%+v", got.Turns)
+	}
+	if len(got.Ops) != 1 || got.Ops[0].File != "a.txt" || got.Ops[0].Primitive != "write" {
+		t.Errorf("写操作序列不对：%+v", got.Ops)
+	}
+	// 用量按记录累加：10+5 / 4+2 / 2+1（字面量）。
+	if got.Usage != (llm.Usage{InputTokens: 15, OutputTokens: 6, CachedInputTokens: 3}) {
+		t.Errorf("usage 累加值 = %+v，期望 {15 6 3}", got.Usage)
+	}
+}
+
+// 未知记录类型是错误（不猜、不静默跳过）：模型看不到它，但读回端不该把一份"未来格式"当成
+// 已知材料混过去。
+func TestLoad_UnknownRecordTypeIsAnError(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, materialDirFor("s-unknown"))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("建目录失败：%v", err)
+	}
+	body := `{"type":"meta","schema_version":1}` + "\n" + `{"type":"future_record","x":1}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, materialFile), []byte(body), 0o644); err != nil {
+		t.Fatalf("写材料失败：%v", err)
+	}
+	if _, err := (&sessionRecorder{bounty: hunt.Bounty{Session: &hunt.SessionRef{ID: "s-unknown"}}}).Load(root); err == nil {
+		t.Error("未知记录类型必须报错（不猜、不静默跳过）")
+	}
+}
+
+// 材料只有 meta 行（零记录）也算"存在且合法"：Load 返回 SchemaVersion == 1、err == nil
+// （"存在即恢复"这条判据的退化情形，在正常路径上不可达）。
+func TestLoad_MetaOnlyMaterialIsNotAnError(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, materialDirFor("s-meta"))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("建目录失败：%v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, materialFile), []byte(`{"type":"meta","schema_version":1}`+"\n"), 0o644); err != nil {
+		t.Fatalf("写材料失败：%v", err)
+	}
+	got, err := (&sessionRecorder{bounty: hunt.Bounty{Session: &hunt.SessionRef{ID: "s-meta"}}}).Load(root)
+	if err != nil {
+		t.Fatalf("只有 meta 的材料是合法材料：%v", err)
+	}
+	if got.SchemaVersion != 1 {
+		t.Errorf("SchemaVersion = %d，期望 1", got.SchemaVersion)
+	}
+	if len(got.Turns) != 0 || len(got.Ops) != 0 {
+		t.Errorf("零记录材料不该带轮次/写操作：%+v", got)
 	}
 }

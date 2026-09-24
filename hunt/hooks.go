@@ -54,25 +54,40 @@ func (s *Session) Prepare(ctx context.Context, run *harness.Run) error {
 	}
 	s.storage = storage
 
-	// 材料位置随工作区就绪而定：绑定失败只降级、不阻断（IA-6.6）。
-	s.openRecorder(root)
-
-	// 会话恢复（仅当投递给出会话标识时，架构 §7.6）：resume 的入口在业务侧——读回材料 →
-	// 台账出已完成轮次与写操作序列 → 回灌上下文 → 从下一轮继续。checkout 分支 tip 已由
-	// `PrepareBaseline` 覆盖（"分支已存在且 tip 为基线或其后代 → checkout tip"），不重复做。
+	// 会话恢复（仅当投递给出会话标识时）：**读材料是纯读，必须排在 `openRecorder`
+	// 之前**——`openRecorder` 会为不存在的材料建目录并写 meta，先开记录器就再也分不清"上次留下的
+	// 材料"与"刚刚为本趟建的空材料"。checkout 分支 tip 已由 `PrepareBaseline` 覆盖
+	// （"分支已存在且 tip 为基线或其后代 → checkout tip"），不重复做。
 	//
-	// **未接入（未冻结期）**：读回的实现是 panic 哨兵（"恢复未实现：MS-7"）——真去 resume 会
-	// 立刻炸、而不是安静地当成新任务跑（那样会重做已完成的轮次）。上下文回灌（过 `ContextBuilder`
-	// 的压缩管线）与"新投递条件作为新 user 消息追加"是 MS-7 的实现工作；回灌的落点在下面组装首轮
-	// 消息处（`firstPrompt` / `s.cfg.Context`）。
+	// "本次是否恢复"的判据只有一处：`Load` 返回的 `SchemaVersion != 0`（材料存在且 meta 合法）。
+	// 材料不存在 → 零值 + nil（新任务，照常跑）；存在但读不出来才是错误，由这里上抛 → 退出码 1
+	// （不自动迁移、不猜）。恢复全程**不执行任何工具、不重放写操作**——工作区已由分支 tip 给出，
+	// 读回的写操作序列只用于"本次不重做"。
 	if s.cfg.Bounty.Session != nil {
 		if s.cfg.Session == nil {
 			return errors.New("要求恢复会话但未装配会话记录器（SessionRecorder）")
 		}
-		if _, err := s.cfg.Session.Load(); err != nil {
+		restored, err := s.cfg.Session.Load(root)
+		if err != nil {
 			return fmt.Errorf("读回会话材料失败：%w", err)
 		}
+		if restored.SchemaVersion != 0 {
+			s.resumed = &restored
+			// 预算续算只做 token：把上次用量**补喂一次**策略，让同一任务多次重派不重置 token
+			// 上限。只喂输入／输出（策略管预算、不关心缓存明细）；**不动**本次运行的水位
+			// （`s.charged` 记的是"本次运行事件增量"，动了会让首轮增量变负、usage 全线失真）。
+			// 轮数预算不续算：本次轮号从 1 重新起计，没有可累加的口径。
+			if s.cfg.Policy != nil {
+				s.cfg.Policy.Charge(llm.Usage{
+					InputTokens:  restored.Usage.InputTokens,
+					OutputTokens: restored.Usage.OutputTokens,
+				})
+			}
+		}
 	}
+
+	// 材料位置随工作区就绪而定：绑定失败只降级、不阻断（材料丢了最多是崩溃后从头跑）。
+	s.openRecorder(root)
 
 	// 工作区就绪后构造原语并定格工具面：原语读文件需要工作区，声明与执行因此同源。
 	// 工具面自身不成立也算装配缺件——错误在首轮推理之前暴露，而不是等供应商拒收请求。
@@ -112,11 +127,26 @@ func (s *Session) Prepare(ctx context.Context, run *harness.Run) error {
 
 	// 首轮消息收敛到单一出口：有上下文组装器就交给它持有历史，没有就直接用首轮两段。
 	// 提示词交给上下文持有者，历史也归它——harness 只拿组装好的消息。
+	//
+	// 恢复时把读回的轮次按**原有顺序**逐条回灌（不扩 `ContextBuilder` 接口：它本来就是
+	// "提示词 + 历史"的持有者），再把本次投递的补充条件作为**新的 user 消息**追加在回灌历史
+	// 之后——模型先看到"上次做到哪"，再看到"这次的新条件"。
 	if s.cfg.Context == nil {
 		run.Messages = prompt
+		if s.resumed != nil {
+			run.Messages = append(run.Messages, resumeConditions(s.cfg.Bounty))
+		}
 	} else {
 		s.cfg.Context.SetPrompt(prompt)
+		if s.resumed != nil {
+			for _, t := range s.resumed.Turns {
+				s.cfg.Context.Append(t)
+			}
+		}
 		run.Messages = s.cfg.Context.Assemble()
+		if s.resumed != nil {
+			run.Messages = append(run.Messages, resumeConditions(s.cfg.Bounty))
+		}
 	}
 
 	// 起飞事件：Prepare 成功后立即发——没进入对话就没有起飞事件（失败路径在上面直接 return）。
@@ -232,6 +262,15 @@ func firstPrompt(system, user string, b Bounty) []llm.Message {
 		msgs = append(msgs, llm.Message{Role: llm.RoleUser, Content: body})
 	}
 	return msgs
+}
+
+// resumeConditionsLead 是"本次投递的补充条件"这条新 user 消息的固定定位语。它是请求体里
+// **独有**的子串（不撞提示词、内核条款与材料）——e2e 据此断言"新条件排在回灌历史之后"。
+const resumeConditionsLead = "本次投递的补充条件："
+
+// resumeConditions 把本次 Bounty 的任务正文摆成一条追加在回灌历史之后的 user 消息。仅恢复时追加。
+func resumeConditions(b Bounty) llm.Message {
+	return llm.Message{Role: llm.RoleUser, Content: resumeConditionsLead + b.Task}
 }
 
 // joinBlocks 按顺序拼接非空块（各自 TrimSpace），空块不留下多余空行。
@@ -671,6 +710,18 @@ func (s *Session) Finalize(ctx context.Context, run *harness.Run) error {
 		CachedInputTokens: run.Usage.CachedInputTokens,
 		Turns:             run.Usage.Turns,
 		ElapsedMS:         run.Usage.Elapsed.Milliseconds(),
+	}
+
+	// 会话增量冻结一次：**仅恢复时**定型（未恢复 → nil，结果文件不带该键）。turns_from / turns_to
+	// 以"恢复的轮数"为基（按**记录条数**算，不取 turn no 的最大值——恢复后本趟轮号从 1 重新起计），
+	// ops_count 是**本次运行**的写操作数（恢复的写操作不并入本次，工作区已由分支 tip 给出）。
+	if s.resumed != nil {
+		from := len(s.resumed.Turns) + 1
+		s.delta = &SessionDelta{
+			TurnsFrom: from,
+			TurnsTo:   from - 1 + run.Usage.Turns,
+			OpsCount:  len(s.ops),
+		}
 	}
 
 	// 模型自陈优先于「无工具调用」的默认推断，但让位于机制性终止。

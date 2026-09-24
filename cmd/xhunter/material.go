@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -77,6 +78,9 @@ type sessionRecorder struct {
 
 // Open 绑定材料位置并写好 meta 行：工作区根由 PrepareBaseline 在运行期给出，因此在工作区就绪后
 // 调用一次。同一个会话的材料已存在时不重复写 meta（续跑，MS-7）。
+//
+// 注意顺序：本方法会为**不存在**的材料建目录并写 meta，因此它必须在 `Load`（纯读）之后调用——
+// 否则先建出来一份空材料，就再也分不清"上次留下的材料"与"刚刚为本趟建的空材料"。
 func (r *sessionRecorder) Open(root string) error {
 	dir := filepath.Join(root, materialDirFor(r.bounty.SessionID()))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -125,11 +129,59 @@ func (r *sessionRecorder) Ops() []hunt.WriteOp { return r.ops }
 
 // Load 读回**上次运行**的材料（resume 的唯一状态源）。
 //
-// **未实现（panic 哨兵）**：恢复流程属 MS-7（材料解析已就绪——`loadMaterial` 只做版本校验，
-// 回灌与对齐待接）。走到这里就炸——绝不静默：真去 resume 会立刻发现"还没实现"，而不是安静地
-// 当成新任务跑（那样会重做已完成的轮次）。
-func (r *sessionRecorder) Load() (hunt.Restored, error) {
-	panic("会话恢复未实现：由 MS-7 读回材料并回灌上下文（loadMaterial 已做版本校验）")
+// 它是**纯读**：不建目录、不写 meta，因此必须在 `Open` 之前调用——`Open` 会为不存在的材料
+// 写 meta，先 Open 就分不清"上次留下的"与"刚刚为本趟建的"。
+//
+// 材料不存在 → 零值 + nil（新任务，不是错误）；存在但读不出来才是错误：坏行、首行不是 meta、
+// `schema_version` 不认识、未知记录类型——一律报错、**不自动迁移、不猜**。
+// 三类记录按行序解析：turn → `Restored.Turns`，op → `Restored.Ops`，usage → 按记录**累加**
+// 成 `Restored.Usage`（续算预算用）。
+func (r *sessionRecorder) Load(root string) (hunt.Restored, error) {
+	p := filepath.Join(root, materialDirFor(r.bounty.SessionID()), materialFile)
+	if _, err := os.Stat(p); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return hunt.Restored{}, nil
+		}
+		return hunt.Restored{}, err
+	}
+	version, records, err := loadMaterial(p)
+	if err != nil {
+		return hunt.Restored{}, err
+	}
+	out := hunt.Restored{SchemaVersion: version}
+	for _, raw := range records {
+		var probe struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(raw, &probe); err != nil {
+			return hunt.Restored{}, fmt.Errorf("材料记录不是合法 JSON：%w", err)
+		}
+		switch probe.Type {
+		case "turn":
+			var rec materialTurn
+			if err := json.Unmarshal(raw, &rec); err != nil {
+				return hunt.Restored{}, fmt.Errorf("材料 turn 记录解析失败：%w", err)
+			}
+			out.Turns = append(out.Turns, rec.Turn)
+		case "op":
+			var rec materialOp
+			if err := json.Unmarshal(raw, &rec); err != nil {
+				return hunt.Restored{}, fmt.Errorf("材料 op 记录解析失败：%w", err)
+			}
+			out.Ops = append(out.Ops, rec.WriteOp)
+		case "usage":
+			var rec materialUsage
+			if err := json.Unmarshal(raw, &rec); err != nil {
+				return hunt.Restored{}, fmt.Errorf("材料 usage 记录解析失败：%w", err)
+			}
+			out.Usage.InputTokens += rec.Input
+			out.Usage.OutputTokens += rec.Output
+			out.Usage.CachedInputTokens += rec.Cached
+		default:
+			return hunt.Restored{}, fmt.Errorf("材料含未知记录类型 %q（不猜、不静默跳过）", probe.Type)
+		}
+	}
+	return out, nil
 }
 
 // Snapshot 把尚未落盘的记录 flush 出去（每轮与收尾各一次，这就是"周期落盘"）。
@@ -170,17 +222,19 @@ func (r *sessionRecorder) writeNow(rec any) error {
 }
 
 // loadMaterial 读回材料并按 meta 校验 schema_version：版本不认识就报错（不自动迁移、不猜）。
-// 本次没有消费方（恢复是 MS-7），它先把"版本校验"这条口径钉住。返回除 meta 外的记录行。
-func loadMaterial(path string) ([]json.RawMessage, error) {
+// 它把首行 meta 的 `schema_version` 连同其余记录行一并交出——调用方据此判定"材料是否存在且
+// 合法"，这正是"本次是否恢复"的唯一判据。
+func loadMaterial(path string) (int, []json.RawMessage, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 	defer f.Close()
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024) // 单行可能很大（整轮消息）
 	var out []json.RawMessage
+	version := 0
 	first := true
 	for sc.Scan() {
 		line := bytes.TrimSpace(sc.Bytes())
@@ -193,24 +247,25 @@ func loadMaterial(path string) ([]json.RawMessage, error) {
 				SchemaVersion int    `json:"schema_version"`
 			}
 			if err := json.Unmarshal(line, &meta); err != nil {
-				return nil, fmt.Errorf("材料首行不是合法 meta：%w", err)
+				return 0, nil, fmt.Errorf("材料首行不是合法 meta：%w", err)
 			}
 			if meta.Type != "meta" {
-				return nil, fmt.Errorf("材料首行 type = %q，期望 meta", meta.Type)
+				return 0, nil, fmt.Errorf("材料首行 type = %q，期望 meta", meta.Type)
 			}
 			if meta.SchemaVersion != materialSchemaVersion {
-				return nil, fmt.Errorf("材料 schema_version = %d，本程序只认 %d（不自动迁移）", meta.SchemaVersion, materialSchemaVersion)
+				return 0, nil, fmt.Errorf("材料 schema_version = %d，本程序只认 %d（不自动迁移）", meta.SchemaVersion, materialSchemaVersion)
 			}
+			version = meta.SchemaVersion
 			first = false
 			continue
 		}
 		out = append(out, append(json.RawMessage(nil), line...))
 	}
 	if err := sc.Err(); err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 	if first {
-		return nil, fmt.Errorf("材料 %s 为空：缺 meta 行", path)
+		return 0, nil, fmt.Errorf("材料 %s 为空：缺 meta 行", path)
 	}
-	return out, nil
+	return version, out, nil
 }

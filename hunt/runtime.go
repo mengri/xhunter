@@ -54,9 +54,14 @@ type SessionRecorder interface {
 	Ops() []WriteOp
 	// Snapshot 把尚未落盘的记录 flush 出去（材料落盘的周期点）。
 	Snapshot() error
-	// Load 从盘上读回**上次运行**的材料（供恢复）。本次没有材料（新任务 / `Open` 未成功）时
-	// 返回零值（`SchemaVersion == 0`），不是错误——"不存在"与"损坏"要分开（架构 §7.6）。
-	Load() (Restored, error)
+	// Load 从盘上读回**上次运行**的材料（供恢复）。它接受工作区根——读材料是**纯读**，必须
+	// 发生在 `Open` 之前：`Open` 会为不存在的材料建目录并写 meta，先 Open 再 Load 就再也分不清
+	// "上次留下的材料"与"刚刚为本趟建的空材料"。
+	//
+	// 本次没有材料（新任务 / 分支上没有材料）时返回零值（`SchemaVersion == 0`）＋ nil 错误，
+	// 不是错误——"不存在"与"损坏"要分开：只有**存在但读不出来**（坏行、首行不是 meta、
+	// `schema_version` 不认识、未知记录类型）才是错误。
+	Load(root string) (Restored, error)
 }
 
 // ExternalEvent 是外部事件；事件类型只增不改。

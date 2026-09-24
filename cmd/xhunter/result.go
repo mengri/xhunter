@@ -13,9 +13,8 @@ import (
 // 结果文件与补丁是"交付记录"这一侧的产物：主交付是远端那条任务分支（FR-6.1），
 // 这里是附带的机器可读结论，供平台记账与评审（FR-1.5、使用手册 §6）。
 //
-// 只写当前真能给出的事实：`gates` / `session_delta` 尚未落地，就不在这里
-// 摆空壳——空数组会被读成"没有门禁、没有假设"，那是另一句话。字段状态以使用手册 §6 的
-// 标注为准。
+// 只写当前真能给出的事实：`gates` 尚未落地，就不在这里摆空壳——空数组会被读成
+// "没有门禁、没有假设"，那是另一句话。字段状态以使用手册 §6 的标注为准。
 
 // resultFile 是结果文件的形状（使用手册 §6）。
 type resultFile struct {
@@ -38,9 +37,10 @@ type resultFile struct {
 	// （omitempty），不摆空壳。形状见 gateFile（`passed` 三态：true / false / null=未运行）。
 	Gates []gateFile `json:"gates,omitempty"`
 
-	// SessionDelta 是本次运行相对**上次运行**的增量（FR-1.5）——**恢复时才有意义**（新任务不带
-	// 该键）。**未接线**：写入端（MS-7）接上之前不写该键（omitempty）。形状见 sessionDeltaFile。
-	SessionDelta *sessionDeltaFile `json:"session_delta,omitempty"`
+	// SessionDelta 是本次运行相对**上次运行**的增量——形状与语义收在 `hunt.SessionDelta`
+	// （与 usage 同源，随交付事实定型）。**仅恢复时出现**：未恢复（材料不存在）为 nil，omitempty
+	// 让该键整个不出现——不摆一个 `turns_from:0` 的空壳（那会被读成"接上了第 0 轮"）。
+	SessionDelta *hunt.SessionDelta `json:"session_delta,omitempty"`
 
 	// Needs / Assumptions / Unverified 是模型在正文固定小节里的自陈（FR-6.3/6.4）。用指针不加 omitempty
 	// 是三态要求：「没提供」要写成 null，而不是缺字段、更不是 []——空数组会被读成
@@ -78,15 +78,6 @@ type gateFile struct {
 	Summary  string `json:"summary,omitempty"`
 }
 
-// sessionDeltaFile 是结果文件里 `session_delta` 的形状（FR-1.5、使用手册 §6）：它回答"这次接上了
-// 哪几轮、写了多少次"——`turns_from` / `turns_to` 是本次覆盖的轮次区间，`ops_count` 是本次写操作数。
-// **恢复时才有意义**（新任务不带该键）；写入端在 MS-7 接上。
-type sessionDeltaFile struct {
-	TurnsFrom int `json:"turns_from"`
-	TurnsTo   int `json:"turns_to"`
-	OpsCount  int `json:"ops_count"`
-}
-
 // writeRunOutputs 写出补丁与结果文件。任一写失败都返回错误——交不出交付记录
 // 属环境问题（退出码 1），不得静默继续（对齐 FR-10.4 的"通道断裂即终止"精神）。
 //
@@ -113,6 +104,7 @@ func writeRunOutputs(resultPath, patchPath string, bounty hunt.Bounty, out harne
 		Branch:       bounty.Repo.Branch,
 		FilesChanged: d.Files,
 		Summary:      d.Summary,
+		SessionDelta: d.SessionDelta,
 		Needs:        optionalList(declared.Needs),
 		Assumptions:  optionalList(declared.Assumptions),
 		Unverified:   optionalList(declared.Unverified),

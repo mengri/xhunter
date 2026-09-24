@@ -77,6 +77,12 @@ type Session struct {
 	// summary——放在这里，是因为它和 files / patch 同属"收尾定型的交付事实"。
 	lastText string
 
+	// resumed 是本次运行读回的上次材料（nil = 未恢复）。由 Prepare 在**纯读**阶段填入：
+	// 只有"材料存在且 meta 合法"（`SchemaVersion != 0`）才算恢复，材料不存在是正常情况。
+	resumed *Restored
+	// delta 是本次运行相对上次运行的增量（恢复时才有；未恢复为 nil）。收尾定型，进交付事实。
+	delta *SessionDelta
+
 	checkpointRequested bool
 	checkpointSummary   string
 
@@ -133,11 +139,29 @@ type Delivery struct {
 	Patch   string
 	Summary string
 	Usage   UsageReport
+	// SessionDelta 是本次运行相对**上次运行**的增量：**仅恢复时非 nil**（未恢复不带该键，
+	// 由装配层的 `omitempty` 省略）。见 SessionDelta。
+	SessionDelta *SessionDelta
+}
+
+// SessionDelta 是本次运行相对上次运行的增量：`turns_from` / `turns_to` 是本次覆盖的轮次区间
+// （从「恢复的轮数 + 1」起，到「恢复的轮数 + 本次运行轮数」止），`ops_count` 是**本次运行**的
+// 写操作数。
+//
+// 「恢复的轮数」按**记录条数**算，不得取 turn `no` 的最大值：恢复后本趟的轮号从 1 重新起计，
+// 材料里会出现两段都从 1 开始的 `turn` 记录，取最大值会把区间算错。
+type SessionDelta struct {
+	TurnsFrom int `json:"turns_from"`
+	TurnsTo   int `json:"turns_to"`
+	OpsCount  int `json:"ops_count"`
 }
 
 // Delivery 返回本次执行的交付事实（Finalize 之后调用才有内容）。
 func (s *Session) Delivery() Delivery {
-	return Delivery{Commit: s.commit, Files: s.files, Patch: s.patch, Summary: s.lastText, Usage: s.usage}
+	return Delivery{
+		Commit: s.commit, Files: s.files, Patch: s.patch,
+		Summary: s.lastText, Usage: s.usage, SessionDelta: s.delta,
+	}
 }
 
 // EffectiveConfig 返回本次 Hunt 的生效配置快照（收尾后由装配层读走写结果文件）。
