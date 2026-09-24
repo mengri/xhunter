@@ -114,7 +114,7 @@ func TestContextBuilder_AssemblesPromptThenHistory(t *testing.T) {
 
 // 每个原语的声明都必须是「已知形状」：名字、说明、合法 JSON Schema 缺一不可。
 func TestDefaultTools_ShapeIsDeclared(t *testing.T) {
-	for _, prim := range defaultTools(nil, nil) {
+	for _, prim := range defaultTools(nil, nil, nil) {
 		d := prim.Decl()
 		if d.Name == "" {
 			t.Error("原语名字不得为空")
@@ -134,7 +134,7 @@ func TestDefaultTools_ShapeIsDeclared(t *testing.T) {
 // 一期**不注册**、随 MS-8 接入时再进清单——模型一期看不到它们。加回清单必须是有意识的决定。
 func TestDefaultTools_FaceIsFixed(t *testing.T) {
 	want := []string{"read", "write", "edit", "find", "glob", "check"}
-	tools := defaultTools(nil, nil)
+	tools := defaultTools(nil, nil, nil)
 	if len(tools) != len(want) {
 		t.Fatalf("原语数 = %d，期望 %d", len(tools), len(want))
 	}
@@ -159,7 +159,7 @@ func TestDefaultTools_SymbolOperationsAreDeferred(t *testing.T) {
 		string(symbolic.SymbolRename),
 	}
 	face := make(map[string]bool)
-	for _, prim := range defaultTools(nil, nil) {
+	for _, prim := range defaultTools(nil, nil, nil) {
 		face[prim.Decl().Name] = true
 	}
 	for _, name := range deferred {
@@ -176,7 +176,7 @@ func TestDefaultTools_WritesIsDeclared(t *testing.T) {
 		"read": false, "write": true, "edit": true, "find": false, "glob": false,
 		"check": false,
 	}
-	for _, prim := range defaultTools(nil, nil) {
+	for _, prim := range defaultTools(nil, nil, nil) {
 		name := prim.Decl().Name
 		expected, known := want[name]
 		if !known {
@@ -252,7 +252,7 @@ func TestDefaultTools_HasNoGitPrimitive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("打开工作区失败：%v", err)
 	}
-	prims := defaultTools(ws, nil)
+	prims := defaultTools(ws, nil, nil)
 
 	gitWords := []string{"git", "commit", "push", "checkout", "branch", "diff", "patch", "merge", "rebase", "clone", "remote", "fetch"}
 	for _, p := range prims {

@@ -48,6 +48,7 @@ func (s *Session) Prepare(ctx context.Context, run *harness.Run) error {
 	if err != nil {
 		return err
 	}
+	s.root = root
 	storage, err := s.cfg.Opener.Open(root)
 	if err != nil {
 		return err
@@ -96,10 +97,17 @@ func (s *Session) Prepare(ctx context.Context, run *harness.Run) error {
 	}
 	run.Tools = s.decls()
 
-	// 门禁清单来源裁决（Bounty 下发 > 仓库声明 > 无）的调用点在 **MS-5 接上**——`GateSource`
-	// 契约已在 D2 定义（见 `Config.Gates`）。本次保持"一期暂空"：来源裁决是 **B 类入口**
-	// （每次运行都会走到），接上会让任何一次运行都跑不起来，所以只定义契约与装配槽、不接调用点。
-	s.gates = nil
+	// 门禁清单来源裁决：Bounty 下发 > 仓库声明（基线 commit）> 无。判据必须在运行开始前定死，
+	// 所以仓库声明读的是基线那一份；清单不可用即启动期失败——带着一份判不了的清单跑完，
+	// 只会得到一个"看起来通过了"的结论。
+	gates, source, err := s.resolveGates(ctx)
+	if err != nil {
+		return err
+	}
+	s.gates, s.gateSource = gates, source
+	if source != GateSourceNone {
+		s.logf("info", "本次门禁清单来源", "source", source, "gates", len(gates))
+	}
 
 	// 构造首轮两段正文：插件给正文、Session 拼位置与顺序。取一次、整任务内冻结。
 	s.setPhase(PhaseAssemble)
@@ -116,7 +124,7 @@ func (s *Session) Prepare(ctx context.Context, run *harness.Run) error {
 	}
 	s.emitNotices(system.Notices, user.Notices)
 
-	prompt := firstPrompt(system.Body, user.Body, s.cfg.Bounty)
+	prompt := firstPrompt(system.Body, user.Body, s.cfg.Bounty, s.gates)
 	if system.Body == "" && user.Body == "" {
 		s.logf("warn", "没有任何插件贡献正文：模型只会看到内核条款与环境事实，看不到项目约定与任务描述")
 	}
@@ -250,15 +258,15 @@ func intFact(m map[string]any, key string) int {
 // firstPrompt 把两段正文摆成首轮消息：system 在前、user 在后。
 //
 // 内核那两块不由插件贡献，位置也固定（FR-7.8）：system 段 = 插件正文 + **内核条款**
-// （末尾追加），user 段 = **环境事实**（最前面）+ 插件正文。插件只交正文，插不进
-// 第三段、也删不掉内核条款与环境事实——它们在这里生成，插件没有表达"删除"的途径。
+// （末尾追加），user 段 = **环境事实**（最前面）+ **门禁名** + 插件正文。插件只交正文，
+// 插不进第三段、也删不掉内核条款与环境事实——它们在这里生成，插件没有表达"删除"的途径。
 // 插件正文为空时它不占位置（不留空行），内核那两块照旧。
-func firstPrompt(system, user string, b Bounty) []llm.Message {
+func firstPrompt(system, user string, b Bounty, gates []Gate) []llm.Message {
 	msgs := make([]llm.Message, 0, 2)
 	if body := joinBlocks(system, kernelClauses()); body != "" {
 		msgs = append(msgs, llm.Message{Role: llm.RoleSystem, Content: body})
 	}
-	if body := joinBlocks(environmentFacts(b), user); body != "" {
+	if body := joinBlocks(environmentFacts(b), gateFacts(gates), user); body != "" {
 		msgs = append(msgs, llm.Message{Role: llm.RoleUser, Content: body})
 	}
 	return msgs
@@ -509,8 +517,14 @@ func (s *Session) checkpoint(ctx context.Context, turn *harness.Turn) {
 		}
 		return
 	}
-	// 模型显式请求不受判据影响；否则按结构判据三态决定。
+	// 模型显式请求不受判据影响；否则先看门禁、再按结构判据三态决定。
 	if !requested {
+		// 门禁未通过 → 抑制后续自动检查点（FR-5.2c）：不合格的中间态不值得钉在分支上。
+		// 直到下一次门禁通过（或收尾的交付提交）才恢复。
+		if s.gateFailed {
+			s.logf("info", "本轮不产生自动检查点：门禁尚未通过", "turn", turn.No)
+			return
+		}
 		switch s.structuralJudge() {
 		case structuralPass:
 			// 落在结构完整点上：照常提交。
@@ -759,6 +773,11 @@ func (s *Session) Finalize(ctx context.Context, run *harness.Run) error {
 		}
 	}
 
+	// 门禁补跑：主路径是模型自己调 `check`，兜底是收尾把**尚未跑过的** required 门禁跑一遍——
+	// `required` 门禁从未运行意味着这次交付没有质量证据（FR-5.2f）。排在交付提交之后：那时
+	// 工作区正是最终交付物，跑出来的结论才有针对性；门禁自身的产物也不会被提交进去。
+	s.runRequiredGates(ctx, run)
+
 	// 附带交付物在这里定型：Clean 之后就再也取不到了，而结果文件（FR-1.5、§6）
 	// 要用它们。因此**不依赖事件出口**——没有 sink 时同样要能交出补丁与清单。
 	if files, err := s.cfg.Git.Diff(ctx, s.cfg.Bounty.Repo); err != nil {
@@ -784,6 +803,16 @@ func (s *Session) Finalize(ctx context.Context, run *harness.Run) error {
 	s.stopHeartbeat()
 
 	out := run.Outcome()
+
+	// 门禁结论改写终态：**只在引擎给出 succeeded 时**才改写——与自陈同一条单向规则：
+	// 机制性终止（预算、止损、取消）是引擎给的结论，不该被门禁抹掉。
+	// 退出码仍是 0：对话正常走完，失败由证据给出（FR-5.2d），改动照常交付（FR-6.5）。
+	if out.Status == harness.StatusSucceeded {
+		if reason := s.gateVerdict(); reason != "" {
+			run.SetTerminal(harness.Terminal{Status: harness.StatusFailed, Reason: reason, Code: harness.ExitOK})
+			out = run.Outcome()
+		}
+	}
 
 	// 用量不可得时如实标注：收尾只跑一次，因此**最多一条**。排在终态之前——平台读到终态前
 	// 就该知道"各项为 0 不代表真的没用"。
@@ -925,4 +954,98 @@ func taskSubject(b Bounty) string {
 		s = "未命名任务"
 	}
 	return s
+}
+
+// runRequiredGates 收尾补跑尚未跑过的 required 门禁（FR-5.2f 的兜底）。
+//
+// 只补**没跑过**的：跑过但不通过的，模型已经看到了结论，再跑一遍只是多花墙钟；
+// 而"跑过"这件事本身才是证据（结果文件按它区分"未通过"与"未运行"）。
+//
+// 预算已耗尽则**不再补跑**：那时补跑必然以超时收场，而"超时"会被读成环境问题，
+// 反而掩盖"这次没有质量证据"这个真正的结论——于是按"未运行"判失败（FR-5.2f）。
+func (s *Session) runRequiredGates(ctx context.Context, run *harness.Run) {
+	if s.cfg.GateRunner == nil || s.root == "" || len(s.gates) == 0 {
+		return
+	}
+	if s.cfg.Policy != nil {
+		if exhausted, dim := s.cfg.Policy.Exhausted(TurnNo(run.Usage.Turns)); exhausted {
+			s.logf("warn", "预算已耗尽，不再补跑门禁", "dim", dim)
+			s.emitGateRunFailed("", "预算已耗尽（"+dim+"）：未补跑必需门禁，本次交付没有质量证据")
+			return
+		}
+	}
+	for _, g := range s.gates {
+		if !g.Required {
+			continue
+		}
+		if _, ran := s.latestGateResult(g.Name); ran {
+			continue
+		}
+		res, err := s.cfg.GateRunner.Run(ctx, s.root, g, s.ChangeFingerprint())
+		if err != nil {
+			// 执行失败≠判过：命令起不来、超时，都是环境退化，不是"代码质量差"。
+			// 这条按"未运行"计入终态，并如实上报——绝不能因为跑不起来就当成通过。
+			s.logf("warn", "收尾补跑门禁失败", "gate", g.Name, "err", err.Error())
+			s.emitGateRunFailed(g.Name, err.Error())
+			continue
+		}
+		s.RecordGateResult(res)
+	}
+}
+
+// latestGateResult 找同名门禁**最近一次**结论：模型可能反复调同一条门禁，
+// 只有最后一次反映当前改动的状态。
+func (s *Session) latestGateResult(name string) (GateResult, bool) {
+	return LatestGateResult(s.gateResults, name)
+}
+
+// LatestGateResult 在一串结论里找同名门禁的**最近一次**。它是包级函数，因为终态判定与
+// 结果文件（装配层）都要用同一份"最近结论"的口径——两处各找一遍迟早会选出不同的那一条。
+func LatestGateResult(results []GateResult, name string) (GateResult, bool) {
+	for i := len(results) - 1; i >= 0; i-- {
+		if results[i].Name == name {
+			return results[i], true
+		}
+	}
+	return GateResult{}, false
+}
+
+// gateVerdict 给出"必需门禁是否构成交付失败"的结论：任一 required 门禁**未通过或从未运行**
+// 即失败，返回终态原因；否则空串。
+//
+// 从未运行与未通过都要报失败：这次交付没有质量证据，与"证据显示不合格"同样不能算成功交付。
+// 两者在结果文件里仍然分开表达（passed: null / false），这里只回答"算不算失败"。
+func (s *Session) gateVerdict() string {
+	var failed []string
+	for _, g := range s.gates {
+		if !g.Required {
+			continue
+		}
+		res, ran := s.latestGateResult(g.Name)
+		switch {
+		case !ran:
+			failed = append(failed, g.Name+"（从未运行）")
+		case !res.Passed:
+			failed = append(failed, g.Name)
+		}
+	}
+	if len(failed) == 0 {
+		return ""
+	}
+	return reasonGateFailed + "：" + strings.Join(failed, "、")
+}
+
+// reasonGateFailed 是「必需门禁未通过或未运行」的固定原因前缀（使用手册 §7 的一档）。
+// 退出码为 0——对话正常走完，失败由证据给出。
+const reasonGateFailed = "gate_failed"
+
+// emitGateRunFailed 上报"门禁没能跑起来"：它是非致命的降级，但必须可见——
+// 静默跳过会让平台以为这次没有门禁。
+func (s *Session) emitGateRunFailed(gate, reason string) {
+	if s.cfg.Sink == nil {
+		return
+	}
+	_ = s.cfg.Sink.Emit(ExternalEvent{Type: "degraded", Payload: map[string]any{
+		"scope": "gate", "subject": gate, "reason": reason,
+	}})
 }

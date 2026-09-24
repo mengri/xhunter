@@ -26,6 +26,8 @@ import (
 	"xhunter/ext"
 	"xhunter/harness"
 	"xhunter/hunt"
+	"xhunter/hunt/gate"
+	"xhunter/internal/gates"
 	"xhunter/providerconfig"
 	"xhunter/workspace"
 )
@@ -180,15 +182,21 @@ func executeHunt(bounty hunt.Bounty, opts runOptions) int {
 
 	// 业务执行体：向循环提供三组 handler，同时是原语看到的 Facts。上下文、会话材料与
 	// 事件出口都由它自己持有——循环不认识这些东西。
+	// 门禁的两端共用同一份执行器：模型主动调用与收尾补跑跑的是同一条命令、同一份判据。
+	gateRunner := gate.NewRunner()
+	gitBackend := defaultGit()
 	session := hunt.NewSession(hunt.Config{
 		Bounty: bounty,
 		Tools: func(ws workspace.Workspace) []hunt.Primitive {
 			// 一期符号扩展未接入：装 panic 哨兵（未冻结期口径，走到即炸）；符号原语声明不实现，走不到。
-			return defaultTools(ws, ext.Unimplemented{})
+			return defaultTools(ws, ext.Unimplemented{}, gateRunner)
 		},
-		Policy:        defaultPolicy(bounty.Budget),
-		Opener:        defaultWorkspaces(),
-		Git:           defaultGit(),
+		Policy: defaultPolicy(bounty.Budget),
+		Opener: defaultWorkspaces(),
+		Git:    gitBackend,
+		// 门禁清单从基线 commit 读（判据必须在运行开始前定死）。
+		Gates:         gates.New(gitBackend, ""),
+		GateRunner:    gateRunner,
 		Context:       &contextBuilder{},
 		Session:       &sessionRecorder{bounty: bounty},
 		Sink:          sink,

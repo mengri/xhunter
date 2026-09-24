@@ -41,5 +41,9 @@ type GitWorktree interface {
 	// 两者都收 RepoRef：BaseCommit 是基准，MaterialDir（非空时）是要排除的会话材料目录。
 	Diff(ctx context.Context, repo RepoRef) ([]string, error)
 	Patch(ctx context.Context, repo RepoRef) (string, error)
+	// ReadFileAtCommit 读取**某个提交**里的文件内容（如基线 commit 的 `gates.yml`）。
+	// 那个提交里没有该文件时返回 exists=false 且 err=nil：「没有声明」与「读不出来」是两回事——
+	// 前者是正常事实，后者才是错误。判据必须在运行开始前定死，所以读的是基线而不是工作区。
+	ReadFileAtCommit(ctx context.Context, repo RepoRef, path string) (content []byte, exists bool, err error)
 	Clean(ctx context.Context) error
 }

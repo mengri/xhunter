@@ -60,7 +60,7 @@
 |---|---|
 | 恢复的轮数 / 预算口径 | `Load` 读回的轮数按**记录条数**算、不取 `turn.no` 最大值（恢复后本趟轮号从 1 **重新起计**，材料里会出现两段都从 1 开始的 `turn` 记录）；**轮数预算不跨恢复续算**（本次轮号重新起计，无累计口径）；token 预算已续算（`Prepare` 补喂 `Restored.Usage` 的输入/输出）。见 §4.3 MS-7 |
 | 上下文压缩 | `contextBuilder` 只有组装（`Assemble`），无水位、无下压 |
-| 门禁全链 | `hunt/hooks.go:59` — `s.gates = nil`，一期暂空 |
+| 门禁全链 | 已落地：`Prepare` 做来源裁决（下发 > 基线 `gates.yml` > 无），`check` 跑具名条目、按清单判据判定；收尾补跑 + 终态裁决 + 检查点抑制均已接线（`hunt/hooks.go`、`hunt/gates.go`） |
 | 符号能力与扩展宿主 | `ext/ext.go` 只有接口，无实现；`hunt/symbolic` 声明不实现 |
 | 结构检查（自动检查点的判据） | `Session.structuralJudge` 默认返回**不可判定**——判据随符号扩展接入；**接入前不产生自动检查点**（不可判定 → 不提交），跳过原因如实进日志与 `degraded`（`scope: checkpoint`） |
 | **用量口径（输出明细与缓存写）** | 输入侧已按统一口径落地（见 §2.3）：全部输入含缓存读/写、缓存读为子集。仍未取的：OpenAI 的输出明细（`completion_tokens_details` / `output_tokens_details`：reasoning / audio / accepted·rejected prediction），以及把「缓存写」单列出来（Anthropic 的写溢价 1.25×/2× 目前按普通输入价计） |
@@ -94,7 +94,7 @@
 | <a id="fr-2-2"></a>FR-2.2（内容检索 `find`） | 已落地 | MS-1 | 2026-09-23 落地（见 §2.3） |
 | <a id="fr-4-1"></a>FR-4.1/4.2（符号枚举读取 / 整体替换） | 待接入 | MS-8 | `hunt/symbolic` 声明不实现 |
 | <a id="fr-4-3"></a>FR-4.3（符号内插入 / 跨文件重命名） | 待接入 | MS-10 | `symbol_rename` 未实现 |
-| <a id="fr-5-2b"></a>FR-5.2b~5.2i（门禁全链） | 待接入 | MS-5 | `s.gates = nil`；`check` 声明不实现 |
+| <a id="fr-5-2b"></a>FR-5.2b~5.2i（门禁全链） | 已落地 | MS-5 | 清单来源裁决（`hunt.GateSource`，下发 > 基线 `gates.yml` > 无，`working_tree` 豁免档受三条护栏约束）；`check` 数组直启（`argv[0]` 为 shell 拒）+ 超时杀进程组 + 输出限长 + 环境白名单；判据 `{kind,pattern,max,stream}` 三态判定；结果按改动指纹缓存；收尾补跑未跑过的 `required` 门禁；`check_result` / `gate_config_changed` 事件；结果文件 `gates` 列出未运行项（`passed: null`）；门禁名注入 user 段。用例 `TestCheck_ArgvIsDirectAndRejectsShell`、`TestCheck_TimeoutIsEnvError`、`TestCheck_NonZeroExitIsQualityFailure`、`TestCheck_UnstartableCommandIsEnvError`、`TestCheck_CacheHitByFingerprint`、`TestCheck_EnvIsMinimalAndCredentialFree`、`TestCheck_ExpectVariantsDecideTheVerdict`、`TestCheck_PassedGateRequestsCheckpoint`、`TestCheck_FailedGateDoesNotRequestCheckpoint`、`TestResolveGates_WorkingTreeExemptionRequiresMetaGate`、`TestResolveGates_WorkingTreeCannotLowerStrength`、`TestResolveGates_WorkingTreeEmitsGateConfigChanged`、`TestEndToEnd_RequiredGateNeverRunFailsWithDelivery`、`TestEndToEnd_GateFailureFailsButStillDelivers`、`TestEndToEnd_RequiredGatePassedSucceeds` |
 | <a id="fr-6-3"></a>FR-6.3/6.4（`needs` / `assumptions` / `unverified`） | 已落地 | MS-2 | 三类自陈均由正文固定小节采集（`## 需要补全` / `## 假设` / `## 未验证`）：轮边界登记（`AppendDeclared`）、收尾可读；`needs` 非空收敛 `blocked`（退出 0），`unverified` 只陈述、不改终态。结果文件 `needs` / `assumptions` / `unverified` 三态。用例 `TestParseDeclared_ThreeSectionsAreSeparated`、`TestParseDeclared_UnverifiedAloneIsNotNeeds`、`TestParseDeclared_UnverifiedThreeState`、`TestFinalize_UnverifiedDoesNotBlock`、`TestResultFile_UnverifiedIsThreeState` |
 | <a id="fr-9-4"></a>FR-9.4（两段式止损） | 已落地 | MS-3 | 连续同类失败达 2 次换策略（回灌「换一种做法」提示）、超上限 3 次终止（`stop_loss_same_kind`）；连续拒绝达 3 次终止（`stop_loss_denied`）；阈值由策略自述（`policy.Facts()`）进 `config_snapshot`，机制硬顶由装配层注入。用例 `TestObserveFailure_SwitchThenTerminate`、`TestSameKindLimitsAreTwoAndThree`、`TestDeniedStreakLimitIsThree`、`TestOnTurn_SameKindStopLossOutranksBudget`、`TestOnTurn_CommitStreakOutranksStopLoss`、`TestEndToEnd_RepeatedFailureSwitchesBeforeFailing`、`TestEndToEnd_DeniedStreakFailsTheRun` |
 | <a id="fr-9-7"></a>FR-9.7（用量不可得时不得估算） | 已落地 | MS-2 | 上游未回报用量时不报数字：`usage` 事件三字段全零则不发、结果文件 `usage.reported: false` ＋ 一条 `degraded`（`scope: usage`）；预算仍按上报值计（不拿 0 触发/不触发）。用例 `TestOnTurn_NoUsageEventWhenUpstreamSilent`、`TestFinalize_DegradedOnceWhenUsageUnavailable`、`TestResultFile_UsageReportedFalseWhenUpstreamSilent` |
@@ -102,7 +102,7 @@
 | <a id="fr-10-4"></a>FR-10.4（事件/心跳写失败即终止） | 已落地 | MS-2 | 出口自述健康状态（`EventSink.Failed()`，覆盖事件与心跳两条写路径）；`OnTurn` 轮前/轮末复查 → `event_channel_failed`（退出 1），取消优先（不被通道问题改写）；进程末尾 `sink.Failed()` 收口保留为兜底。用例 `TestOnTurn_StopsBeforeWorkWhenChannelAlreadyFailed`、`TestOnTurn_StopsAfterTurnWhenChannelFailsDuringTurn`、`TestOnTurn_ChannelFailureDoesNotOverrideCancellation`、`TestEventSink_FailedCoversHeartbeatWrites`、`TestEndToEnd_BrokenEventChannelIsEnvError` |
 | <a id="fr-11-1"></a>FR-11.1（每次模型/工具调用产出结构化事件，含耗时与用量） | 部分已落地 | MS-2 | 模型侧已有 `assistant_text` / `usage`（每轮增量）；工具侧 `tool_call`（`args`）/ `tool_result`（含 `duration_ms`）；终态 `hunt_end` 带累计用量。**余**：`check_result`（MS-5）、`context_compacted`（MS-11）等随各自里程碑接入 |
 | <a id="fr-11-2"></a>FR-11.2（错误结构化） | 已落地 | MS-2 | 终态 `failed` 发一条 `error`（`kind`＝原因首段 / `retryable`＝与退出码同源 / `context`＝阶段与轮次）；取消与 `blocked` 不发。`kind` / `retryable` 的口径上收为 `hunt.ErrorKind` / `hunt.RetryableForExitCode`，事件与结果文件同源。用例 `TestFinalize_EmitsErrorOnFailureMatchingExitCode`、`TestFinalize_NoErrorEventOnBlockedOrCancelled` |
-| <a id="fr-11-6"></a>FR-11.6（生效配置快照） | 已落地 | MS-2 | 装配完成后冻结一次，进 `hunt_start` 与结果文件 `effective_config`；门禁清单随 MS-5 接入。用例 `TestEffectiveConfig_ListsPrimitivesInToolFaceOrder`、`TestEffectiveConfig_CarriesPluginAndFilterNames`、`TestEffectiveConfig_CarriesAssemblyFacts`、`TestPrepare_EmitsHuntStart`、`TestResultFile_EffectiveConfigIsWritten` |
+| <a id="fr-11-6"></a>FR-11.6（生效配置快照） | 已落地 | MS-2 | 装配完成后冻结一次，进 `hunt_start` 与结果文件 `effective_config`；门禁清单已随 MS-5 接入（清单来源档位进每条门禁的 `source`）。用例 `TestEffectiveConfig_ListsPrimitivesInToolFaceOrder`、`TestEffectiveConfig_CarriesPluginAndFilterNames`、`TestEffectiveConfig_CarriesAssemblyFacts`、`TestPrepare_EmitsHuntStart`、`TestResultFile_EffectiveConfigIsWritten` |
 | <a id="fr-12-1"></a>FR-12.1（会话恢复 resume） | 已落地 | MS-7 | `Prepare` 读回材料（**纯读、先于 `Open`**）→ 回灌上下文 → 从下一轮继续；全程**零工具执行、零模型调用、不重放写操作**（工作区已由分支 tip 给出）。用例 `TestEndToEnd_ResumeContinuesFromLastCheckpoint`、`TestPrepare_ResumeSeedsContextWithoutExecutingTools`、`TestPrepare_ResumeAppendsNewConditionsAfterRestoredHistory`、`TestPrepare_FreshSessionWithoutMaterialIsNotResumed` |
 | <a id="fr-12-2"></a>FR-12.2/12.2b/12.2c/12.3（会话材料） | 已落地 | MS-6 / MS-7 | 材料已落盘（`.xhunter/<session_id>/session.jsonl`，meta 带 `schema_version`、按任务隔离、追加写）；**读回**随 MS-7 落地（`Load` 纯读、先于 `Open`；turn/op/usage 三类按行序解析、usage 按记录累加）。用例 `TestLoad_ReadsTurnsOpsAndUsageInOrder`、`TestLoad_MissingMaterialIsZeroValueNotAnError`、`TestLoad_UnknownRecordTypeIsAnError`、`TestSave_MaterialLandsUnderSessionDirWithSchemaVersion` |
 | <a id="fr-13-1"></a>FR-13.1~13.9（扩展接入） | 待接入 | MS-8 | `ext.ExtHost` 无实现 |
@@ -166,7 +166,7 @@
 | <a id="ia-3-12"></a>IA-3.12 | 已落地 | `TestRead_OversizeTruncatesWithContinuationHint`、`TestRead_LineRangeIsHonoured`、`TestRead_ReportsFirstLineOfRange` | — | — |
 | <a id="ia-3-13"></a>IA-3.13 | 已落地 | `TestWrite_InvalidPathPropagates`、`TestGlob_InvalidPatternPropagates`、`TestRead_MissingFileIsError` | — | — |
 | <a id="ia-3-14"></a>IA-3.14 | 已落地 | `TestWrite_ExistingFileIsRejectedWithGuidance` | — | — |
-| <a id="ia-3-15"></a>IA-3.15 | 已落地 | `TestSymbolics_ReportNotImplemented`、`TestCheck_ReportsNotImplemented` | MS-5 / MS-8 | 未实现原语返回 `not_implemented`（不可重试、零编辑） |
+| <a id="ia-3-15"></a>IA-3.15 | 部分具备 | `TestSymbolics_ReportNotImplemented`、`TestCheck_UnavailableRunnerIsRetryableEnvFault` | MS-5 / MS-8 | 未实现原语返回 `not_implemented`（不可重试、零编辑）。`check` 已随 MS-5 实现：它不再返回 `not_implemented`，执行器缺失现在是**可重试的装配缺件**（`gate_unavailable`） |
 | <a id="ia-3-16"></a>IA-3.16 | 已落地 | `TestCheck_DeclSurfaceIsExactlyTheGateName` | — | — |
 | <a id="ia-3-17"></a>IA-3.17 | 已落地 | `TestSymbolics_SurfaceHasNoContentAddressingSlot`、`TestSymbolics_DeclShapes` | — | — |
 | <a id="ia-3-18"></a>IA-3.18 | 已落地 | `TestPrepare_IncompleteAssemblyFailsLoudly`、`TestExecuteCall_MissingPolicyFailsClosed` | — | — |
@@ -253,7 +253,7 @@
 | <a id="ia-11-9"></a>IA-11.9 | 已落地 | `TestCheckpoint_SingleFailureSelfHeals`、`TestCheckpoint_StreakLimitConvergesAsEnvError`、`TestCheckpoint_SuccessResetsStreak` | MS-4 | 自愈（单次失败只记 warn、下一轮重提）＋ 连败上限（连续 3 次 → `checkpoint_failed_streak`，退出 1） |
 | <a id="ia-11-10"></a>IA-11.10 | 已落地 | `TestCheckpoint_CommitsOnlyThisTurnsChanges` | MS-4 | 第 N 轮的检查点提交发生在第 N 轮工具之后、第 N+1 轮工具之前；末轮未落检查点的改动由收尾交付提交带上（交付口径） |
 | <a id="ia-11-11"></a>IA-11.11 | 已落地 | `TestCheckpoint_NoAutoCheckpointOffStructuralPoint`、`TestCheckpoint_StructuralFailDoesNotCommit`、`TestCheckpoint_StructuralPassCommits`、`TestCheckpoint_UndecidableReportsDegradedOnce`、`TestCheckpoint_LogsNoOpWhenNothingWasCommitted` | MS-4 / MS-9 | 三态（pass/fail/undecidable）与不可判定如实上报已落地；真实判据随符号扩展接入（MS-9） |
-| <a id="ia-11-12"></a>IA-11.12 | 待接入 | — | MS-5 | 门禁驱动的检查点（依赖 `check`） |
+| <a id="ia-11-12"></a>IA-11.12 | 已落地 | — | MS-5 | 门禁驱动检查点：通过 → 本轮必提交；未通过 → 抑制后续自动检查点（优先于结构判据）。用例 `TestCheckpoint_GateFailureSuppressesAutoCheckpoint`、`TestCheckpoint_WithoutGateFailureAutoCheckpointStillCommits`、`TestCheck_PassedGateRequestsCheckpoint`、`TestCheck_FailedGateDoesNotRequestCheckpoint` |
 | <a id="ia-11-13"></a>IA-11.13 | 已落地 | `TestCheckpoint_ModelRequestIsConsumedOnceAndSkipsEmptyCommit`、`TestCheckpointMessage_Composition`、`TestSanitizeIntent` | MS-4 | 一次请求只兑现一次（重复请求不覆盖首次理由、消费后意图清空）；无改动不产生空提交但意图照样消费；提交信息由执行体合成（前缀/分隔符固定，模型改不了） |
 | <a id="ia-12-1"></a>IA-12.1 | 已落地 | `TestWiring_SatisfiesContracts` | — | — |
 | <a id="ia-12-2"></a>IA-12.2 | 已落地 | `TestDefaultTools_FaceIsFixed`、`TestDefaultTools_ShapeIsDeclared` | — | — |
@@ -269,7 +269,7 @@
 
 | 编号 | 状态 | 对应 MS-n | 缺口说明 |
 |---|---|---|---|
-| <a id="l1-4"></a>L1-4 门禁清单来源裁决 | 待接入 | MS-5 | `Prepare` 里 `s.gates = nil`（一期暂空），来源裁决未接入；**契约已定义**（D2：`GateSource` ＋ 档位常量 `bounty`/`repo`/`none` ＋ `Config.Gates` 装配槽），实现待 MS-5 |
+| <a id="l1-4"></a>L1-4 门禁清单来源裁决 | 已落地 | MS-5 | `Prepare` 裁决「Bounty 下发 > 基线 commit 的 `gates.yml` > 无」；`working_tree` 豁免档只能由 Bounty 授予，护栏三条（元门禁 / 强度不得降低 / `gate_config_changed`）。用例 `TestResolveGates_BountyOverridesRepoDeclaration`、`TestResolveGates_RepoDeclarationIsUsedWhenNothingIsHandedDown`、`TestResolveGates_NoSourceAtAllMeansNone`、`TestResolveGates_ExemptionRequiresABountyGrant`、`TestResolveGates_WorkingTreeReadsTheWorkspaceFile`、`TestResolveGates_ExemptionWithoutGateSourceFails` |
 | ~~契约：会话恢复接入位 ＋ 结果文件 `session_delta` 字段位~~（MS-7） | **已落地**（2026-09-24）：`hunt.Restored`（轮次 / 写操作序列 / 用量）＋ `SessionRecorder.Load(root string)`（**纯读、先于 `Open`**；与 `Ops()` 分工：本次运行 vs 读回上次）；`Prepare` 在 `Bounty.Session != nil` 时读回并回灌上下文；结果文件 `session_delta`（形状上收为 `hunt.SessionDelta`，`{turns_from, turns_to, ops_count}`，`omitempty`——**仅恢复时出现**）。**归属修正**：`session_delta` 原挂 MS-6，改挂 **MS-7**。用例 `TestEndToEnd_ResumeContinuesFromLastCheckpoint`、`TestPrepare_ResumeSeedsPolicyBudgetWithRestoredUsage` |
 | ~~契约：流看门狗、压缩位与 config_snapshot 形状~~（MS-11 / MS-12） | **契约已定义**（2026-09-23，未冻结期）：`harness.Config.StreamIdleTimeout`（接收段不活动超时；0=不限、缺省 120s；接入点在接收循环、注释标明计时器留 MS-12）；`hunt.CompactionConfig`（三档水位 ＋ 冷却，水位来自 `providerconfig.Resolved.Watermarks`）＋ `context_compacted` 载荷（`level`/`released_tokens`/`watermark`）＋ `config_snapshot` 载荷（三个阈值及其来源）。**发出点均不接**（`config_snapshot` 的 `max_denied_streak` 来源未定死 / 压缩未实现）。**更正（MS-12，2026-09-24）**：`StreamIdleTimeout` 的「0=不限」口径**当时就不成立**（`withDefaults` 一直把 0 变成 120s），现更正为 **0 = 取默认 120s / 正数 = 不活动上界 / 负数 = 关闭看门狗**，且计时器已随 MS-12 落地（见 §2.3）。实现待 MS-11 / MS-12 / MS-3 |
 | <a id="l1-5"></a>L1-5 扩展能力描述符 | 待接入 | MS-8 | 组装层注入 `ext.ExtHost` 未接入；**契约已定义**（D2：`Capabilities` / `Locate` / `Fingerprint` / `Close` ＋ `ext.Unimplemented{}` panic 哨兵装配），实现待 MS-8 |
@@ -278,11 +278,11 @@
 | <a id="l2-事件通道"></a>L2-事件通道健康 | 已落地 | MS-2 | `OnTurn` 入口复查 `Sink.Failed()`：通道已断则本轮零工具执行，收敛 `event_channel_failed`（退出 1）。用例 `TestOnTurn_StopsBeforeWorkWhenChannelAlreadyFailed` |
 | <a id="l2-压缩"></a>L2-压缩 | 待接入 | MS-11 | `ContextBuilder` 内无压缩；**契约已定义**（D4：`CompactionConfig` ＋ `context_compacted` 载荷），实现待 MS-11 |
 | <a id="l4-流看门狗"></a>L4-流看门狗 | 已落地 | MS-12 | 接收段不活动超时随 MS-12 接入：相邻两事件之间（含首事件之前）静默超上界 → **先落终态、再 `Cancel()`**，收敛为 `stream_idle_timeout`（环境错误，退出 1）；心跳不算活动、取消优先于超时、超时结构上不落 `no_tool_call`。取值口径：`StreamIdleTimeout` **0 = 取默认 120s / 正数 = 不活动上界 / 负数 = 关闭看门狗**（关闭不暴露给部署侧）。用例 `TestWatchdog_IdleStreamCancelsAsEnvError`、`TestWatchdog_TimeoutCannotBeNoToolCall`、`TestWatchdog_CancelOutranksTimeout`、`TestEndToEnd_IdleStreamConvergesToEnvError` |
-| <a id="l6-检查点"></a>L6-检查点决策 | 部分待接入 | MS-4 / MS-5 / MS-9 | 模型显式请求 ＋ 收尾已落地；门禁驱动（MS-5）、结构判据（MS-9）待接入 |
+| <a id="l6-检查点"></a>L6-检查点决策 | 部分待接入 | MS-4 / MS-5 / MS-9 | 模型显式请求 ＋ 门禁驱动（MS-5 已落地）＋ 收尾已落地；结构判据（MS-9）待接入 |
 | <a id="l6-结构检查"></a>L6-结构检查 | 待接入 | MS-9 | 判据未接入；「不可判定 → 不提交」已落地 |
 | <a id="l6-事件通道复查"></a>L6-事件通道复查 | 已落地 | MS-2 | 轮末守卫复查（取消之后、预算之前）：本轮发出时断则不再进入下一轮，收敛 `event_channel_failed`（退出 1）。用例 `TestOnTurn_StopsAfterTurnWhenChannelFailsDuringTurn`、`TestOnTurn_ChannelFailureDoesNotOverrideCancellation` |
 | <a id="l6-提交连败"></a>L6-提交连败复查 | 已落地 | MS-4 | 连续 3 次提交失败 → 本轮结束即收敛为环境错误（退出 1），不跑完剩余轮次。用例 `TestCheckpoint_StreakLimitConvergesAsEnvError` |
-| <a id="l7-gates"></a>L7-gates 补跑 | 待接入 | MS-5 | 门禁清单暂空，收尾补跑未接入 |
+| <a id="l7-gates"></a>L7-gates 补跑 | 已落地 | MS-5 | 收尾补跑**未跑过**的 `required` 门禁（预算已耗尽则不补跑、按未运行判失败）；执行失败记 degraded(`scope: gate`) 并按未运行计入终态。用例 `TestFinalize_BackfillRunsOnlyRequiredGatesThatNeverRan`、`TestFinalize_RequiredGateNeverRunFailsTheDelivery`、`TestFinalize_RequiredGateFailureFailsTheDelivery`、`TestFinalize_OptionalGateDoesNotRequireEvidence` |
 
 **组件级状态（H1~H7）**：
 
@@ -337,7 +337,7 @@
 | ~~会话材料随提交强制加入~~（IA-6.1c） | **已落地**（2026-09-23）：`internal/git/cli` 的 `Commit` 在 `add -A` 之后对本次会话材料目录再 `add -f -- <MaterialDir>`——仓库忽略 `.xhunter/`（常见做法）时 `add -A` 不会加入它，材料会写在工作区却不进任何提交、"唯一状态源"悄悄失效且不报错；材料目录尚未落盘则**跳过**（不因它把整个提交判死）；`MaterialDir` 为空时行为完全不变（"无改动不产生空提交"照旧）。用例 `TestCommit_ForceAddsMaterialEvenWhenGitignored`、`TestCommit_WithoutMaterialDirIsUnchanged`、`TestCommit_MissingMaterialDirDoesNotFail`；`cmd` e2e 补断言"分支 tip 含材料文件、交付清单不含材料"。MS-6 由此收口 |
 | ~~修复：会话材料缺末轮用量~~（快照与记账次序） | **已修复**（2026-09-23）：`OnTurn` 里 `snapshot()` 原排在 `charge()` **之前** → 本轮用量要等下一次快照才落盘；`Finalize` 的最终 `snapshot()` 原排在**交付提交之后** → 那份写在工作树里的记录进不了提交、还被 `Clean` 删掉。两处次序对调后，交付分支上的材料含**每轮各一条** usage。收紧 `TestEndToEnd_MaterialIsSelfSufficientForResume`（改断言"每轮各一条"，修复前实测**红**）、新增 `TestRecorder_SnapshotAfterCharge`（钉调用次序） |
 | ~~契约：扩展接入位与 panic 哨兵~~（H7 / MS-8） | **契约已定义**（2026-09-23，未冻结期：先定契约后填实现）：`ext.ExtHost` 补 `Fingerprint() []string`（服务会话材料 `meta.ext` 与生效快照的能力指纹，IA-6.5）；新增 `ext.Unimplemented{}` **panic 哨兵**；`cmd/xhunter` 把它**显式装上**（不再传 `nil`——A 类入口，符号原语声明不实现，走不到）。**实现待 MS-8** |
-| ~~契约：门禁清单来源 ＋ 结果文件 `gates` 形状~~（MS-5 / H4） | **契约已定义**（2026-09-23，未冻结期）：新增 `hunt.GateSource`（`Load(ctx, repo) ([]Gate, source, err)`）与来源档位常量 `bounty` / `repo` / `none`；`hunt.Config` 加装配槽 `Gates`；结果文件加 `gateFile`（`passed` **三态** `*bool`：true / false / null=未运行）与 `resultFile.Gates`（`omitempty`，写入端未接 → 不写该键）。`Prepare` 的来源裁决**不接**（B 类入口，接上任何一次运行都跑不起来，调用点留 MS-5）。**实现待 MS-5** |
+| ~~契约：门禁清单来源 ＋ 结果文件 `gates` 形状~~（MS-5 / H4） | **已落地**（2026-09-24）：`hunt.GateSource`（`Load` ＋ `Parse`）＋ 档位常量 `bounty` / `repo` / `none` / `working_tree`；`hunt.Config.Gates` 与 `GateRunner` 两个装配槽；结果文件 `gateFile`（`passed` 三态 `*bool`）已接写入端（以**清单**为准列出未运行项）。护栏（元门禁 / 强度不得降低）落在 `hunt` 包，工作区豁免档与基线档共用同一份 |
 | ~~两段式止损（MS-3）~~ | **已落地**（2026-09-24，MS-3）：`Policy.ObserveFailure` / `DeniedCount` 从 panic 哨兵回收为运行期如实判定——同类 = 同 `Fault.Kind`（空串 = 一次成功，归零；`policy_denied` 忽略），连续同类失败达 2 次换策略（回灌「换一种做法」提示、只影响下一轮）、超上限 3 次终止（`stop_loss_same_kind`）；连续拒绝在 `Decide` 计数、达 3 次终止（`stop_loss_denied`）。守卫次序「取消 → 通道 → 提交连败 → 止损 → 预算」由 `TestOnTurn_CommitStreakOutranksStopLoss` / `TestOnTurn_SameKindStopLossOutranksBudget` / `TestOnTurn_DeniedStreakOutranksBudget` 咬住。`config_snapshot` 与 `hunt_start` 同时点发出：两个止损阈值来自 `policy.Facts()`、两个机制硬顶由装配层从 `harness.DefaultConfig()` 注入。e2e：`TestEndToEnd_RepeatedFailureSwitchesBeforeFailing`（第 3 轮请求体含「换一种做法」）、`TestEndToEnd_DeniedStreakFailsTheRun`、`TestPrepare_EmitsConfigSnapshot` |
 | ~~交付 diff/patch 排除会话材料目录~~（IA-11.6） | **已落地**（2026-09-23）：`git.RepoRef` 加 `MaterialDir`（本次运行的仓库事实）；`GitWorktree.Diff`/`Patch` 改收 `RepoRef`，材料目录非空时加 `:(exclude)` pathspec——**只排本次会话的材料目录**，`.xhunter/` 下其它路径（如 `skills.draft/**`）是交付内容、照进 diff。材料目录路径唯一来源 `materialDirFor`（与落盘同源）；e2e 的临时过滤 `nonMaterial` 撤掉、改成直接断言交付清单不含材料。用例 `TestDiff_ExcludesMaterialDirButKeepsSkillsDraft`、`TestDiff_NoMaterialDirKeepsEverything`、`TestEndToEnd_LocalRunProducesDeliveryCommit` |
 | ~~一期移除符号操作（工具面口径变更）~~ | **已落地**（2026-09-24）：装配层不再把 `symbol_read` / `symbol_edit` / `symbol_rename` 交给模型（**一期不注册**，模型看不到；`hunt/symbolic` 实现保留，随 MS-8 恢复注册）；工具面定格为 **6 + 1**（`read`/`write`/`edit`/`find`/`glob`/`check` ＋ 殿后 `checkpoint`；`check` 一期注册但返回 `not_implemented`，是刻意的不对称）。**「工具面恒定」由双轴改单轴**——环境能力不决定注册、同一构建内不增减，**随能力接入而扩展**；代价如实记：跨构建版本工具名集合会变，「前缀与 schema 稳定（缓存友好）」只在同一构建内成立。用例 `TestDefaultTools_FaceIsFixed`、`TestDefaultTools_SymbolOperationsAreDeferred` |
@@ -356,7 +356,6 @@
 |---|---|
 | 会话材料（仅余扩展能力指纹） | `IA-6.5`（MS-8） |
 | 压缩 | `IA-2.5`、`IA-2.6`、`IA-2.7`、`IA-2.8`、`L2-压缩`、`FR-14.1`、`AC-17`、`AC-18` |
-| 门禁 | `IA-3.16`（`check` 声明不实现）、`IA-11.12`、`L1-4`、`L7-gates`、`FR-5.2b`、`产品§6` |
 | 符号能力 | `IA-3.5`、`IA-7.1`~`IA-7.7`、`L1-5`、`FR-4.1`、`FR-4.3`、`FR-13.1`、`产品§6` |
 | git 剩余语义 | `IA-11.12`、`L6-检查点` |
 | 结构检查 | `IA-11.11`、`L6-结构检查`、`FR-1.3d` |
@@ -400,7 +399,7 @@
 | **MS-2** | 运行可观测补齐（事件流 ＋ 生效配置快照） | 一期收口 | MS-1 | 中 | FR-10、FR-11.1/11.6、FR-6.3/6.4、IA-5.2/5.4 | **已完成**（2026-09-23；事件流、生效配置快照、澄清回路三类自陈与收口验收（纯 NDJSON／事件序列／增量语义／插件失败）全部落地，见 §2.3） |
 | **MS-3** | 止损完备（两段式止损） | 一期收口 | MS-2 | 中 | FR-9.1/9.4、IA-4.8/4.9 | **已完成**（2026-09-24；两段式止损两轴（同类失败 2/3、连续拒绝 3）、守卫次序、`config_snapshot` 落地，见 §4.3 与 §2.3） |
 | **MS-4** | 检查点分档与提交健壮性 | 一期收口 | MS-1 | 中 | FR-1.3b/1.3c/1.11②、IA-11.8/11.10/11.11/11.13 | **已完成**（2026-09-23；结构判据三态、连败上限、时序/不可见性/意图兑现断言全部落地，见 §2.3） |
-| **MS-5** | 门禁落地（`check` 实现 ＋ 全链护栏） | 一期收口 | MS-4 | 大 | FR-5.2b~5.2i、IA-11.12 | 未开始 |
+| **MS-5** | 门禁落地（`check` 实现 ＋ 全链护栏） | 一期收口 | MS-4 | 大 | FR-5.2b~5.2i、IA-11.12 | **已完成**（2026-09-24；来源裁决、`check` 执行器与判据、收尾补跑、终态与检查点联动、事件与结果文件全部落地，见 §4.3 与 §2.3） |
 | **MS-6** | 会话材料落盘 | M1.5 前置 | MS-4 | 中 | FR-12.2/12.2b/12.3、IA-6.1/6.1b/6.1c | **已完成**（2026-09-23；材料落盘、Recorder 接口一次加齐、交付 diff/patch 排除材料目录、随检查点 `add -f` 全部落地，见 §2.3） |
 | **MS-7** | 会话恢复（resume） | M1.5 | MS-6 | 大 | FR-12.1/12.6、AC-7、IA-6.2/6.3/6.4 | **已完成**（2026-09-24；`Load` 真读回、`Prepare` 纯读先于 `Open`、回灌上下文＋新条件追加、`session_delta` 接线、token 预算续算，见 §4.3） |
 | **MS-8** | 扩展接入与符号读写 | M2 | MS-2 | 大 | FR-13、FR-4.1/4.2/4.4~4.8/4.13、IA-7.1~7.6 | 未开始 |
@@ -525,6 +524,8 @@
 
 #### MS-5 门禁落地（`check` 实现 ＋ 全链护栏）
 
+**状态**：**已完成**（2026-09-24）。
+
 **目标**：把 §7.8 从规格变成产品能力。这是本排期里最需要先做设计确认的两块之一（另一块是 MS-8）。
 
 **范围**
@@ -541,10 +542,12 @@
 - 清空 `Prepare` 里的 `s.gates = nil`（来源裁决接上 `Config.Gates`）。
 
 **独立验收的证据**
-- 单测（`hunt/gate`）：`TestCheck_ArgvIsDirectAndRejectsShell`、`TestCheck_ExpectVariants`、`TestCheck_TimeoutIsEnvError`、`TestCheck_NonZeroExitIsQualityFailure`、`TestCheck_CacheHitByFingerprint`、`TestCheck_EnvIsMinimalAndCredentialFree`。
-- git 侧：`TestGates_LoadedFromBaseCommitNotWorktree`。
-- e2e：`TestEndToEnd_RequiredGateNeverRunFailsWithDelivery`、`TestEndToEnd_GateFailureSuppressesCheckpoint`。
-- `TestGate_SourcePrecedence`、`TestGate_WorkingTreeExemptionRequiresMetaGate`。
+- 单测（`hunt/gate`）：`TestCheck_ArgvIsDirectAndRejectsShell`、`TestCheck_ExpectVariantsDecideTheVerdict`、`TestCheck_TimeoutIsEnvError`、`TestCheck_NonZeroExitIsQualityFailure`、`TestCheck_UnstartableCommandIsEnvError`、`TestCheck_CacheHitByFingerprint`、`TestCheck_EnvIsMinimalAndCredentialFree`、`TestCheck_PassedGateRequestsCheckpoint`、`TestCheck_FailedGateDoesNotRequestCheckpoint`、`TestCheck_UnknownNameIsAVerdictNotAnEnvFault`、`TestCheck_UnavailableRunnerIsRetryableEnvFault`。
+- git 侧：`TestReadFileAtCommit_ReadsTheBaselineNotTheWorktree`、`TestReadFileAtCommit_MissingFileIsNotAnError`。
+- 清单与护栏（`hunt`）：`TestResolveGates_BountyOverridesRepoDeclaration`、`TestResolveGates_RepoDeclarationIsUsedWhenNothingIsHandedDown`、`TestResolveGates_NoSourceAtAllMeansNone`、`TestResolveGates_ExemptionRequiresABountyGrant`、`TestResolveGates_WorkingTreeReadsTheWorkspaceFile`、`TestResolveGates_WorkingTreeExemptionRequiresMetaGate`、`TestResolveGates_WorkingTreeCannotLowerStrength`、`TestResolveGates_WorkingTreeEmitsGateConfigChanged`、`TestResolveGates_WorkingTreeMissingManifestCannotDropRequiredGates`、`TestResolveGates_ExemptionWithoutGateSourceFails`、`TestMetaGate_RejectsUndecidableExpect`、`TestMetaGate_RequiresTheCommandToBeStartable`、`TestMetaGate_ReportsEveryProblemAtOnce`、`TestCheckStrength_RejectsWeakening`。
+- 解析与加载（`internal/gates`）：`TestParse_ExpectComesFromTheConfig`、`TestParse_RejectsUnknownFields`、`TestSource_ParseIsTheSameRuleTheLoaderUses`、`TestSource_MissingDeclarationIsNone`、`TestSource_LoadsAndValidatesTheDeclaredList`。
+- 接线（`hunt`）：`TestGateResult_EmitsCheckResultEvent`、`TestGateFacts_NamesReachTheUserTurn`、`TestFinalize_RequiredGateFailureFailsTheDelivery`、`TestFinalize_RequiredGateNeverRunFailsTheDelivery`、`TestFinalize_RequiredGatePassedSucceeds`、`TestFinalize_OptionalGateDoesNotRequireEvidence`、`TestFinalize_BackfillRunsOnlyRequiredGatesThatNeverRan`、`TestCheckpoint_GateFailureSuppressesAutoCheckpoint`、`TestCheckpoint_WithoutGateFailureAutoCheckpointStillCommits`。
+- e2e（`cmd/xhunter`）：`TestEndToEnd_RequiredGateNeverRunFailsWithDelivery`、`TestEndToEnd_GateFailureFailsButStillDelivers`、`TestEndToEnd_RequiredGatePassedSucceeds`。
 
 **依赖**：MS-4。**不做**：结构检查（MS-9）、每轮自动跑门禁（架构 §7.8 明确不做）。
 
@@ -790,6 +793,9 @@
 | 15 | 压缩的三个数（L4 默认不启用；冷却 3 轮；材料上限 2 MB） | 已采纳进设计文档：FR-14.4、FR-14.1、FR-12.2c |
 | 16 | 两个载荷形状（`effective_config` / `session_delta`） | 已采纳进设计文档：FR-11.6、FR-1.5、使用手册 §6 |
 | 17 | **V 层的路线选择：判据路线**（具名门禁 ＋ 结构检查）；多 agent 不作 V 层补法，但其调度形态定为**操作原语**（不动 harness） | 已采纳进设计文档：产品设计 §1.2、架构 §3 / §7.8；备查与缺口清单见 `docs/xhunter-memo-multi-agent-route.md` |
+| 19 | **基础设施允许第三方依赖**（2026-09-24 用户裁决）：门禁清单的 YAML 解析引入 `gopkg.in/yaml.v3`。**边界**：开放的是"基础设施类"通用库；模型接入仍**不得使用厂商 SDK**（协议线格式一律手写，NFR-1 的这条不变） |
+| 20 | **门禁终态口径**（2026-09-24）：执行失败（起不来 / 超时）**不是质量结论**——按"未运行"计入终态并发 `degraded(scope: gate)`；`required` 门禁未通过或从未运行 → `status=failed` 且**退出码 0**，改动照常交付。终态只改写引擎给出的 `succeeded`，机制性终止不被抹掉 |
+
 | 18 | **未冻结期：装配扩展点先定义、未实现以 `panic` 哨兵装配；不写降级防护**（**对决策 13 的限定**：13 管"能力声明"，本条管"装配扩展点"，不是推翻） | 已采纳进设计文档：架构 §8「例外：装配扩展点可以先定义后实现（未冻结期口径）」；冻结前回收项见本文档 §5 |
 
 ### 7.2 仍待澄清

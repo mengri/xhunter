@@ -27,6 +27,9 @@ func (g *stubGit) Commit(context.Context, git.RepoRef, string) (git.Commit, erro
 func (g *stubGit) Diff(context.Context, git.RepoRef) ([]string, error) { return nil, nil }
 func (g *stubGit) Patch(context.Context, git.RepoRef) (string, error)  { return "", nil }
 func (g *stubGit) Clean(context.Context) error                         { return nil }
+func (g *stubGit) ReadFileAtCommit(context.Context, git.RepoRef, string) ([]byte, bool, error) {
+	return nil, false, nil
+}
 
 // 首轮提示词必须让模型看到"要做什么"：任务正文只存在于 Bounty 里，若装配层不把它
 // 放进 user 段，模型拿到的是"项目约定 + 技能清单"——任务会在第一轮退化成无工具调用。

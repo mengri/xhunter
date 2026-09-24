@@ -307,7 +307,7 @@ func TestDefaultAssembly_EffectiveConfigPrimitivesMatchToolFace(t *testing.T) {
 			Repo: git.RepoRef{Remote: "r", Branch: "b", BaseCommit: "0123456789abcdef"},
 		},
 		Tools: func(ws workspace.Workspace) []hunt.Primitive {
-			return defaultTools(ws, nil) // 与 huntCmd 同一份真实清单
+			return defaultTools(ws, nil, nil) // 与 huntCmd 同一份真实清单
 		},
 		Policy:        defaultPolicy(hunt.Budget{}),
 		Opener:        osfs.Opener{},

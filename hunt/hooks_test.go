@@ -110,7 +110,7 @@ func TestOnTurn_AnsweredCallIsNotReExecuted(t *testing.T) {
 // 但内核那两块（内核条款 / 环境事实）**照旧存在**——它们不由插件提供。
 func TestFirstPrompt_KeepsOrderAndAppendsKernelBlocks(t *testing.T) {
 	bounty := Bounty{Repo: gitRepoRef()}
-	got := firstPrompt("PLUGIN_SYS", "PLUGIN_USER", bounty)
+	got := firstPrompt("PLUGIN_SYS", "PLUGIN_USER", bounty, nil)
 	if len(got) != 2 || got[0].Role != llm.RoleSystem || got[1].Role != llm.RoleUser {
 		t.Fatalf("两段都必须存在且 system 在前：%+v", got)
 	}
@@ -133,7 +133,7 @@ func TestFirstPrompt_KeepsOrderAndAppendsKernelBlocks(t *testing.T) {
 	}
 
 	// 插件两段都空：不留空行、不产出多余消息，但内核两块仍在。
-	empty := firstPrompt("  \n ", "", bounty)
+	empty := firstPrompt("  \n ", "", bounty, nil)
 	if len(empty) != 2 {
 		t.Fatalf("内核两块必须各自成段：%+v", empty)
 	}
@@ -214,6 +214,9 @@ func (stubBaselineGit) Commit(context.Context, git.RepoRef, string) (git.Commit,
 func (stubBaselineGit) Diff(context.Context, git.RepoRef) ([]string, error) { return nil, nil }
 func (stubBaselineGit) Patch(context.Context, git.RepoRef) (string, error)  { return "", nil }
 func (stubBaselineGit) Clean(context.Context) error                         { return nil }
+func (stubBaselineGit) ReadFileAtCommit(context.Context, git.RepoRef, string) ([]byte, bool, error) {
+	return nil, false, nil
+}
 
 // stubOpener 交出一个内存工作区。
 type stubOpener struct{}

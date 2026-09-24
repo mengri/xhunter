@@ -50,6 +50,31 @@ func environmentFacts(b Bounty) string {
 	return strings.Join(facts, "\n")
 }
 
+// gateFacts 把本次可用的门禁名交给模型。
+//
+// 门禁是**具名条目**：模型不知道名字就无从调用，而"跑到一半才发现有门禁"等于没有门禁。
+// 只给名字与是否必需——命令与判据不给，那是业务侧的事，给了也只是多一处可撞的口径。
+func gateFacts(gates []Gate) string {
+	required := make([]Gate, 0, len(gates))
+	for _, g := range gates {
+		if strings.TrimSpace(g.Name) != "" {
+			required = append(required, g)
+		}
+	}
+	if len(required) == 0 {
+		return ""
+	}
+	facts := []string{"[质量门禁]（本次可用的具名条目；用 check 工具按名字调用）"}
+	for _, g := range required {
+		line := "- " + g.Name
+		if g.Required {
+			line += "（必需：未通过不算成功交付）"
+		}
+		facts = append(facts, line)
+	}
+	return strings.Join(facts, "\n")
+}
+
 // ref 取来源标识用的短哈希：够定位，又不至于把整串贴进提示词。
 func ref(commit string) string {
 	commit = strings.TrimSpace(commit)

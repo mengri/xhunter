@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -36,8 +38,12 @@ type Config struct {
 	Session SessionRecorder
 	Sink    EventSink
 	// Gates 是门禁清单的来源（承担「Bounty 下发 > 仓库声明 > 无」里的后两档）。它是**装配槽**——
-	// 契约见 `GateSource`；**调用点（Prepare 的来源裁决）在 MS-5 接上**，本次不接。
+	// 契约见 `GateSource`，来源裁决在 Prepare 里发生。
 	Gates GateSource
+	// GateRunner 是门禁执行器（跑命令 + 按门禁声明的判据判定）。它也是装配槽：执行器要
+	// 起子进程、要缓存，这些是装配层才知道的事实。收尾补跑与 check 原语**共用同一份**——
+	// 否则同一条门禁在两处可能跑出两个结论。
+	GateRunner GateRunner
 
 	Filters []NamedFilter
 
@@ -60,8 +66,19 @@ type Session struct {
 	order   []PrimitiveName
 	ledger  *Ledger
 	gates   []Gate
-	commit  *git.Commit
-	ops     []WriteOp
+	// gateSource 是本次门禁清单的来源档位（见 GateSource* 常量）：它进上报与结果文件，
+	// 供评审回答"这次用的是哪套规则"。
+	gateSource string
+	// gateResults 是本次运行跑过的门禁结论（按发生顺序）。终态判定、结果文件与检查点联动
+	// 都读它——"跑过什么"只有这一个来源。
+	gateResults []GateResult
+	// gateFailed 记"有门禁没通过"这个事实：它抑制后续的自动检查点（不合格的中间态不值得
+	// 钉在分支上）。只升不降——模型修好后重新跑一次通过才恢复。
+	gateFailed bool
+	// root 是工作区根的绝对路径（由 PrepareBaseline 在运行期给出）；门禁进程要在它里面跑。
+	root   string
+	commit *git.Commit
+	ops    []WriteOp
 
 	// effective 是本次 Hunt 的生效配置快照，装配完成后冻结一次（见 Prepare）。起飞事件与
 	// 结果文件读的是它同一份；Prepare 未成功时是零值，结果文件据此省略该字段。
@@ -139,6 +156,13 @@ type Delivery struct {
 	Patch   string
 	Summary string
 	Usage   UsageReport
+	// GateResults 是本次跑过的门禁结论（按发生顺序）；没跑过的门禁不在这里出现，
+	// 由装配层按清单补齐成"未运行"（结果文件必须列出它们，见使用手册 §6）。
+	GateResults []GateResult
+	// Gates 是本次**生效的清单**：结果文件要列出未运行的门禁，只有清单才知道有哪些条目。
+	Gates []Gate
+	// GateSource 是本次门禁清单的来源档位（见 GateSource* 常量）：回答"这次用的是哪套规则"。
+	GateSource string
 	// SessionDelta 是本次运行相对**上次运行**的增量：**仅恢复时非 nil**（未恢复不带该键，
 	// 由装配层的 `omitempty` 省略）。见 SessionDelta。
 	SessionDelta *SessionDelta
@@ -161,6 +185,7 @@ func (s *Session) Delivery() Delivery {
 	return Delivery{
 		Commit: s.commit, Files: s.files, Patch: s.patch,
 		Summary: s.lastText, Usage: s.usage, SessionDelta: s.delta,
+		GateResults: s.gateResults, GateSource: s.gateSource, Gates: s.gates,
 	}
 }
 
@@ -237,7 +262,54 @@ var CheckpointDecl = llm.ToolDecl{
 
 // ============================================================ Facts
 
-func (s *Session) Gates() []Gate   { return s.gates }
+func (s *Session) Gates() []Gate    { return s.gates }
+func (s *Session) WorkRoot() string { return s.root }
+
+// RecordGateResult 记下一次门禁结论（见 Facts.RecordGateResult）。
+//
+// 事件也从这里发——"跑过什么、结论是什么"只有这一个来源：终态、结果文件与事件流都读它，
+// 各自再发一遍迟早会对不上。
+func (s *Session) RecordGateResult(res GateResult) {
+	s.gateResults = append(s.gateResults, res)
+	if !res.Passed {
+		s.gateFailed = true
+	}
+	s.emitGateResult(res)
+}
+
+// emitGateResult 上报一条门禁结论（使用手册 §5 的 `check_result`）。
+//
+// 它是 MR 评审最需要的证据：验收跑没跑、过没过、是不是缓存结论。
+func (s *Session) emitGateResult(res GateResult) {
+	if s.cfg.Sink == nil {
+		return
+	}
+	_ = s.cfg.Sink.Emit(ExternalEvent{Type: "check_result", Payload: map[string]any{
+		"call_id":     res.CallID,
+		"gate":        res.Name,
+		"passed":      res.Passed,
+		"cached":      res.Cached,
+		"exit_code":   res.ExitCode,
+		"duration_ms": res.DurationMS,
+		"source":      s.gateSource,
+		"summary":     res.Summary,
+	}})
+}
+
+// ChangeFingerprint 给出待提交改动的内容指纹：门禁结果按它缓存。
+//
+// 取的是**写操作序列**而不是工作区快照：待提交的改动就是这些写操作，读一遍全工作区既慢
+// 又会把门禁自身的产物（构建缓存）算进来，让缓存永远不命中。
+func (s *Session) ChangeFingerprint() string {
+	if len(s.ops) == 0 {
+		return "clean"
+	}
+	h := fnv.New64a()
+	for _, op := range s.ops {
+		fmt.Fprintf(h, "%s|%s|%d-%d|%s\n", op.Primitive, op.File, op.ByteRange.Start, op.ByteRange.End, op.After)
+	}
+	return strconv.FormatUint(h.Sum64(), 16)
+}
 func (s *Session) Ledger() *Ledger { return s.ledger }
 
 func (s *Session) RequestCheckpoint(summary string) {

@@ -207,6 +207,37 @@ func (g *Git) Patch(ctx context.Context, repo git.RepoRef) (string, error) {
 	return out, nil
 }
 
+// ReadFileAtCommit 读取基线 commit 里的文件内容。
+//
+// 门禁清单必须**从基线读**而不是从工作区读：判据是这次交付的验收标准，让它运行中途变，这次
+// 的结论就不可复现（文件本身不禁改，改了照样进交付 diff 给人 review，只是本次不生效）。
+func (g *Git) ReadFileAtCommit(ctx context.Context, repo git.RepoRef, path string) ([]byte, bool, error) {
+	if g.root == "" {
+		return nil, false, envFault("no_worktree", "尚未获取基线：无法读取基线文件")
+	}
+	base := strings.TrimSpace(repo.BaseCommit)
+	if base == "" {
+		return nil, false, envFault("baseline_unreachable", "缺少基线 commit：无法读取基线文件")
+	}
+	if strings.TrimSpace(path) == "" {
+		return nil, false, envFault("baseline_read_failed", "读取基线文件失败：路径为空")
+	}
+	// 先问存在、再取内容：cat-file -e 的非零退出是**结论**（那个提交里没有这个文件），不是执行
+	// 失败。两步分开，才不会把"没有声明"读成"读不出来"。
+	_, code, err := g.runCode(ctx, g.root, "cat-file", "-e", base+":"+path)
+	if err != nil {
+		return nil, false, envFault("baseline_read_failed", "读取基线文件失败："+err.Error())
+	}
+	if code != 0 {
+		return nil, false, nil
+	}
+	out, err := g.runRaw(ctx, g.root, "show", base+":"+path)
+	if err != nil {
+		return nil, false, envFault("baseline_read_failed", "读取基线文件 "+path+" 失败："+err.Error())
+	}
+	return []byte(out), true, nil
+}
+
 // diffArgs 组装 diff / patch 的公共参数：基准 commit ＋（材料目录非空时）排除本次会话材料目录的
 // pathspec。**只排本次会话的材料目录**——`.xhunter/` 下的其它路径（如 `skills.draft/**`）是交付
 // 内容，不能被一起藏掉；MaterialDir 为空时不加 pathspec（保持旧行为）。

@@ -13,8 +13,8 @@ import (
 // 结果文件与补丁是"交付记录"这一侧的产物：主交付是远端那条任务分支（FR-6.1），
 // 这里是附带的机器可读结论，供平台记账与评审（FR-1.5、使用手册 §6）。
 //
-// 只写当前真能给出的事实：`gates` 尚未落地，就不在这里摆空壳——空数组会被读成
-// "没有门禁、没有假设"，那是另一句话。字段状态以使用手册 §6 的标注为准。
+// 只写当前真能给出的事实：没有门禁清单时 `gates` 整个不出现（omitempty）——空数组会被读成
+// "没有门禁"，那是另一句话。字段状态以使用手册 §6 的标注为准。
 
 // resultFile 是结果文件的形状（使用手册 §6）。
 type resultFile struct {
@@ -33,8 +33,9 @@ type resultFile struct {
 	// 小结）。没有答复就没有这个键（omitempty），不摆空壳。
 	Summary string `json:"summary,omitempty"`
 
-	// Gates 是门禁结果（FR-5.2、使用手册 §6）。**未接线**：写入端（MS-5）接上之前不写该键
-	// （omitempty），不摆空壳。形状见 gateFile（`passed` 三态：true / false / null=未运行）。
+	// Gates 是门禁结果（FR-5.2、使用手册 §6）：**清单里的每一条都要出现**，跑过的给结论、
+	// 没跑过的 `passed: null`。本次没有清单时该键整个不出现（omitempty），不摆空壳。
+	// 形状见 gateFile。
 	Gates []gateFile `json:"gates,omitempty"`
 
 	// SessionDelta 是本次运行相对**上次运行**的增量——形状与语义收在 `hunt.SessionDelta`
@@ -68,8 +69,10 @@ type errorFile struct {
 // gateFile 是结果文件里一条门禁的形状（FR-5.2、使用手册 §6）。
 //
 // `passed` 用**三态**（`*bool`）：`true` 通过、`false` 未通过、`null` **未运行**。§6 要求结果文件
-// **必须列出未运行的门禁**（`passed: null`）——用一个 `bool` 会把"没跑"混成"没通过"，那是两句话。
-// 字段语义与 §7.8 一致；**本期只定义形状**，写入端在 MS-5 接上。
+// **必须列出未运行的门禁**（`passed: null`）——用一个 `bool` 会把"没跑"混成"没通过"，那是两句话，
+// 而"必需门禁从未运行"与"未通过"在处置上是两回事。
+//
+// `source` 是清单来源档位：回答"这次用的是哪套规则"（基线那套，还是 Bounty 授予豁免后工作区那套）。
 type gateFile struct {
 	Name     string `json:"name"`
 	Passed   *bool  `json:"passed"`
@@ -123,6 +126,7 @@ func writeRunOutputs(resultPath, patchPath string, bounty hunt.Bounty, out harne
 	if len(effective.Primitives) > 0 {
 		r.EffectiveConfig = &effective
 	}
+	r.Gates = gateFiles(d)
 	if out.Status == harness.StatusFailed {
 		r.Error = &errorFile{
 			Kind:      hunt.ErrorKind(out.Reason),
@@ -161,4 +165,29 @@ func writeFile(path string, data []byte) error {
 		}
 	}
 	return os.WriteFile(path, data, 0o644)
+}
+
+// gateFiles 把「本次生效的清单」与「跑过的结论」拼成结果文件里的门禁数组。
+//
+// 以**清单**为准而不是以结论为准：只写跑过的那些，会让"必需门禁从未运行"这件事在结果文件里
+// 彻底消失——平台看到一份干净的门禁数组，会以为这次验收都跑过了。
+//
+// 同名门禁取**最近一次**结论（模型可能反复调同一条）：最后一次才反映当前改动的状态。
+func gateFiles(d hunt.Delivery) []gateFile {
+	if len(d.Gates) == 0 {
+		return nil
+	}
+	out := make([]gateFile, 0, len(d.Gates))
+	for _, g := range d.Gates {
+		f := gateFile{Name: g.Name, Source: d.GateSource}
+		if res, ran := hunt.LatestGateResult(d.GateResults, g.Name); ran {
+			passed := res.Passed
+			f.Passed = &passed
+			exitCode := res.ExitCode
+			f.ExitCode = &exitCode
+			f.Summary = res.Summary
+		}
+		out = append(out, f)
+	}
+	return out
 }

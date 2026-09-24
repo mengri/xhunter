@@ -35,6 +35,16 @@ type Facts interface {
 	Ledger() *Ledger
 	RequestCheckpoint(summary string)
 	CheckpointRequested() bool
+	// WorkRoot 给出工作区根的**绝对路径**。原语拿不到它——工作区接口只接受相对路径，
+	// 这是刻意的设计（模型写不出"工作区之外的路径"）；但门禁要在工作区里跑命令，
+	// 命令需要一个真实目录，所以这一条事实由执行体给出、且只有执行体给得出。
+	WorkRoot() string
+	// ChangeFingerprint 给出**待提交改动**的内容指纹：门禁结果按它缓存——改动没变，
+	// 就没必要再跑一次几十秒的测试。
+	ChangeFingerprint() string
+	// RecordGateResult 把一次门禁结论交回执行体：终态、检查点联动与结果文件都读它，
+	// 因此"跑过什么、结论是什么"只有这一个来源。
+	RecordGateResult(res GateResult)
 }
 
 // Ledger 记录「模型看过哪些文件、当时的内容指纹是什么」。

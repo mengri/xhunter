@@ -29,16 +29,18 @@ import (
 // 用途就是 MS-8 的接入位，届时符号原语复活、才真正走到扩展宿主。ext.ExtHost 形参也
 // 因此保留——它是给 MS-8 的构造参数，一期虽未用到、形参不动。
 //
-// check 本期**注册但未实现**（调用返回 not_implemented）是**刻意的不对称**：门禁是
-// 检查点的触发源，且属「一期收口」范围——别把它当作漏删（本期应移除的是那三个符号
-// 原语，不是它）。
-func defaultTools(ws workspace.Workspace, ex ext.ExtHost) []hunt.Primitive {
+// check 的工具名一直在工具面上：一期它注册但返回 not_implemented（那是刻意的不对称——
+// 门禁是检查点的触发源）。现在它接上真正的执行器：跑什么、按什么算通过，都来自清单。
+//
+// 执行器由装配层传进来、与执行体的收尾补跑**共用同一份**：同一条门禁在两处跑出不同结论
+// 是不可接受的。
+func defaultTools(ws workspace.Workspace, ex ext.ExtHost, runner hunt.GateRunner) []hunt.Primitive {
 	return []hunt.Primitive{
 		basic.ReadTool(ws),
 		basic.WriteTool(ws),
 		basic.EditTool(ws),
 		basic.FindTool(ws),
 		basic.GlobTool(ws),
-		gate.CheckTool(),
+		gate.CheckTool(runner),
 	}
 }
