@@ -679,7 +679,8 @@ func TestEndToEnd_EffectiveConfigEmptyCollectionsAreArrays(t *testing.T) {
 		t.Fatalf("成功运行应退出 0，实际 %d\nstdout:\n%s\nstderr:\n%s", r.code, r.stdout, r.stderr)
 	}
 
-	// 事件流：hunt_start.effective_config 的集合字段必须是数组（ext/filters 为空数组而非 null）。
+	// 事件流：hunt_start.effective_config 的集合字段必须是数组（filters 为空数组而非 null；
+	// ext 是实际装配的符号能力指纹）。
 	var startLine string
 	for _, line := range nonEmptyLines(r.stdout) {
 		if strings.Contains(line, `"type":"hunt_start"`) {
@@ -695,8 +696,10 @@ func TestEndToEnd_EffectiveConfigEmptyCollectionsAreArrays(t *testing.T) {
 	if err := json.Unmarshal([]byte(startLine), &startEv); err != nil {
 		t.Fatalf("hunt_start 不是合法 JSON：%v", err)
 	}
-	if got := string(startEv.EC["ext"]); got != "[]" {
-		t.Errorf("hunt_start.effective_config.ext = %s，期望 []（空数组 = 没有扩展，不是 null）", got)
+	// 符号后端已装配：指纹如实报出（不是空数组——空数组会说成"没有符号能力"）。
+	// 断言"非空数组"而不是逐字比对指纹：指纹内容归后端自述，装配层只保证如实搬运。
+	if got := string(startEv.EC["ext"]); !strings.HasPrefix(got, "[") || got == "[]" || got == "null" {
+		t.Errorf("hunt_start.effective_config.ext = %s，期望非空的符号能力指纹数组", got)
 	}
 	if got := string(startEv.EC["filters"]); got != "[]" {
 		t.Errorf("hunt_start.effective_config.filters = %s，期望 []", got)
@@ -718,8 +721,9 @@ func TestEndToEnd_EffectiveConfigEmptyCollectionsAreArrays(t *testing.T) {
 	if err := json.Unmarshal(raw, &res); err != nil {
 		t.Fatalf("结果文件不是合法 JSON：%v", err)
 	}
-	if got := string(res.EC["ext"]); got != "[]" {
-		t.Errorf("结果文件 effective_config.ext = %s，期望 []", got)
+	// 与事件流同源：结果文件读的是同一份快照。
+	if got := string(res.EC["ext"]); !strings.HasPrefix(got, "[") || got == "[]" || got == "null" {
+		t.Errorf("结果文件 effective_config.ext = %s，期望非空的符号能力指纹数组", got)
 	}
 	if got := string(res.EC["filters"]); got != "[]" {
 		t.Errorf("结果文件 effective_config.filters = %s，期望 []", got)

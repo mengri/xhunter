@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -8,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"xhunter/ext"
 
 	"xhunter/git"
 	"xhunter/harness"
@@ -128,12 +131,16 @@ func TestDefaultTools_ShapeIsDeclared(t *testing.T) {
 	}
 }
 
-// 工具面固定：本产品的原语**恰好是这 6 个**、顺序固定。顺序进入每一轮请求的前缀。
+// 工具面固定：本产品的原语**恰好是这 9 个**、顺序固定。顺序进入每一轮请求的前缀。
 //
-// **期次口径**（不是实现细节）：三个符号原语（symbol_read / symbol_edit / symbol_rename）
-// 一期**不注册**、随 MS-8 接入时再进清单——模型一期看不到它们。加回清单必须是有意识的决定。
+// 三个符号原语（symbol_read / symbol_edit / symbol_rename）随 MS-8 接回清单：符号后端已接入，
+// 模型看得到它们。工具面一旦变化，这里必须是有意识的决定。
 func TestDefaultTools_FaceIsFixed(t *testing.T) {
-	want := []string{"read", "write", "edit", "find", "glob", "check"}
+	want := []string{
+		"read", "write", "edit", "find", "glob",
+		"symbol_read", "symbol_edit", "symbol_rename",
+		"check",
+	}
 	tools := defaultTools(nil, nil, nil)
 	if len(tools) != len(want) {
 		t.Fatalf("原语数 = %d，期望 %d", len(tools), len(want))
@@ -145,26 +152,58 @@ func TestDefaultTools_FaceIsFixed(t *testing.T) {
 	}
 }
 
-// 一期工具面不含任何符号原语：装配层**不把** symbol_read / symbol_edit / symbol_rename 交给模型。
+// 「工具面恒定」的对照（IA-7.1）：**环境能力不决定注册**。
 //
-// 期望集合用**符号包导出的常量**（symbolic.SymbolRead / SymbolEdit / SymbolRename）构造——
-// 这里引用的是符号包的常量、**不是被测装配层的常量**，故不违反"不拿被测常量当期望值"的纪律。
-//
-// 断言写成"若这三个名字出现在清单里即失败"，因此**把符号原语加回 defaultTools 清单即变红**。
-// 它守的是**期次口径**（不是实现细节）：符号原语随 MS-8 接入；加回清单必须是有意识的决定。
-func TestDefaultTools_SymbolOperationsAreDeferred(t *testing.T) {
-	deferred := []string{
-		string(symbolic.SymbolRead),
-		string(symbolic.SymbolEdit),
-		string(symbolic.SymbolRename),
+// 同一份装配在「符号后端可用 / 不可用」两情形下，模型的工具面必须**完全相同**——
+// 名字集合与 schema 逐项相同。能力不可用时符号原语返回结构化错误，而不是从工具面上消失：
+// 工具名随环境增删，会让"同一份提示词在不同机器上指向不同能力"，结论因此不可复现。
+func TestDefaultTools_FaceIsIdenticalWhetherTheBackendIsAvailable(t *testing.T) {
+	ws, err := defaultWorkspaces().Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("打开工作区失败：%v", err)
 	}
+	available := defaultTools(ws, defaultExt(ws), nil)
+	absent := defaultTools(ws, ext.Unimplemented{}, nil)
+
+	if len(available) != len(absent) {
+		t.Fatalf("工具面数量随能力变化：可用 %d / 不可用 %d", len(available), len(absent))
+	}
+	for i := range available {
+		a, b := available[i].Decl(), absent[i].Decl()
+		if a.Name != b.Name {
+			t.Fatalf("第 %d 个原语名字随能力变化：%q vs %q", i+1, a.Name, b.Name)
+		}
+		if string(a.Schema) != string(b.Schema) {
+			t.Errorf("%s 的参数形状随能力变化：%s vs %s", a.Name, a.Schema, b.Schema)
+		}
+		if a.Description != b.Description {
+			t.Errorf("%s 的说明随能力变化", a.Name)
+		}
+	}
+	// 反证：这一条要能真的区分两种装配——后端可用时符号能力确实在线。
+	caps := defaultExt(ws).Capabilities(context.Background())
+	if !caps.Available {
+		t.Fatal("默认后端应可用：否则上面两情形其实是同一种，对照不成立")
+	}
+	if (ext.Unimplemented{}).Capabilities(context.Background()).Available {
+		t.Fatal("空后端应报不可用：否则上面两情形其实是同一种，对照不成立")
+	}
+}
+
+// 符号原语在工具面上：模型看得到它们，才能在需要时按符号寻址
+// （拿不到就只会退化成整块文本替换）。
+func TestDefaultTools_SymbolPrimitivesAreRegistered(t *testing.T) {
 	face := make(map[string]bool)
 	for _, prim := range defaultTools(nil, nil, nil) {
 		face[prim.Decl().Name] = true
 	}
-	for _, name := range deferred {
-		if face[name] {
-			t.Errorf("一期工具面不该注册符号原语 %q：它随 MS-8 接入时才注册；加回清单必须是有意识的决定", name)
+	for _, name := range []string{
+		string(symbolic.SymbolRead),
+		string(symbolic.SymbolEdit),
+		string(symbolic.SymbolRename),
+	} {
+		if !face[name] {
+			t.Errorf("工具面缺符号原语 %q", name)
 		}
 	}
 }
@@ -174,6 +213,7 @@ func TestDefaultTools_SymbolOperationsAreDeferred(t *testing.T) {
 func TestDefaultTools_WritesIsDeclared(t *testing.T) {
 	want := map[string]bool{
 		"read": false, "write": true, "edit": true, "find": false, "glob": false,
+		"symbol_read": false, "symbol_edit": true, "symbol_rename": true,
 		"check": false,
 	}
 	for _, prim := range defaultTools(nil, nil, nil) {

@@ -5,6 +5,7 @@ import (
 	"xhunter/hunt"
 	"xhunter/hunt/basic"
 	"xhunter/hunt/gate"
+	"xhunter/hunt/symbolic"
 	"xhunter/workspace"
 )
 
@@ -41,6 +42,9 @@ func defaultTools(ws workspace.Workspace, ex ext.ExtHost, runner hunt.GateRunner
 		basic.EditTool(ws),
 		basic.FindTool(ws),
 		basic.GlobTool(ws),
+		symbolic.SymbolReadTool(ws, ex),
+		symbolic.SymbolEditTool(ws, ex),
+		symbolic.SymbolRenameTool(ws, ex),
 		gate.CheckTool(runner),
 	}
 }

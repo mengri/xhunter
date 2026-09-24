@@ -50,7 +50,7 @@
 | `symbol_read` / `symbol_edit` / `symbol_rename` | `hunt/symbolic/symbolic.go:73`（实现保留） | **一期未注册**（装配层不交给模型，模型看不到）；随 MS-8 接入后注册，届时能力缺失才返回结构化错误（不可重试） |
 | `check` | `hunt/gate/gate.go:42` | 同上 |
 
-> 工具面本身已定格为 **6 + 1**（`cmd/xhunter/primitives.go` 六个原语 ＋ `Session.decls()` 殿后追加 `checkpoint`），与 FR-4.11 一致——**环境能力不决定注册、同一构建内不增减；随能力接入而扩展**：一期三个符号原语**不注册**（模型看不到），`check` 注册但返回 `not_implemented`。这条纪律由 `TestDefaultTools_FaceIsFixed`、`TestDefaultTools_SymbolOperationsAreDeferred` 守住。
+> 工具面已定格为 **9 + 1**（`cmd/xhunter/primitives.go` 九个原语 ＋ `Session.decls()` 殿后追加 `checkpoint`），与 FR-4.11 一致——**环境能力不决定注册、同一构建内不增减；随能力接入而扩展**：三个符号原语随 MS-8 接回清单（内置语法级后端已接入），`check` 随 MS-5 接上执行器。这条纪律由 `TestDefaultTools_FaceIsFixed`、`TestDefaultTools_FaceIsIdenticalWhetherTheBackendIsAvailable`、`TestDefaultTools_SymbolPrimitivesAreRegistered` 守住。
 >
 > 注：`find` 原列于本表，**已于 2026-09-23 落地**（见 §2.3），现为「已落地」。
 
@@ -92,8 +92,8 @@
 | <a id="fr-1-10"></a>FR-1.10（Bounty 生成器 / 本地驱动） | 已落地 | MS-12 | `xhunter run --repo <path> --task <text> [--out <path>]`：**只读**探测本地仓库事实（远端 / 基线 HEAD / 任务分支 / 门禁候选）→ 生成 Bounty（`--out` 可选出清单）→ 用**同一份装配**执行一次 Hunt；工作区由 Xhunter clone 到临时目录，用户当前仓库只被只读探测、不受影响。用例 `TestRunCmd_ClonesIntoIsolatedWorkspace`、`TestRunCmd_ProbeIsReadOnly`、`TestRunCmd_MissingRepoFlag`、`TestRunCmd_RepoPathMissing`、`TestRunCmd_NotAGitRepo`、`TestRunCmd_NoRemote`、`TestRunCmd_EmptyRepo`、`TestEndToEnd_LocalRunDrivesBountyFromRepo` |
 | <a id="fr-1-11"></a>FR-1.11①/②（流看门狗 / 提交连败提前收敛） | 已落地 | MS-12（①）/ MS-4（②） | ①接收段不活动超时：`harness.Config.StreamIdleTimeout`（**0 = 取默认 120s；正数 = 不活动上界；负数 = 关闭看门狗**——关闭只在程序内可达、不暴露给部署侧）；相邻两事件之间（含首事件之前）静默超上界即**先落终态、再 `Cancel()`** → 环境错误（退出 1），不进入轮边界。用例 `TestWatchdog_IdleStreamCancelsAsEnvError`、`TestWatchdog_TimeoutCannotBeNoToolCall`、`TestWatchdog_ActivityResetsTimer`、`TestWatchdog_WaitsForFirstEvent`、`TestWatchdog_DisabledWhenNegative`、`TestWatchdog_CancelOutranksTimeout`、`TestWatchdog_TimeoutStopsBeforeOnTurn`、`TestEndToEnd_IdleStreamConvergesToEnvError`、`TestConfigSnapshot_StreamIdleTimeoutFollowsEnv`（部署事实 → 装配 → `config_snapshot` 真值链）；②见 FR-1.3b（已落地） |
 | <a id="fr-2-2"></a>FR-2.2（内容检索 `find`） | 已落地 | MS-1 | 2026-09-23 落地（见 §2.3） |
-| <a id="fr-4-1"></a>FR-4.1/4.2（符号枚举读取 / 整体替换） | 待接入 | MS-8 | `hunt/symbolic` 声明不实现 |
-| <a id="fr-4-3"></a>FR-4.3（符号内插入 / 跨文件重命名） | 待接入 | MS-10 | `symbol_rename` 未实现 |
+| <a id="fr-4-1"></a>FR-4.1/4.2（符号枚举读取 / 整体替换） | 已落地 | MS-8 | `symbol_read` / `symbol_edit`：定位到字节区间后复用基本读写，**精度与「未穷尽」如实上报**（FR-4.13）。用例 `TestSymbolRead_LocatesAndReadsRange`、`TestSymbolRead_NotFoundIsAVerdictNotAnEnvFault`、`TestSymbolEdit_ReplacesOnlyTargetRange`、`TestSymbolic_ReportsSyntacticPrecision`、`TestEndToEnd_SymbolEditLandsInTheDelivery`、`TestEndToEnd_SymbolReadReturnsJustTheDefinition` |
+| <a id="fr-4-3"></a>FR-4.3（符号内插入 / 跨文件重命名） | 已落地 | MS-10 | `symbol_rename`：一次改完**声明 + 全部出现点**（出现点来自同一次定位，与规模上报同源）；后端列不出出现点时返回 `cannot_resolve` **结构化错误**，绝不降级为文本替换。用例 `TestSymbolRename_UpdatesDeclarationAndAllReferences`、`TestSymbolRename_CanResolveFalseIsStructuredErrorNotTextReplace`、`TestSymbolRename_ReportsFootprint`、`TestSymbolRename_UnknownFootprintIsReportedNotGuessed` |
 | <a id="fr-5-2b"></a>FR-5.2b~5.2i（门禁全链） | 已落地 | MS-5 | 清单来源裁决（`hunt.GateSource`，下发 > 基线 `gates.yml` > 无，`working_tree` 豁免档受三条护栏约束）；`check` 数组直启（`argv[0]` 为 shell 拒）+ 超时杀进程组 + 输出限长 + 环境白名单；判据 `{kind,pattern,max,stream}` 三态判定；结果按改动指纹缓存；收尾补跑未跑过的 `required` 门禁；`check_result` / `gate_config_changed` 事件；结果文件 `gates` 列出未运行项（`passed: null`）；门禁名注入 user 段。用例 `TestCheck_ArgvIsDirectAndRejectsShell`、`TestCheck_TimeoutIsEnvError`、`TestCheck_NonZeroExitIsQualityFailure`、`TestCheck_UnstartableCommandIsEnvError`、`TestCheck_CacheHitByFingerprint`、`TestCheck_EnvIsMinimalAndCredentialFree`、`TestCheck_ExpectVariantsDecideTheVerdict`、`TestCheck_PassedGateRequestsCheckpoint`、`TestCheck_FailedGateDoesNotRequestCheckpoint`、`TestResolveGates_WorkingTreeExemptionRequiresMetaGate`、`TestResolveGates_WorkingTreeCannotLowerStrength`、`TestResolveGates_WorkingTreeEmitsGateConfigChanged`、`TestEndToEnd_RequiredGateNeverRunFailsWithDelivery`、`TestEndToEnd_GateFailureFailsButStillDelivers`、`TestEndToEnd_RequiredGatePassedSucceeds` |
 | <a id="fr-6-3"></a>FR-6.3/6.4（`needs` / `assumptions` / `unverified`） | 已落地 | MS-2 | 三类自陈均由正文固定小节采集（`## 需要补全` / `## 假设` / `## 未验证`）：轮边界登记（`AppendDeclared`）、收尾可读；`needs` 非空收敛 `blocked`（退出 0），`unverified` 只陈述、不改终态。结果文件 `needs` / `assumptions` / `unverified` 三态。用例 `TestParseDeclared_ThreeSectionsAreSeparated`、`TestParseDeclared_UnverifiedAloneIsNotNeeds`、`TestParseDeclared_UnverifiedThreeState`、`TestFinalize_UnverifiedDoesNotBlock`、`TestResultFile_UnverifiedIsThreeState` |
 | <a id="fr-9-4"></a>FR-9.4（两段式止损） | 已落地 | MS-3 | 连续同类失败达 2 次换策略（回灌「换一种做法」提示）、超上限 3 次终止（`stop_loss_same_kind`）；连续拒绝达 3 次终止（`stop_loss_denied`）；阈值由策略自述（`policy.Facts()`）进 `config_snapshot`，机制硬顶由装配层注入。用例 `TestObserveFailure_SwitchThenTerminate`、`TestSameKindLimitsAreTwoAndThree`、`TestDeniedStreakLimitIsThree`、`TestOnTurn_SameKindStopLossOutranksBudget`、`TestOnTurn_CommitStreakOutranksStopLoss`、`TestEndToEnd_RepeatedFailureSwitchesBeforeFailing`、`TestEndToEnd_DeniedStreakFailsTheRun` |
@@ -105,7 +105,7 @@
 | <a id="fr-11-6"></a>FR-11.6（生效配置快照） | 已落地 | MS-2 | 装配完成后冻结一次，进 `hunt_start` 与结果文件 `effective_config`；门禁清单已随 MS-5 接入（清单来源档位进每条门禁的 `source`）。用例 `TestEffectiveConfig_ListsPrimitivesInToolFaceOrder`、`TestEffectiveConfig_CarriesPluginAndFilterNames`、`TestEffectiveConfig_CarriesAssemblyFacts`、`TestPrepare_EmitsHuntStart`、`TestResultFile_EffectiveConfigIsWritten` |
 | <a id="fr-12-1"></a>FR-12.1（会话恢复 resume） | 已落地 | MS-7 | `Prepare` 读回材料（**纯读、先于 `Open`**）→ 回灌上下文 → 从下一轮继续；全程**零工具执行、零模型调用、不重放写操作**（工作区已由分支 tip 给出）。用例 `TestEndToEnd_ResumeContinuesFromLastCheckpoint`、`TestPrepare_ResumeSeedsContextWithoutExecutingTools`、`TestPrepare_ResumeAppendsNewConditionsAfterRestoredHistory`、`TestPrepare_FreshSessionWithoutMaterialIsNotResumed` |
 | <a id="fr-12-2"></a>FR-12.2/12.2b/12.2c/12.3（会话材料） | 已落地 | MS-6 / MS-7 | 材料已落盘（`.xhunter/<session_id>/session.jsonl`，meta 带 `schema_version`、按任务隔离、追加写）；**读回**随 MS-7 落地（`Load` 纯读、先于 `Open`；turn/op/usage 三类按行序解析、usage 按记录累加）。用例 `TestLoad_ReadsTurnsOpsAndUsageInOrder`、`TestLoad_MissingMaterialIsZeroValueNotAnError`、`TestLoad_UnknownRecordTypeIsAnError`、`TestSave_MaterialLandsUnderSessionDirWithSchemaVersion` |
-| <a id="fr-13-1"></a>FR-13.1~13.9（扩展接入） | 待接入 | MS-8 | `ext.ExtHost` 无实现 |
+| <a id="fr-13-1"></a>FR-13.1~13.9（扩展接入） | 部分具备 | MS-8 | **已落地**：内置语法级后端（`ext/syntax`，进程内、零外部依赖、首发 Go）实现 `ext.ExtHost`，能力描述符、精度与指纹如实上报；后端不可用时符号原语返回结构化错误、工具名不撤回。**待补**：第三方后端的**外挂通道**（MCP over stdio 子进程，含懒启动/崩溃隔离/超时/回收）与其假扩展夹具用例 |
 | <a id="fr-14-1"></a>FR-14.1~14.8（上下文压缩） | 待接入 | MS-11 | `ContextBuilder` 只有组装 |
 | <a id="fr-15-2"></a>FR-15.2/15.5/15.6（skill 清单注入与解析容错） | 已落地 | — | `prompt/skills`；正文按需读取（FR-15.3） |
 | <a id="ac-6"></a>AC-6（SIGTERM 取消） | 已落地 | — | 进程级断言 `TestEndToEnd_SigtermConvergesToCancelled`；其余信号形态待补（见 §5） |
@@ -116,7 +116,7 @@
 | <a id="ac-18"></a>AC-18（压缩可观测可复现） | 待接入 | MS-11 | 同上；**契约已定义**（D4：`context_compacted` 载荷 `level`/`released_tokens`/`watermark`），实现待 MS-11 |
 | <a id="ac-20"></a>AC-20（交付形态 / fast-forward） | 已落地 | — | `TestEndToEnd_LocalRunProducesDeliveryCommit`；`find`/edit 相关注脚见 §2.3 |
 | <a id="ac-22"></a>AC-22（检查点自愈与止损） | 已落地 | MS-4 | 自愈（单次失败不中止、下一轮累积重提）＋ 连败上限（连续 3 次 → 退出 1）。用例 `TestCheckpoint_SingleFailureSelfHeals`、`TestCheckpoint_StreakLimitConvergesAsEnvError` |
-| <a id="ac-26"></a>AC-26（工具面恒定） | 已落地 | — | 规则已落地并有用例（`TestDefaultTools_FaceIsFixed`、`TestDefaultTools_SymbolOperationsAreDeferred` 等）；**环境能力不决定注册、同一构建内工具名与 schema 不增减**；符号三原语一期**不注册**、随 MS-8 接入，`check` 一期注册、返回 `not_implemented` |
+| <a id="ac-26"></a>AC-26（工具面恒定） | 已落地 | — | 规则已落地并有用例（`TestDefaultTools_FaceIsFixed`、`TestDefaultTools_FaceIsIdenticalWhetherTheBackendIsAvailable` 等）；**环境能力不决定注册、同一构建内工具名与 schema 不增减**；符号三原语一期**不注册**、随 MS-8 接入，`check` 一期注册、返回 `not_implemented` |
 | <a id="product-6"></a>产品§6（工具集规格的一期实现状态） | 基础 5 已实现；符号 3 一期未注册 | MS-5 / MS-8 | 基础 5（`read`/`write`/`edit`/`find`/`glob`）**已实现**；`check` **已注册、声明齐备、尚未实现**——调用返回 `not_implemented`（`Retryable: false`）；符号 3（`symbol_read`/`symbol_edit`/`symbol_rename`）**一期未注册**（装配层不交给模型），随 MS-8 接入 |
 
 ### 2.2 接口验收（IA-* / L-x / H-x）
@@ -156,7 +156,7 @@
 | <a id="ia-3-2"></a>IA-3.2 | 已落地 | `TestDefaultTools_ShapeIsDeclared`、各原语 `*_DeclShape`、`TestObjectSchema_CompactsSyntaxButKeepsStringContent`、`TestObjectSchema_InvalidFragmentPanics` | — | — |
 | <a id="ia-3-3"></a>IA-3.3 | 已落地 | `TestCommitter_RejectsWriteWithoutPriorRead`、`TestCommitter_RejectsStaleRead` | — | — |
 | <a id="ia-3-4"></a>IA-3.4 | 已落地 | `TestEdit_NoMatchReportsNotFound`、`TestEdit_AmbiguousReportsCount` | — | — |
-| <a id="ia-3-5"></a>IA-3.5 | 待接入 | — | MS-8 | 符号原语落盘仍走 `Committer`（依赖符号实现） |
+| <a id="ia-3-5"></a>IA-3.5 | 已落地 | `TestSymbolEdit_ReplacesOnlyTargetRange`、`TestEndToEnd_SymbolEditLandsInTheDelivery` | MS-8 | 符号原语落盘仍走 `Committer`：原语只产出 `FileEdit` |
 | <a id="ia-3-6"></a>IA-3.6 | 已落地 | `TestCommitter_OnlyReplacesTargetRange`、`TestCommitter_RejectsOutOfRange`、`TestCommitter_BatchIsAllOrNothingOnValidation`、`TestCommitter_NewFileRules`、`TestCommitter_MarksNewFingerprintAfterWrite` | — | — |
 | <a id="ia-3-7"></a>IA-3.7 | 已落地 | `TestResolve_RejectsPathsOutsideWorkspace`、`TestResolve_RejectsSymlinkEscape`、`TestResolve_RejectsSymlinkEscapeForNewFile`、`TestResolve_AllowsSymlinkInsideWorkspace` | — | — |
 | <a id="ia-3-8"></a>IA-3.8 | 已落地 | `TestList_SkipsNoiseButKeepsControlDir`、`TestList_OrderIsStable`、`TestList_PatternSemantics`、`TestGlob_DirectoryAndDeepPatterns` | — | — |
@@ -166,7 +166,7 @@
 | <a id="ia-3-12"></a>IA-3.12 | 已落地 | `TestRead_OversizeTruncatesWithContinuationHint`、`TestRead_LineRangeIsHonoured`、`TestRead_ReportsFirstLineOfRange` | — | — |
 | <a id="ia-3-13"></a>IA-3.13 | 已落地 | `TestWrite_InvalidPathPropagates`、`TestGlob_InvalidPatternPropagates`、`TestRead_MissingFileIsError` | — | — |
 | <a id="ia-3-14"></a>IA-3.14 | 已落地 | `TestWrite_ExistingFileIsRejectedWithGuidance` | — | — |
-| <a id="ia-3-15"></a>IA-3.15 | 部分具备 | `TestSymbolics_ReportNotImplemented`、`TestCheck_UnavailableRunnerIsRetryableEnvFault` | MS-5 / MS-8 | 未实现原语返回 `not_implemented`（不可重试、零编辑）。`check` 已随 MS-5 实现：它不再返回 `not_implemented`，执行器缺失现在是**可重试的装配缺件**（`gate_unavailable`） |
+| <a id="ia-3-15"></a>IA-3.15 | 部分具备 | `TestSymbolics_UnavailableBackendIsStructuredError`、`TestCheck_UnavailableRunnerIsRetryableEnvFault` | MS-5 / MS-8 | 未实现原语返回 `not_implemented`（不可重试、零编辑）。`check` 已随 MS-5 实现：它不再返回 `not_implemented`，执行器缺失现在是**可重试的装配缺件**（`gate_unavailable`） |
 | <a id="ia-3-16"></a>IA-3.16 | 已落地 | `TestCheck_DeclSurfaceIsExactlyTheGateName` | — | — |
 | <a id="ia-3-17"></a>IA-3.17 | 已落地 | `TestSymbolics_SurfaceHasNoContentAddressingSlot`、`TestSymbolics_DeclShapes` | — | — |
 | <a id="ia-3-18"></a>IA-3.18 | 已落地 | `TestPrepare_IncompleteAssemblyFailsLoudly`、`TestExecuteCall_MissingPolicyFailsClosed` | — | — |
@@ -198,18 +198,18 @@
 | <a id="ia-6-2"></a>IA-6.2 | 已落地 | `TestPrepare_ResumeSeedsContextWithoutExecutingTools` | MS-7 | 恢复段不执行任何原语、不提交；写操作序列**不重放**（工作区已由分支 tip 给出） |
 | <a id="ia-6-3"></a>IA-6.3 | 已落地 | `TestEndToEnd_ResumeContinuesFromLastCheckpoint`、`TestPrepare_ResumeAppendsNewConditionsAfterRestoredHistory` | MS-7 | 回灌读回的轮次（按原有顺序）后从下一轮继续；本次补充条件作为新 user 消息追加在历史之后 |
 | <a id="ia-6-4"></a>IA-6.4 | 已落地 | `TestEndToEnd_ResumeCorruptedMaterialIsEnvError`、`TestMaterial_LoadRejectsUnknownSchemaVersion` | MS-7 | `schema_version` 不兼容 → 退出 1（`prepare_failed`、可重试），不自动迁移；材料**不存在**是零值、不是错误 |
-| <a id="ia-6-5"></a>IA-6.5 | 待接入 | — | MS-8 | 材料含扩展能力指纹（FR-13.7） |
+| <a id="ia-6-5"></a>IA-6.5 | 部分具备 | — | MS-8 | 能力指纹已进**生效配置快照**（`effective_config.ext`）与 `hunt_start`；会话材料 `meta.ext` 字段位仍待接入 |
 | <a id="ia-6-5b"></a>IA-6.5b | 已落地 | `TestDecide_WriteToControlDirDenied` | — | 策略侧已落地；git 侧靠工具面不含 git 原语 |
 | <a id="ia-6-6"></a>IA-6.6 | 已落地 | `TestSnapshot_FailureDoesNotBlockTheRun`、`TestRecorder_OpenFailureDegradesWithoutFailingPrepare` | — | 材料绑定/落盘失败只降级（warn），不阻断任务 |
 | <a id="ia-6-7"></a>IA-6.7 | 已落地 | 代码检查；`TestFinalize_TextOnlyDeliverySucceeds` | — | — |
 | <a id="ia-6-8"></a>IA-6.8 | 待补 | — | §5 | 凭据不落材料的断言扫描（FR-8.4、AC-8） |
-| <a id="ia-7-1"></a>IA-7.1 | 待补 | — | MS-8 | 「工具面恒定」对照用例——对照的是**环境能力两情形**（扩展可用 / 不可用）下**已接入工具**的名字集合与 schema 相同；**分期口径本期已改**（未实现且不在本次构建范围内的原语不注册），该对照在 MS-8 补齐 |
+| <a id="ia-7-1"></a>IA-7.1 | 已落地 | `TestDefaultTools_FaceIsIdenticalWhetherTheBackendIsAvailable` | MS-8 | 「工具面恒定」对照：同一份装配在「符号后端可用 / 不可用」两情形下**已接入工具**的名字集合、schema 与说明完全相同；并反证两种装配确实一有一无 |
 | <a id="ia-7-2"></a>IA-7.2 | 待接入 | — | MS-8 | 扩展不可用 → 全量降级文本路径 |
 | <a id="ia-7-3"></a>IA-7.3 | 待接入 | — | MS-8 | 能力描述符上报 |
 | <a id="ia-7-4"></a>IA-7.4 | 待接入 | — | MS-8 | 精度如实上报（`Prepared.Precision`） |
 | <a id="ia-7-5"></a>IA-7.5 | 待接入 | — | MS-8 | `CanResolve == false` 时仍注册、不降级 |
 | <a id="ia-7-6"></a>IA-7.6 | 待接入 | — | MS-8 | 崩溃隔离（需真实子进程扩展宿主测试） |
-| <a id="ia-7-7"></a>IA-7.7 | 待接入 | — | MS-8 | 外部后端（LSP）缺失不使任务失败（FR-13.9、AC-14） |
+| <a id="ia-7-7"></a>IA-7.7 | 已落地 | `TestSymbolics_UnavailableBackendIsStructuredError` | MS-8 | 后端不可用不使任务失败：符号原语返回结构化错误（改用文本寻址），任务照常收敛。外挂后端（LSP）属**待补**的外挂通道，届时再补其缺失用例 |
 | <a id="ia-8-1"></a>IA-8.1 | 已落地 | `TestFromEnv_ReportsAllIssuesAtOnce`、`TestProviderFor_PropagatesMissingContextWindow`、`TestNew_FailsAtStartupWhenFactsAreMissing` | — | — |
 | <a id="ia-8-2"></a>IA-8.2 | 已落地 | 代码检查（`llm.Session` 方法集） | — | — |
 | <a id="ia-8-3"></a>IA-8.3 | 已落地 | `TestProvider_MethodSetIsInferAndCapabilities`、`TestSession_HasNoPermissionChannel`、`TestCaps_DeclaresBehaviourFields` | MS-12 | 中立契约的方法集/字段集写死为期望：`Provider` 只有 `Infer`/`Capabilities`（工具执行不委托 Provider）、`Session` 只有 `Events`/`Cancel`（无权限应答通道）、`Caps` 只有 `MaxContextTokens` |
@@ -272,7 +272,7 @@
 | <a id="l1-4"></a>L1-4 门禁清单来源裁决 | 已落地 | MS-5 | `Prepare` 裁决「Bounty 下发 > 基线 commit 的 `gates.yml` > 无」；`working_tree` 豁免档只能由 Bounty 授予，护栏三条（元门禁 / 强度不得降低 / `gate_config_changed`）。用例 `TestResolveGates_BountyOverridesRepoDeclaration`、`TestResolveGates_RepoDeclarationIsUsedWhenNothingIsHandedDown`、`TestResolveGates_NoSourceAtAllMeansNone`、`TestResolveGates_ExemptionRequiresABountyGrant`、`TestResolveGates_WorkingTreeReadsTheWorkspaceFile`、`TestResolveGates_ExemptionWithoutGateSourceFails` |
 | ~~契约：会话恢复接入位 ＋ 结果文件 `session_delta` 字段位~~（MS-7） | **已落地**（2026-09-24）：`hunt.Restored`（轮次 / 写操作序列 / 用量）＋ `SessionRecorder.Load(root string)`（**纯读、先于 `Open`**；与 `Ops()` 分工：本次运行 vs 读回上次）；`Prepare` 在 `Bounty.Session != nil` 时读回并回灌上下文；结果文件 `session_delta`（形状上收为 `hunt.SessionDelta`，`{turns_from, turns_to, ops_count}`，`omitempty`——**仅恢复时出现**）。**归属修正**：`session_delta` 原挂 MS-6，改挂 **MS-7**。用例 `TestEndToEnd_ResumeContinuesFromLastCheckpoint`、`TestPrepare_ResumeSeedsPolicyBudgetWithRestoredUsage` |
 | ~~契约：流看门狗、压缩位与 config_snapshot 形状~~（MS-11 / MS-12） | **契约已定义**（2026-09-23，未冻结期）：`harness.Config.StreamIdleTimeout`（接收段不活动超时；0=不限、缺省 120s；接入点在接收循环、注释标明计时器留 MS-12）；`hunt.CompactionConfig`（三档水位 ＋ 冷却，水位来自 `providerconfig.Resolved.Watermarks`）＋ `context_compacted` 载荷（`level`/`released_tokens`/`watermark`）＋ `config_snapshot` 载荷（三个阈值及其来源）。**发出点均不接**（`config_snapshot` 的 `max_denied_streak` 来源未定死 / 压缩未实现）。**更正（MS-12，2026-09-24）**：`StreamIdleTimeout` 的「0=不限」口径**当时就不成立**（`withDefaults` 一直把 0 变成 120s），现更正为 **0 = 取默认 120s / 正数 = 不活动上界 / 负数 = 关闭看门狗**，且计时器已随 MS-12 落地（见 §2.3）。实现待 MS-11 / MS-12 / MS-3 |
-| <a id="l1-5"></a>L1-5 扩展能力描述符 | 待接入 | MS-8 | 组装层注入 `ext.ExtHost` 未接入；**契约已定义**（D2：`Capabilities` / `Locate` / `Fingerprint` / `Close` ＋ `ext.Unimplemented{}` panic 哨兵装配），实现待 MS-8 |
+| <a id="l1-5"></a>L1-5 扩展能力描述符 | 已落地 | MS-8 | 装配层注入 `ext.ExtHost`（默认 `ext/syntax` 内置语法级后端）；`Capabilities` / `Locate` / `Fingerprint` / `Close` 全部实现，`ext.Unimplemented{}` 的 4 处 panic 哨兵**已回收**为如实降级 |
 | <a id="l1-8"></a>L1-8 会话恢复（条件） | 已落地 | MS-7 | `XHUNTER_SESSION_ID` 非空时：`Prepare` 在 `openRecorder` 之前**纯读**回材料（`Load(root)`）→ 回灌上下文 → 从下一轮继续；材料不存在 → 零值（不算恢复），存在但读不出来 → 环境错误（退出 1）。用例 `TestPrepare_ResumeSeedsContextWithoutExecutingTools`、`TestEndToEnd_ResumeCorruptedMaterialIsEnvError` |
 | <a id="l1-9"></a>L1-9 生效配置快照 | 已落地 | MS-2 | 装配完成后冻结一次，进 `hunt_start` 与结果文件 `effective_config`（含原语顺序与殿后 `checkpoint`）；门禁清单随 MS-5。证据 `TestEffectiveConfig_ListsPrimitivesInToolFaceOrder`、`TestPrepare_EmitsHuntStart` |
 | <a id="l2-事件通道"></a>L2-事件通道健康 | 已落地 | MS-2 | `OnTurn` 入口复查 `Sink.Failed()`：通道已断则本轮零工具执行，收敛 `event_channel_failed`（退出 1）。用例 `TestOnTurn_StopsBeforeWorkWhenChannelAlreadyFailed` |
@@ -340,7 +340,7 @@
 | ~~契约：门禁清单来源 ＋ 结果文件 `gates` 形状~~（MS-5 / H4） | **已落地**（2026-09-24）：`hunt.GateSource`（`Load` ＋ `Parse`）＋ 档位常量 `bounty` / `repo` / `none` / `working_tree`；`hunt.Config.Gates` 与 `GateRunner` 两个装配槽；结果文件 `gateFile`（`passed` 三态 `*bool`）已接写入端（以**清单**为准列出未运行项）。护栏（元门禁 / 强度不得降低）落在 `hunt` 包，工作区豁免档与基线档共用同一份 |
 | ~~两段式止损（MS-3）~~ | **已落地**（2026-09-24，MS-3）：`Policy.ObserveFailure` / `DeniedCount` 从 panic 哨兵回收为运行期如实判定——同类 = 同 `Fault.Kind`（空串 = 一次成功，归零；`policy_denied` 忽略），连续同类失败达 2 次换策略（回灌「换一种做法」提示、只影响下一轮）、超上限 3 次终止（`stop_loss_same_kind`）；连续拒绝在 `Decide` 计数、达 3 次终止（`stop_loss_denied`）。守卫次序「取消 → 通道 → 提交连败 → 止损 → 预算」由 `TestOnTurn_CommitStreakOutranksStopLoss` / `TestOnTurn_SameKindStopLossOutranksBudget` / `TestOnTurn_DeniedStreakOutranksBudget` 咬住。`config_snapshot` 与 `hunt_start` 同时点发出：两个止损阈值来自 `policy.Facts()`、两个机制硬顶由装配层从 `harness.DefaultConfig()` 注入。e2e：`TestEndToEnd_RepeatedFailureSwitchesBeforeFailing`（第 3 轮请求体含「换一种做法」）、`TestEndToEnd_DeniedStreakFailsTheRun`、`TestPrepare_EmitsConfigSnapshot` |
 | ~~交付 diff/patch 排除会话材料目录~~（IA-11.6） | **已落地**（2026-09-23）：`git.RepoRef` 加 `MaterialDir`（本次运行的仓库事实）；`GitWorktree.Diff`/`Patch` 改收 `RepoRef`，材料目录非空时加 `:(exclude)` pathspec——**只排本次会话的材料目录**，`.xhunter/` 下其它路径（如 `skills.draft/**`）是交付内容、照进 diff。材料目录路径唯一来源 `materialDirFor`（与落盘同源）；e2e 的临时过滤 `nonMaterial` 撤掉、改成直接断言交付清单不含材料。用例 `TestDiff_ExcludesMaterialDirButKeepsSkillsDraft`、`TestDiff_NoMaterialDirKeepsEverything`、`TestEndToEnd_LocalRunProducesDeliveryCommit` |
-| ~~一期移除符号操作（工具面口径变更）~~ | **已落地**（2026-09-24）：装配层不再把 `symbol_read` / `symbol_edit` / `symbol_rename` 交给模型（**一期不注册**，模型看不到；`hunt/symbolic` 实现保留，随 MS-8 恢复注册）；工具面定格为 **6 + 1**（`read`/`write`/`edit`/`find`/`glob`/`check` ＋ 殿后 `checkpoint`；`check` 一期注册但返回 `not_implemented`，是刻意的不对称）。**「工具面恒定」由双轴改单轴**——环境能力不决定注册、同一构建内不增减，**随能力接入而扩展**；代价如实记：跨构建版本工具名集合会变，「前缀与 schema 稳定（缓存友好）」只在同一构建内成立。用例 `TestDefaultTools_FaceIsFixed`、`TestDefaultTools_SymbolOperationsAreDeferred` |
+| ~~一期移除符号操作（工具面口径变更）~~ | **已随 MS-8 反转**（2026-09-24）：装配层把 `symbol_read` / `symbol_edit` / `symbol_rename` 接回工具面（符号后端已接入）（**一期不注册**，模型看不到；`hunt/symbolic` 实现保留，随 MS-8 恢复注册）；工具面定格为 **6 + 1**（`read`/`write`/`edit`/`find`/`glob`/`check` ＋ 殿后 `checkpoint`；`check` 一期注册但返回 `not_implemented`，是刻意的不对称）。**「工具面恒定」由双轴改单轴**——环境能力不决定注册、同一构建内不增减，**随能力接入而扩展**；代价如实记：跨构建版本工具名集合会变，「前缀与 schema 稳定（缓存友好）」只在同一构建内成立。用例 `TestDefaultTools_FaceIsFixed`、`TestDefaultTools_FaceIsIdenticalWhetherTheBackendIsAvailable` |
 | ~~流看门狗（FR-1.11① / L4-流看门狗）~~（MS-12） | **已落地**（2026-09-24）：`harness` 接收段用 `select` + `time.Timer` 落看门狗——相邻两事件之间（含首事件之前）静默超 `StreamIdleTimeout` 即收敛。默认值唯一来源 `defaultStreamIdleTimeout`（120s）；**0 = 取默认、负数 = 关闭看门狗、正数 = 上界**。**超时先落终态、再 `sess.Cancel()`**：返回时 `run.Terminal != nil`，结构上不可能落进 `no_tool_call`；取消优先于超时（两路同时就绪时超时分支再复查 ctx）。部署事实 `XHUNTER_STREAM_IDLE_TIMEOUT`（Go duration；未设取默认，非法即启动期退出 1；"关闭"只程序内可达）。生效值经装配层注入 `AssemblyFacts.StreamIdleTimeoutMS` 进 `config_snapshot.stream_idle_timeout_ms`（0 = 不限/关闭）。用例 `TestWatchdog_*`（7 条）、`TestDefaultConfig_StreamIdleTimeoutDefaultsTo120s`、`TestConfig_ZeroIdleTimeoutTakesDefaultNegativeStays`、`TestParseStreamIdleTimeout_DefaultOverrideAndRejects`、`TestConfigSnapshot_CarriesStreamIdleTimeout`、`TestEndToEnd_IdleStreamConvergesToEnvError` |
 | ~~本地驱动（FR-1.10 / usage§1.2·Bounty生成器）~~（MS-12） | **已落地**（2026-09-24）：新增 `xhunter run --repo <path> --task <text> [--out <path>]`——只读探测（`internal/git/cli.ProbeLocalRepo`，仅 `rev-parse`/`remote`/`cat-file -e`，绝不 checkout/add/commit/fetch/push；门禁候选从基线 commit 读 `HEAD:gates.yml`）→ 组装 Bounty（分支/材料目录/预算复用既有唯一来源 `branchFor`/`materialDirFor`/`parseBudget`）→ **经同一条 `executeHunt`** 执行一次 Hunt。从 `huntCmd` 抽出 `executeHunt` 后两条驱动路径共用一份装配（零行为变化，既有 e2e 全绿）。用例 `TestRunCmd_ClonesIntoIsolatedWorkspace`、`TestRunCmd_ProbeIsReadOnly`、四类启动期失败、`TestEndToEnd_LocalRunDrivesBountyFromRepo` |
 
@@ -356,7 +356,7 @@
 |---|---|
 | 会话材料（仅余扩展能力指纹） | `IA-6.5`（MS-8） |
 | 压缩 | `IA-2.5`、`IA-2.6`、`IA-2.7`、`IA-2.8`、`L2-压缩`、`FR-14.1`、`AC-17`、`AC-18` |
-| 符号能力 | `IA-3.5`、`IA-7.1`~`IA-7.7`、`L1-5`、`FR-4.1`、`FR-4.3`、`FR-13.1`、`产品§6` |
+| 符号能力 | `IA-7.2`~`IA-7.6`（外挂后端相关，随 MCP 通道补）、`FR-13.2`~`FR-13.6`（外挂通道） |
 | git 剩余语义 | `IA-11.12`、`L6-检查点` |
 | 结构检查 | `IA-11.11`、`L6-结构检查`、`FR-1.3d` |
 | 可观测补齐 | `usage§5·已发出事件`、`usage§6·待接入字段` |
@@ -369,7 +369,6 @@
 | 扩展崩溃隔离 | `IA-7.6` |
 | 凭据静态扫描 | `IA-6.8`、`IA-8.4`、`AC-8` |
 | 嵌套约定附注 | `IA-2.10` |
-| 「工具面恒定」对照 | `IA-7.1` |
 | 「唯一来源」的重复实现（如另写一份 `branchFor`） | 静态扫描/人工审查——**无法用行为用例检出**（重复代码行为等价，同 AC-8 / IA-8.4 / IA-6.8 的静态扫描类） |
 | 看门狗「负数关闭」的行为层区分力 | `TestWatchdog_DisabledWhenNegative` 在行为层**分不清"关闭"与"启用且超时极大"**（150ms 内结束的流下两者都通过）；真正的区分点在配置层，已由 `TestConfig_ZeroIdleTimeoutTakesDefaultNegativeStays` 咬住 |
 | 看门狗用例对"计时器挪到首事件之后"的健壮性 | 该假设性破坏下 `TestWatchdog_IdleStreamCancelsAsEnvError` 会**挂住**（Go 测试超时兜底）而非快速失败——属**测试健壮性**、非产品缺陷；canary `TestWatchdog_WaitsForFirstEvent` 会快速失败。**不在断言里做取舍来规避它**（那会改掉被测语义） |
@@ -402,9 +401,9 @@
 | **MS-5** | 门禁落地（`check` 实现 ＋ 全链护栏） | 一期收口 | MS-4 | 大 | FR-5.2b~5.2i、IA-11.12 | **已完成**（2026-09-24；来源裁决、`check` 执行器与判据、收尾补跑、终态与检查点联动、事件与结果文件全部落地，见 §4.3 与 §2.3） |
 | **MS-6** | 会话材料落盘 | M1.5 前置 | MS-4 | 中 | FR-12.2/12.2b/12.3、IA-6.1/6.1b/6.1c | **已完成**（2026-09-23；材料落盘、Recorder 接口一次加齐、交付 diff/patch 排除材料目录、随检查点 `add -f` 全部落地，见 §2.3） |
 | **MS-7** | 会话恢复（resume） | M1.5 | MS-6 | 大 | FR-12.1/12.6、AC-7、IA-6.2/6.3/6.4 | **已完成**（2026-09-24；`Load` 真读回、`Prepare` 纯读先于 `Open`、回灌上下文＋新条件追加、`session_delta` 接线、token 预算续算，见 §4.3） |
-| **MS-8** | 扩展接入与符号读写 | M2 | MS-2 | 大 | FR-13、FR-4.1/4.2/4.4~4.8/4.13、IA-7.1~7.6 | 未开始 |
+| **MS-8** | 扩展接入与符号读写 | M2 | MS-2 | 大 | FR-13、FR-4.1/4.2/4.4~4.8/4.13、IA-7.1~7.6 | **部分完成**（2026-09-24：内置语法级后端 ＋ 符号三原语注册 ＋ `symbol_read`/`symbol_edit` 落地，见 §4.3；**缺口**：第三方后端的 MCP 外挂通道与假扩展夹具用例） |
 | **MS-9** | 结构检查与 `on_structure` 默认档 | M2 收尾 | MS-5、MS-8 | 中 | FR-1.3d、IA-11.12 | 未开始 |
-| **MS-10** | `symbol_rename`（跨文件重命名）与规模上报 | M3 | MS-8 | 中 | FR-4.3、FR-6.2 | 未开始 |
+| **MS-10** | `symbol_rename`（跨文件重命名）与规模上报 | M3 | MS-8 | 中 | FR-4.3、FR-6.2 | **已完成**（2026-09-24；语法级一次改完声明与全部出现点，规模与编辑计划同源，未穷尽如实标注，见 §4.3 与 §2.3） |
 | **MS-11** | 上下文压缩 | 二期 | MS-6、MS-7 | 大 | FR-14 全部、AC-17/AC-18 | 未开始 |
 | **MS-12** | 运行段看护与本地驱动 | 二期 | MS-3、MS-2 | 中 | FR-1.11①、FR-1.10 | **已完成**（2026-09-24；流看门狗与本地驱动落地，见 §4.3 与 §2.3） |
 
@@ -613,6 +612,8 @@
 
 #### MS-8 扩展接入与符号读写
 
+**状态**：**部分完成**（2026-09-24）——符号能力已可用：内置语法级后端落地、三个符号原语接回工具面、`symbol_read` / `symbol_edit` 真实现。**未做**：第三方后端的**外挂通道**（MCP over stdio 子进程）与它的假扩展夹具用例。
+
 **目标**：符号能力以本地进程外挂接入，`symbol_read` / `symbol_edit` 落地（首发语言 Go），基础原语不受影响。
 
 **范围**
@@ -625,10 +626,11 @@
 - 能力指纹写入会话材料（与 MS-6 字段对接；不一致只记录不阻断）。
 
 **独立验收的证据**
-- 假扩展夹具（真子进程）四态：`TestExt_UnavailableDegradesWithoutFailingTheTask`、`TestExt_CrashDoesNotHangTheLoop`、`TestExt_CloseReclaimsProcess`。
-- 符号原语：`TestSymbolRead_LocatesAndReadsRange`、`TestSymbolEdit_ReplacesOnlyTargetRange`、`TestSymbolic_ReportsStructuredErrorWhenLanguageUnregistered`。
-- **工具面恒定对照**（IA-7.1 待补）：同一份装配在「扩展可用 / 不可用」两情形下**已接入工具**的名字集合与 schema 完全相同（对照的是环境能力两情形，与分期无关）。
-- `TestSymbolic_ReportsSyntacticPrecision`。
+- 符号原语（`hunt/symbolic`）：`TestSymbolRead_LocatesAndReadsRange`、`TestSymbolRead_NotFoundIsAVerdictNotAnEnvFault`、`TestSymbolEdit_ReplacesOnlyTargetRange`、`TestSymbolic_ReportsStructuredErrorWhenLanguageUnregistered`、`TestSymbolic_ReportsSyntacticPrecision`、`TestSymbolics_UnavailableBackendIsStructuredError`、`TestSymbolics_WritesIsDeclaredByThePrimitive`。
+- 语法级后端（`ext/syntax`）：`TestHost_CapabilitiesAreSyntacticAndCannotResolve`、`TestHost_FingerprintIsAvailableWithoutAWorkspace`、`TestHost_LocateFindsTheDeclarationRange`、`TestHost_QualifierNarrowsTheSameNamedSymbol`、`TestHost_UnparsableFileIsSkippedNotAnError`、`TestHost_MissingSymbolIsAnError`、`TestHost_AllListsDeclarationAndReferences`、`TestHost_SitesSkipFieldNamesAndSelectors`、`TestHost_CloseIsIdempotent`。
+- **工具面恒定对照**（IA-7.1）：`TestDefaultTools_FaceIsIdenticalWhetherTheBackendIsAvailable`、`TestDefaultTools_FaceIsFixed`、`TestDefaultTools_SymbolPrimitivesAreRegistered`。
+- e2e：`TestEndToEnd_SymbolEditLandsInTheDelivery`、`TestEndToEnd_SymbolReadReturnsJustTheDefinition`、`TestEndToEnd_SymbolEditOnUnregisteredLanguageIsStructuredError`。
+- **仍缺**：外挂通道的四态夹具 `TestExt_UnavailableDegradesWithoutFailingTheTask` / `TestExt_CrashDoesNotHangTheLoop` / `TestExt_CloseReclaimsProcess`（MCP 通道待补，见下方缺口）。
 
 **依赖**：MS-2。**前置决策（必须先定）**：扩展进程的协议形态（MCP stdio 还是自有最小协议）与首发后端形态。
 
@@ -657,6 +659,10 @@
 
 #### MS-10 `symbol_rename`（跨文件重命名）与规模上报
 
+**状态**：**已完成**（2026-09-24）。
+
+**裁决（2026-09-24）**：首发只做语法级后端时，`symbol_rename` **照常实现**——出现点由语法树扫描给出（结构化定位，不是文本替换），并**如实标注未穷尽**（`Impact.Unknown`）；后端列不出出现点时返回 `cannot_resolve` 结构化错误。理由：不做就得让工具名长期返回 `not_implemented`，而「半套重命名」（改了声明没改引用）才是真正要避免的事——它由「出现点为空即拒绝」这一条结构性地挡住。
+
 **目标**：从「能改」到「改得对」：跨文件重命名一次完成全部改动，并把改动规模作为证据上报。
 
 **范围**
@@ -666,10 +672,11 @@
 - **同源要求**：上报的规模与落盘的编辑计划必须来自同一次定位结果。`ext.Prepared` 需扩展为「一次定位给出完整编辑计划」的形状。
 
 **独立验收的证据**
-- `TestSymbolRename_UpdatesDeclarationAndAllReferences`。
-- `TestSymbolRename_CanResolveFalseIsStructuredErrorNotTextReplace`。
-- `TestSymbolRename_ReportsFootprint` ＋ `TestSymbolRename_UnknownFootprintIsReportedNotGuessed`。
-- 策略侧不再有影响面用例（原 `TestDecide_ImpactAboveThresholdDenied` 随阈值一并删除）。
+- `TestSymbolRename_UpdatesDeclarationAndAllReferences`（声明 + 全部引用点一次改完）。
+- `TestSymbolRename_CanResolveFalseIsStructuredErrorNotTextReplace`（列不出出现点 → 结构化错误，零编辑）。
+- `TestSymbolRename_ReportsFootprint`（上报处数 == 落盘编辑数：同源）＋ `TestSymbolRename_UnknownFootprintIsReportedNotGuessed`。
+- 后端侧：`TestHost_AllListsDeclarationAndReferences`、`TestHost_SitesSkipFieldNamesAndSelectors`。
+- 策略侧不再有影响面用例：影响面阈值未采纳（「改得多就拒绝」是偏好不是判据），故无对应用例。
 
 **依赖**：MS-8。**不做**：影响面阈值（见 §7）。
 
@@ -748,7 +755,7 @@
 | **信号组合** | SIGTERM 的进程级断言已落地（`TestEndToEnd_SigtermConvergesToCancelled`，AC-6）；SIGKILL / 中断时机的更多组合仍可补 |
 | **单步驱动（FR-1.9 形态 C）** | 明确不进一期 |
 | **多 agent 路线**（备忘录，未采纳） | V 层已定判据路线，多 agent 不作为补法；若将来要做，落点是**操作原语**（`harness` 不动），缺口清单（用量回流 / 事件嵌套标识 / 递归上限 / 工具面冲突）见 `docs/xhunter-memo-multi-agent-route.md`。其中**最硬的是第 7 条**：「子 agent 裁剪工具面」与已承诺的「**同一构建版本内**工具面恒定 ＋ **环境能力不决定注册** ＋ **随能力接入而扩展**」（AC-26）直接冲突——**同一构建、同一能力集之下所有 agent 的工具面必须一致**（不再是"双轴都不变"）；要按角色给不同工具面，必须先改这条口径或解决该冲突再编码 |
-| **冻结前回收：panic 哨兵**（**冻结前置条件**） | 未冻结期以 `panic` 哨兵装配了尚未实现的装配扩展点（见 §7.1 决策 18、架构 §8 例外）。**冻结前必须逐条回收**：把每个 panic 哨兵换成**显式失败或如实降级**，并补用例——"走到即炸"只允许存在于未冻结期。**进度**：`Policy.ObserveFailure` / `DeniedCount`（哨兵 5、6）已随 MS-3 回收为运行期如实判定；**尚余 4 处**：`ext/ext.go` 四处（`ExtHost` 的 `Capabilities` / `Locate` / `Fingerprint` / `Close`，待 MS-8）。`cmd/xhunter/material.go` 的 `Load` 哨兵**已随 MS-7 回收**（真实现：纯读回灌） |
+| **冻结前回收：panic 哨兵**（**冻结前置条件**） | 未冻结期以 `panic` 哨兵装配了尚未实现的装配扩展点（见 §7.1 决策 18、架构 §8 例外）。**冻结前必须逐条回收**：把每个 panic 哨兵换成**显式失败或如实降级**，并补用例——"走到即炸"只允许存在于未冻结期。**进度**：`Policy.ObserveFailure` / `DeniedCount`（哨兵 5、6）已随 MS-3 回收为运行期如实判定；**尚余 4 处**：`ext/ext.go` 四处（`ExtHost` 的 `Capabilities` / `Locate` / `Fingerprint` / `Close`，待 MS-8）。`cmd/xhunter/material.go` 的 `Load` 哨兵**已随 MS-7 回收**（真实现：纯读回灌）；`ext/ext.go` 四处**已随 MS-8 回收**（`Unimplemented` 改为如实降级：`Capabilities` 报不可用、`Locate` 返回 `ErrUnavailable`、指纹为空数组） |
 
 ---
 
@@ -794,6 +801,9 @@
 | 16 | 两个载荷形状（`effective_config` / `session_delta`） | 已采纳进设计文档：FR-11.6、FR-1.5、使用手册 §6 |
 | 17 | **V 层的路线选择：判据路线**（具名门禁 ＋ 结构检查）；多 agent 不作 V 层补法，但其调度形态定为**操作原语**（不动 harness） | 已采纳进设计文档：产品设计 §1.2、架构 §3 / §7.8；备查与缺口清单见 `docs/xhunter-memo-multi-agent-route.md` |
 | 19 | **基础设施允许第三方依赖**（2026-09-24 用户裁决）：门禁清单的 YAML 解析引入 `gopkg.in/yaml.v3`。**边界**：开放的是"基础设施类"通用库；模型接入仍**不得使用厂商 SDK**（协议线格式一律手写，NFR-1 的这条不变） |
+| 21 | **首发符号后端形态**（2026-09-24）：内置**语法级**后端（`ext/syntax`，标准库语法树、进程内、首发 Go），它是首发也是兜底；第三方后端走**外挂通道**（MCP over stdio，待补）。核心只认 `ext.ExtHost`，换后端不改业务代码 |
+| 22 | **语法级也做 `symbol_rename`**（2026-09-24）：出现点来自语法树扫描（结构化，非文本替换）＋ 如实标注未穷尽；列不出出现点即结构化错误。**不做**的只有"半套重命名"，不是重命名本身 |
+
 | 20 | **门禁终态口径**（2026-09-24）：执行失败（起不来 / 超时）**不是质量结论**——按"未运行"计入终态并发 `degraded(scope: gate)`；`required` 门禁未通过或从未运行 → `status=failed` 且**退出码 0**，改动照常交付。终态只改写引擎给出的 `succeeded`，机制性终止不被抹掉 |
 
 | 18 | **未冻结期：装配扩展点先定义、未实现以 `panic` 哨兵装配；不写降级防护**（**对决策 13 的限定**：13 管"能力声明"，本条管"装配扩展点"，不是推翻） | 已采纳进设计文档：架构 §8「例外：装配扩展点可以先定义后实现（未冻结期口径）」；冻结前回收项见本文档 §5 |

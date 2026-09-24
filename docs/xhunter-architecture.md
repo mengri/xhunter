@@ -1059,7 +1059,7 @@ Bounty(session) ──► H6.Session
 | IA-3.12 | 输出超限时标注截断位置与总量，并给出可直接照抄的续读起点；**行号是文件真实行号**（按行范围读取从请求起点起算，不从 1 重来） | `TestRead_OversizeTruncatesWithContinuationHint`、`TestRead_LineRangeIsHonoured`（basic）、`TestRead_ReportsFirstLineOfRange`（osfs） |
 | IA-3.13 | **原语不自己判路径、不自己落盘**：越界路径 / 非法模式由工作区拒绝，原语只产出编辑计划 | `TestWrite_InvalidPathPropagates`、`TestGlob_InvalidPatternPropagates`、`TestRead_MissingFileIsError` |
 | IA-3.14 | 新建只建新文件：目标已存在 → `file_exists`（可重试 ＋ 指向 `edit`），且不产出编辑 | `TestWrite_ExistingFileIsRejectedWithGuidance` |
-| IA-3.15 | 未实现的原语给出**可解释结果**而非执行失败：`not_implemented` ＋ 不可重试 ＋ 零编辑。`check` 已随 MS-5 落地（不再属本条），执行器缺失是**可重试的装配缺件** | `TestSymbolics_ReportNotImplemented`、`TestCheck_UnavailableRunnerIsRetryableEnvFault` |
+| IA-3.15 | 未实现的原语给出**可解释结果**而非执行失败：`not_implemented` ＋ 不可重试 ＋ 零编辑。`check` 已随 MS-5 落地（不再属本条），执行器缺失是**可重试的装配缺件** | `TestSymbolics_UnavailableBackendIsStructuredError`、`TestCheck_UnavailableRunnerIsRetryableEnvFault` |
 | IA-3.19 | **内容检索**（FR-2.2）：命中带**文件与真实行号**；`path` / `scope` 收窄范围、范围之外不得命中；**「未找到」是结论而非错误**（成功结果 ＋ 说清范围与扫描量）；命中超上限时只显示前 N 处而**总量照报**；跳过的大文件与读取失败一律如实附注（不得静默），零编辑 | `TestFind_MatchesWithLineNumbers`、`TestFind_NoMatchIsSuccessWithExplicitText`、`TestFind_ScopeLimitsSearch`、`TestFind_PathLimitsToSingleFile`、`TestFind_TruncatesHitsButReportsTotal`、`TestFind_RequiresLiteral`（basic） |
 | IA-3.16 | **门禁不是任意命令执行**：`check` 的参数面精确等于 `{name}`，`required` 只有 `name` | `TestCheck_DeclSurfaceIsExactlyTheGateName` |
 | IA-3.17 | 符号原语只走符号寻址：参数面里没有内容寻址槽位（无降级形态） | `TestSymbolics_SurfaceHasNoContentAddressingSlot`、`TestSymbolics_DeclShapes` |
