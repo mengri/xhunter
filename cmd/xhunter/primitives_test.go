@@ -12,6 +12,7 @@ import (
 	"xhunter/git"
 	"xhunter/harness"
 	"xhunter/hunt"
+	"xhunter/hunt/symbolic"
 	"xhunter/llm"
 	"xhunter/workspace"
 )
@@ -127,10 +128,12 @@ func TestDefaultTools_ShapeIsDeclared(t *testing.T) {
 	}
 }
 
-// 工具面固定：本产品的原语恰好是这 9 个、顺序固定。顺序进入每一轮请求的前缀。
+// 工具面固定：本产品的原语**恰好是这 6 个**、顺序固定。顺序进入每一轮请求的前缀。
+//
+// **期次口径**（不是实现细节）：三个符号原语（symbol_read / symbol_edit / symbol_rename）
+// 一期**不注册**、随 MS-8 接入时再进清单——模型一期看不到它们。加回清单必须是有意识的决定。
 func TestDefaultTools_FaceIsFixed(t *testing.T) {
-	want := []string{"read", "write", "edit", "find", "glob",
-		"symbol_read", "symbol_edit", "symbol_rename", "check"}
+	want := []string{"read", "write", "edit", "find", "glob", "check"}
 	tools := defaultTools(nil, nil)
 	if len(tools) != len(want) {
 		t.Fatalf("原语数 = %d，期望 %d", len(tools), len(want))
@@ -142,12 +145,35 @@ func TestDefaultTools_FaceIsFixed(t *testing.T) {
 	}
 }
 
+// 一期工具面不含任何符号原语：装配层**不把** symbol_read / symbol_edit / symbol_rename 交给模型。
+//
+// 期望集合用**符号包导出的常量**（symbolic.SymbolRead / SymbolEdit / SymbolRename）构造——
+// 这里引用的是符号包的常量、**不是被测装配层的常量**，故不违反"不拿被测常量当期望值"的纪律。
+//
+// 断言写成"若这三个名字出现在清单里即失败"，因此**把符号原语加回 defaultTools 清单即变红**。
+// 它守的是**期次口径**（不是实现细节）：符号原语随 MS-8 接入；加回清单必须是有意识的决定。
+func TestDefaultTools_SymbolOperationsAreDeferred(t *testing.T) {
+	deferred := []string{
+		string(symbolic.SymbolRead),
+		string(symbolic.SymbolEdit),
+		string(symbolic.SymbolRename),
+	}
+	face := make(map[string]bool)
+	for _, prim := range defaultTools(nil, nil) {
+		face[prim.Decl().Name] = true
+	}
+	for _, name := range deferred {
+		if face[name] {
+			t.Errorf("一期工具面不该注册符号原语 %q：它随 MS-8 接入时才注册；加回清单必须是有意识的决定", name)
+		}
+	}
+}
+
 // 「是否写盘」由原语自述（不再由策略侧镜像）：这份自述错了等于权限边界错了——
 // 写原语被当成只读，就会绕开路径裁决。所以逐项钉住，并挡住"新增原语忘了声明性质"。
 func TestDefaultTools_WritesIsDeclared(t *testing.T) {
 	want := map[string]bool{
 		"read": false, "write": true, "edit": true, "find": false, "glob": false,
-		"symbol_read": false, "symbol_edit": true, "symbol_rename": true,
 		"check": false,
 	}
 	for _, prim := range defaultTools(nil, nil) {

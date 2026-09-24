@@ -75,8 +75,7 @@ func TestEndToEnd_EventAndResultShareEffectiveConfigAndUsage(t *testing.T) {
 		t.Fatalf("effective_config 应含原语清单：%#v", evEC)
 	}
 	prim, _ := ecMap["primitives"].([]any)
-	wantPrim := []any{"read", "write", "edit", "find", "glob",
-		"symbol_read", "symbol_edit", "symbol_rename", "check", "checkpoint"}
+	wantPrim := []any{"read", "write", "edit", "find", "glob", "check", "checkpoint"}
 	if !reflect.DeepEqual(prim, wantPrim) {
 		t.Errorf("事件流里的 primitives = %v，期望 %v", prim, wantPrim)
 	}
@@ -334,8 +333,7 @@ func TestDefaultAssembly_EffectiveConfigPrimitivesMatchToolFace(t *testing.T) {
 	if !slices.Equal(face, ec) {
 		t.Errorf("effective_config.primitives 与实际工具面顺序不一致：\n工具面 %v\n快照   %v", face, ec)
 	}
-	want := []string{"read", "write", "edit", "find", "glob",
-		"symbol_read", "symbol_edit", "symbol_rename", "check", "checkpoint"}
+	want := []string{"read", "write", "edit", "find", "glob", "check", "checkpoint"}
 	if !slices.Equal(want, ec) {
 		t.Errorf("primitives = %v，期望 %v", ec, want)
 	}
