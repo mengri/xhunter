@@ -40,15 +40,19 @@ type Policy interface {
 	Charge(u llm.Usage)
 	Exhausted(turn TurnNo) (bool, string)
 
-	// ObserveFailure 上报一次工具失败，返回处置（三态见 StopLoss）。
+	// ObserveFailure 上报一次工具调用结局，返回处置（三态见 StopLoss）：达阈值先换策略、
+	// 超上限才终止（两段式）。
 	//
-	// failKind 是失败类别；「同类失败」「连续」「阈值 / 上限」的**判据本次不定义**——那是 MS-3 的
-	// 实现工作，且文档要求"先用测试把它定死"。现在没有调用方（MS-3 才会接进 OnTurn 守卫）；
-	// 默认实现 `internal/policy` 里它是 panic 哨兵（未冻结期口径：先定契约、后填实现）。
+	// failKind 的约定：
+	//   - **空串表示一次成功调用**——它把「连续同类失败」归零（失败与成功混在一根轴上，
+	//     "连续"才有意义）；
+	//   - "同类" = 同一个 failKind 字符串；出现另一种 kind 即从 1 重新起计；
+	//   - `policy_denied` 由实现**忽略**：拒绝是另一条轴（连续拒绝），它由 DeniedCount 单独管，
+	//     其计数在 Decide 里喂——同一次拒绝不占这里的同类失败计数。
 	ObserveFailure(failKind string) (StopLoss, string)
 
 	// DeniedCount 报告连续策略拒绝的累积情况，第二个返回值表示是否已达阈值（达即终止）。
 	//
-	// 与 ObserveFailure 同理："连续"的口径与阈值由 MS-3 定；现在没有调用方。
+	// "连续"的口径：出现一次 Allow（放行）即归零；拒绝由 Decide 累加——计数只有这一处。
 	DeniedCount() (int, bool)
 }
