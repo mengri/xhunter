@@ -172,7 +172,7 @@
 | `hunt.Config.UserPlugins` | `prompt/task`（任务陈述）→ user 段 |
 | `hunt.Config.Filters` | 为空：结果加工链留空即原样透传 |
 | `hunt.Config.Policy` | `internal/policy`：路径边界 ＋ 三重预算（token / 轮数 / 墙钟）。**三项可选，不配即不限**；这里的 `0 = 不限` 是**字段零值**语义——投递层不配就是不限，显式写 `0` 会被拒（见使用手册 §3） |
-| `harness.Config` | 轮数硬上限、连续失败止损、接收段不活动超时 `StreamIdleTimeout`（0=不限、缺省 120s）；与 `Policy` 的分工见 §7.4 |
+| `harness.Config` | 轮数硬上限、连续失败止损、接收段不活动超时 `StreamIdleTimeout`（**0 = 取默认 120s；正数 = 不活动上界；负数 = 关闭看门狗**）；与 `Policy` 的分工见 §7.4 |
 
 各阶段的职责与落点见 §6.3（运行段 L1~L7）。
 
@@ -300,7 +300,7 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 | usage | 累加到 `run.Usage`（harness）；业务在 `OnTurn` 里把**增量**交给 `Policy.Charge` | FR-9、FR-11 |
 | error | 不可重试 → 终态（环境错误）；可重试记日志后继续 | FR-11.2 |
 | end | 进入轮边界（`OnTurn`） | — |
-| **流看门狗** | harness 接收段（不活动超时 → `Cancel()` → 环境错误） | FR-1.11①、INV-3。（**契约已定义**（D4）：`harness.Config.StreamIdleTimeout`——0=不限、装配层不设时默认 120s，接收段接入点已留；计时器待 MS-12） |
+| **流看门狗** | harness 接收段（相邻两事件之间静默超上界 → **先落终态、再 `Cancel()`** → 环境错误） | FR-1.11①、INV-3。（取值口径：`harness.Config.StreamIdleTimeout`——**0 = 取默认 120s；负数 = 关闭看门狗；正数 = 不活动上界**。实现状态见 xhunter-status.md 状态索引 · L4-流看门狗） |
 
 约束：收流循环可被 ctx 打断（INV-8），打断时**必须调用 `sess.Cancel()` 并收敛为 cancelled**（退出 3）；取消时已收未执行的调用**不执行**；stdout 写失败记 writeErr，轮末收敛（FR-10.4）。
 
@@ -991,7 +991,7 @@ Bounty(session) ──► H6.Session
 
 ### 12.0 通用约定
 
-- **错误分类决定退出码**（使用手册 §7）：普通失败 → `1`；环境或资源问题 → `2`（可重试，平台可重派）；取消 → `3`；成功 → `0`。实现侧没有独立的错误类型来标记环境问题：**退出码由终态直接给出**（`harness.Terminal.Code`，见 §6.3 的终止条件映射），协作方只需返回错误，由装配层与执行体决定它算哪一档。
+- **错误分类决定退出码**（使用手册 §7）：环境或资源问题 → `1`（可重试，平台可重派）；普通失败（被引擎中止）→ `2`；取消 → `3`；成功 → `0`。实现侧没有独立的错误类型来标记环境问题：**退出码由终态直接给出**（`harness.Terminal.Code`，见 §6.3 的终止条件映射），协作方只需返回错误，由装配层与执行体决定它算哪一档。
 - **终态总是显式**（INV-3）：`Engine.Run` **只返回 `Outcome`**——正常路径、panic、初始化失败都收敛到显式终态，因此不存在"有错误却没有终态"的情形。任何协作方返回错误都必须被转换为终态，不允许静默挂起。
 - **事件契约只追加**（INV-5）：外部事件类型与字段一旦发布不可修改；新增字段不算破坏性变更。
 - **判定主体是代码与测试**：接口即契约，测试即判定；所有用例不依赖模型（NFR-8）。
@@ -1014,7 +1014,7 @@ Bounty(session) ──► H6.Session
 | IA-1.8 | **工具调用不由引擎执行**：引擎只收 `turn.Text` / `turn.Calls`，只读 `turn.Results` / `turn.Failed` | 代码检查：`harness` 里没有任何执行或写盘调用 |
 | IA-1.9 | **收尾在每条退出路径上都跑**（含 panic、初始化失败、轮数上限） | `TestEngine_PanicBecomesEnvFailureAndFinalStillRuns`、`TestEngine_PrepareFailureStopsBeforeInference` |
 | IA-1.10 | 缺 provider → 构造期错误，不是运行期失败 | `TestNew_RequiresProvider` |
-| IA-1.11 | 推理失败 / 流内错误 → 环境错误（退出 1），且流错误不进入轮边界 | `TestEngine_InferFailureIsEnvError`、`TestEngine_StreamErrorIsEnvError` |
+| IA-1.11 | 推理失败 / 流内错误 → 环境错误（退出 1），且流错误不进入轮边界 | `TestEngine_InferFailureIsEnvError`、`TestEngine_StreamErrorIsEnvError`、`TestWatchdog_IdleStreamCancelsAsEnvError`（接收段不活动超时同为环境错误、不进入轮边界） |
 | IA-1.12 | `OnTurn` 报错 → `failed/2`，原因标明阶段与原因 | `TestEngine_OnTurnErrorIsFailed` |
 | IA-1.13 | **终态可由模型自陈覆盖，但只在引擎给出 `succeeded` 时**：模型在正文固定小节里声明「## 需要补全」即收敛为 `blocked`（退出码 0，改动照常交付）；机制性终止（预算耗尽 / 止损 / 取消 / 引擎侧错误）**不被改写**；未声明时保持 `succeeded`（不得把「没写小节」反推成失败）。声明在**轮边界登记**、收尾收敛 | `TestFinalize_NeedsInputConvergesToBlocked`、`TestFinalize_BlockedDoesNotOverrideMechanicalTerminal`、`TestFinalize_NoDeclarationStaysSucceeded`、`TestOnTurn_DeclaredIsRecordedAtTheTurnItWasSaid`、`TestParseDeclared_*`（hunt） |
 

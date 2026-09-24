@@ -42,7 +42,7 @@
 
 **驱动者无关性不放松任何不变量**：装配仍是**同一份装配代码**（缺件与就绪失败都在启动期以退出码 1 失败）、门禁清单来源不变、模型仍无 git 能力、权限仍经策略层。**换驱动者只换"谁投递、谁消费"，不换"什么被允许"。**
 
-为便于本地驱动，Xhunter 规划了 **Bounty 生成能力**（`xhunter run`，FR-1.10）：给定本地仓库路径 + 任务描述，探测 `remote` / 基线 commit（取 HEAD）/ 任务分支名 / 门禁候选（仓库根 `gates.yml` 存在性）/ 预算与策略默认值，生成 Bounty 文件。
+为便于本地驱动，Xhunter 提供了 **Bounty 生成与本地执行能力**（`xhunter run`，FR-1.10）：给定本地仓库路径 + 任务描述，**只读**探测 `remote` / 基线 commit（取 HEAD）/ 任务分支名 / 门禁候选（仓库根 `gates.yml` 存在性），生成 Bounty（可选 `--out` 写清单），然后**用同一份装配**执行一次 Hunt。工作区由 Xhunter clone 到临时目录，用户当前仓库目录只被只读探测、不受影响。
 
 > 实现状态见 xhunter-status.md 状态索引 · usage§1.2·Bounty生成器。生成器只是便利工具，**不进入交付路径**（FR-1.10 边界③）。
 
@@ -56,7 +56,7 @@ xhunter --bounty <path>           # 任务正文文件（自然语言描述；�
         [--result <path>]         # 结果文件（JSON；无论成败都写，见 §6）
         [--patch <path>]          # 补丁文件（相对基线的统一 diff，git apply 兼容）
 
-xhunter run --repo <path> --task <text>   # 本地驱动：探测仓库并生成 Bounty（见 §1.2）
+xhunter run --repo <path> --task <text> [--out <path>]   # 本地驱动：探测仓库 → 生成 Bounty（可选 --out）→ 用同一份装配执行一次 Hunt（见 §1.2）
 xhunter version
 ```
 
@@ -91,6 +91,7 @@ xhunter version
 | `XHUNTER_BUDGET_TOKENS` | — | 累计 token 上限（输入+输出，正整数；未设置 = 不限） |
 | `XHUNTER_BUDGET_WALL_CLOCK` | — | 墙钟上限（Go duration，如 `90m`、`2h`；未设置 = 不限） |
 | `XHUNTER_HEARTBEAT_INTERVAL` | — | 心跳间隔（Go duration，如 `45s`、`2m`；缺省 30s）——平台判断"卡死"的灵敏度由它定；**取值非法（含 `0`、负数、非 duration）即启动期退出 1** |
+| `XHUNTER_STREAM_IDLE_TIMEOUT` | — | 接收段不活动超时（Go duration，如 `90s`、`2m`；缺省 120s）——上游挂起（相邻两事件之间静默）超过它即 Cancel 并以环境错误收敛（退出 1）；**取值非法（含 `0`、负数、非 duration）即启动期退出 1**（负数本可表示"关闭看门狗"，但只在程序内可达、不暴露给部署侧） |
 
 **前缀即分组**（命名是刻意的，防错靠名字而不是靠文档提醒）：`XHUNTER_MODEL_*` 是**模型接入事实**（模型是什么——上限两项必填、其余可选）；`XHUNTER_BUDGET_*` 是**任务预算**（三项都可选，不配即不限）；`XHUNTER_REPO_*` 是仓库事实。三组的**必填性相反**，因此让名字完全不重叠。
 
@@ -181,7 +182,7 @@ xhunter version
 >
 > `call_id` 是调用与结果配对的唯一标识：一轮内可能出现同一原语的多次调用，外部消费者据此配对（IA-1.5）；`policy_denied` 与 `check_result` 同属 L5 后的时点，故这两类事件也应携带相应 `call_id` 以便回溯到具体调用。
 >
-> **`config_snapshot` 与起飞同时点发出**（紧随 `hunt_start`）：一次报出本次运行**实际生效的四个阈值**——`max_denied_streak`（连续策略拒绝阈值）与 `max_same_kind_streak`（连续同类失败上限）是**业务止损**阈值（来自策略自述），`max_fail_streak`（机制连续失败阈值）与 `max_turns_hard`（轮数硬顶，0 = 不限）是**机制硬顶**（来自循环实际生效的配置）。平台据此解释后续的机制性终止（如 `stop_loss_same_kind` / `stop_loss_denied`）。
+> **`config_snapshot` 与起飞同时点发出**（紧随 `hunt_start`）：一次报出本次运行**实际生效的若干阈值**——`max_denied_streak`（连续策略拒绝阈值）与 `max_same_kind_streak`（连续同类失败上限）是**业务止损**阈值（来自策略自述），`max_fail_streak`（机制连续失败阈值）与 `max_turns_hard`（轮数硬顶，0 = 不限）是**机制硬顶**（来自循环实际生效的配置）；`stream_idle_timeout_ms`（接收段不活动超时的生效值，毫秒）同属机制硬顶——**它的 `0` 表示"不限/关闭"**（与其它键"0 = 不知道"的口径不同：默认 120s 时报 120000，不是 0）。平台据此解释后续的机制性终止（如 `stop_loss_same_kind` / `stop_loss_denied`）。
 >
 > **实现状态**见 xhunter-status.md 状态索引 · usage§5·已发出事件；本节事件类型与字段的**契约**以本手册为准，哪些已发出以状态文档为准；`effective_config` 的完整语义以结果文件（§6）与 FR-11.6 为准。
 >
@@ -275,6 +276,7 @@ xhunter version
 | `OnTurn` 报错（引擎侧错误，如过滤器挂掉） | 2 | 重跑是同一结果 |
 | **未进入对话**：基线不可获取 / 工作区脏 / 部署事实缺失 / 模型接入缺失 / 装配缺件 | **1** | 环境问题：修好即可重跑 |
 | **对话中被上游打断**：推理失败 / 流中断且不可重试 | **1** | 上游或环境问题，修好后重跑 |
+| **接收段不活动超时（上游挂起）**：相邻两事件之间静默超过 `XHUNTER_STREAM_IDLE_TIMEOUT` | **1** | 流内无副作用（工具在轮边界才执行），修好/重派即可 |
 | 恢复失败（材料损坏/版本不兼容、任务分支不可达、checkout 失败） | **1** | resume 是优化，重跑是兜底 |
 | 门禁执行失败（命令不存在 / 无法创建进程 / 超时） | **1** | **不是质量结论**，是环境问题（FR-5.2d）——与"判定不通过"必须分开 |
 | 检查点连续提交失败达上限（**连续 3 次**） | **1** | 远端不可用，本轮结束即收敛，不跑完剩余轮次 |
