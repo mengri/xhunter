@@ -160,7 +160,8 @@ xhunter version
 {"type":"needs_input","text":"..."}                   // 需要补全的条件（逐条；模型写完即停止，终态为 blocked）
 {"type":"assistant_text","text":"..."}                    // 模型的答复正文；**最终答复是交付物的一部分**（可能整份交付物就是它）
 {"type":"tool_call","call_id":"...","tool":"edit","args":{...}}
-{"type":"tool_result","call_id":"...","tool":"symbol_edit","ok":true,"precision":"syntactic","degrade":null,"summary":"...","duration_ms":12}
+{"type":"tool_result","call_id":"...","tool":"edit","ok":true,"summary":"...","duration_ms":12}
+// 注：`precision` / `degrade` 是**符号原语接入后**才出现的字段；一期工具面无符号原语，示例不举它
 {"type":"check_result","gate":"unit-test","passed":true,"cached":false,"exit_code":0,"duration_ms":1234,"source":"repo","summary":"..."}
 {"type":"policy_denied","action":"...","reason":"..."}
 {"type":"gate_config_changed","source":"working_tree","gates":["..."]}   // 仅当 Bounty 授予 working_tree 时
@@ -218,7 +219,7 @@ xhunter version
   "patch_path": "...",
   "files_changed": ["..."],
   "effective_config": {
-    "primitives": ["read","write","edit","find","glob","symbol_read","symbol_edit","symbol_rename","check","checkpoint"],
+    "primitives": ["read","write","edit","find","glob","check","checkpoint"],
     "system_plugins": ["agentsmd","skills"],
     "user_plugins": ["task"],
     "filters": [],
