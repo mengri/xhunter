@@ -4,6 +4,8 @@
 //
 //	xhunter --bounty <path> [--log-file <path>] [--result <path>] [--patch <path>]
 //	                                              执行一次 Hunt
+//	xhunter run --repo <path> --task <text> [--out <path>] [--log-file|--result|--patch <path>]
+//	                                              本地驱动：探测仓库 → 生成 Bounty → 执行一次 Hunt
 //	xhunter version
 //
 // 退出码：0 = 模型正常完成对话（成败另看 status）；1 = 未进入对话 / 被上游与环境打断（环境问题，
@@ -52,6 +54,8 @@ func run(args []string) int {
 	case args[0] == "version":
 		fmt.Printf("xhunter %s\n", version)
 		return exitOK
+	case args[0] == "run":
+		return runCmd(args[1:])
 	case strings.HasPrefix(args[0], "-"):
 		return huntCmd(args)
 	default:
@@ -67,6 +71,8 @@ func usage() {
         执行一次 Hunt（<path> 是任务正文文件）
         --result  结束时写结果文件（JSON；无论成败）
         --patch   写相对基线的统一 diff（git apply 兼容）
+  xhunter run --repo <path> --task <text> [--out <path>] [--log-file|--result|--patch <path>]
+        本地驱动：探测本地仓库 → 生成 Bounty（--out 可选）→ 用同一份装配执行一次 Hunt
   xhunter version
 
 部署事实由环境变量给出。仓库：XHUNTER_REPO_URL / XHUNTER_REPO_BASE_COMMIT（必填）、
@@ -75,11 +81,13 @@ XHUNTER_REPO_BRANCH / XHUNTER_BOUNTY_ID / XHUNTER_SESSION_ID（可选）。
 XHUNTER_MODEL_OUTPUT_TOKENS（必填）、XHUNTER_PROTOCOL（协议取值，缺省对话补全）、
 XHUNTER_API_KEY / XHUNTER_HEADERS（可选）。预算上限（可选）：XHUNTER_BUDGET_TURNS /
 XHUNTER_BUDGET_TOKENS / XHUNTER_BUDGET_WALL_CLOCK。心跳间隔（可选）：
-XHUNTER_HEARTBEAT_INTERVAL（Go duration，缺省 30s）。
+XHUNTER_HEARTBEAT_INTERVAL（Go duration，缺省 30s）。接收段不活动超时（可选）：
+XHUNTER_STREAM_IDLE_TIMEOUT（Go duration，缺省 120s；非 duration / 0 / 负 → 启动期退出 1）。
 `)
 }
 
-// huntCmd 是执行入口：装配业务执行体与循环协作者，然后跑一次循环。
+// huntCmd 是「环境投递」入口：把它读成一份 Bounty（任务正文文件 ＋ 部署事实环境变量），
+// 再交给 executeHunt 执行。它自己不装配执行体——装配与执行只有 executeHunt 一条路径。
 func huntCmd(args []string) int {
 	fs := flag.NewFlagSet("xhunter", flag.ContinueOnError)
 	bountyPath := fs.String("bounty", "", "任务正文文件路径")
@@ -105,8 +113,29 @@ func huntCmd(args []string) int {
 		return exitEnv
 	}
 
+	return executeHunt(bounty, runOptions{logFile: *logFile, resultPath: *resultPath, patchPath: *patchPath})
+}
+
+// runOptions 是一次 Hunt 的三条输出路径（Bounty 之外的装配参数）：日志、结果文件、补丁。
+// 两条驱动路径（环境投递 / 本地探测）都用它交给 executeHunt，输出契约因此只有一处。
+type runOptions struct {
+	logFile    string
+	resultPath string
+	patchPath  string
+}
+
+// executeHunt 用**同一份装配**执行一次 Hunt：解析部署事实 → 构造 Provider 与出口 →
+// 装配业务执行体与循环 → 跑一次 → 写出交付记录。两条驱动路径都只调它——
+// 不存在第二条执行路径（外部不得自建一条绕过不变量的后门）。
+func executeHunt(bounty hunt.Bounty, opts runOptions) int {
 	// 心跳间隔是部署事实：写错即启动期失败（退出 1），不留到运行期才发现。
 	heartbeat, err := parseHeartbeatInterval(os.LookupEnv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return exitEnv
+	}
+	// 接收段不活动超时也是部署事实：写错即启动期失败（退出 1）。
+	idle, err := parseStreamIdleTimeout(os.LookupEnv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return exitEnv
@@ -126,8 +155,8 @@ func huntCmd(args []string) int {
 	}
 
 	logs := io.Writer(os.Stderr)
-	if *logFile != "" {
-		f, err := os.Create(*logFile)
+	if opts.logFile != "" {
+		f, err := os.Create(opts.logFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "无法打开日志文件：%v\n", err)
 			return exitEnv
@@ -144,6 +173,10 @@ func huntCmd(args []string) int {
 	// 机制硬顶用同一份配置贯穿两处：装配层报进 config_snapshot、循环按它执行。在两处各写一遍
 	// 3/1000 迟早会漂，所以这里是唯一来源。
 	hcfg := harness.DefaultConfig()
+	// 部署侧可覆写接收段不活动超时；未设置则不动（默认仍由 DefaultConfig 提供）。
+	if idle > 0 {
+		hcfg.StreamIdleTimeout = idle
+	}
 
 	// 业务执行体：向循环提供三组 handler，同时是原语看到的 Facts。上下文、会话材料与
 	// 事件出口都由它自己持有——循环不认识这些东西。
@@ -198,7 +231,7 @@ func huntCmd(args []string) int {
 
 	// 交付记录在终态之后写：无论成败都要留档（FR-1.5），写不出来属环境问题。
 	// 生效配置快照由 Session 在装配完成后冻结，这里取同一份写进结果文件。
-	if err := writeRunOutputs(*resultPath, *patchPath, bounty, outcome, session.Delivery(), session.Declared(), session.EffectiveConfig()); err != nil {
+	if err := writeRunOutputs(opts.resultPath, opts.patchPath, bounty, outcome, session.Delivery(), session.Declared(), session.EffectiveConfig()); err != nil {
 		fmt.Fprintf(os.Stderr, "%v（终态已定：%s/%s）\n", err, outcome.Status, outcome.Reason)
 		return exitEnv
 	}

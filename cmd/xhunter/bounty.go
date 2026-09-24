@@ -29,6 +29,11 @@ const (
 	// 心跳间隔：任务级心跳的部署事实（可选）。未设置取 Session 的默认 30s；
 	// 平台判断"卡死"的灵敏度由它定。
 	envHeartbeatInterval = "XHUNTER_HEARTBEAT_INTERVAL"
+
+	// 接收段不活动超时：运行段看护的部署事实（可选）。未设置取 harness 的默认 120s；
+	// 平台判断"上游挂起"的灵敏度由它定。**只接受正 duration**——「不配」才是取默认，
+	// 「关掉看门狗」（负数）只在程序内可达、不暴露给部署侧（关掉它 = 上游挂起永不中止）。
+	envStreamIdleTimeout = "XHUNTER_STREAM_IDLE_TIMEOUT"
 )
 
 // lookupEnv 让组装过程可在测试里替换环境来源。
@@ -74,7 +79,7 @@ func bountyFromEnv(task string, lookup lookupEnv) (hunt.Bounty, error) {
 
 	branch := readEnv(lookup, envRepoBranch)
 	if branch == "" {
-		branch = "xhunter/" + SessionID(bounty)
+		branch = branchFor(SessionID(bounty))
 	}
 
 	bounty.Repo = git.RepoRef{
@@ -140,9 +145,31 @@ func parseHeartbeatInterval(lookup lookupEnv) (time.Duration, error) {
 	return d, nil
 }
 
+// parseStreamIdleTimeout 从环境读接收段不活动超时。取值非法即启动期失败（环境问题，退出 1）——
+// 不留到运行期才发现、也不静默退回默认值：一个拼错的变量名会让超时悄悄失效。
+//
+// 未设置 → 0（由 harness 取默认 120s）。非 duration / 0 / 负数一律非法：0 会被读成"不限"、
+// 负数会被读成"关闭看门狗"，两种都不是我们承诺的语义——「不配」才是取默认。负值本可用于
+// 关闭看门狗，但它只在程序内可达、**不暴露给部署侧**（部署侧关掉它 = 上游挂起永不中止）。
+func parseStreamIdleTimeout(lookup lookupEnv) (time.Duration, error) {
+	v := readEnv(lookup, envStreamIdleTimeout)
+	if v == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("%s 必须是正的时间长度（如 90s、2m；当前 %q）", envStreamIdleTimeout, v)
+	}
+	return d, nil
+}
+
 // SessionID 返回这次执行所属的会话标识。取值口径定义在 hunt.Bounty 上，这里只是本包的
 // 便利入口（结果文件与事件都经它取），实现委托过去——两处各写一遍，改一处忘一处就会漂。
 func SessionID(b hunt.Bounty) string { return b.SessionID() }
+
+// branchFor 给出任务分支名。它是**分支名规则的唯一来源**：环境投递路径（bountyFromEnv）
+// 与本地驱动路径读同一份，两处各拼一遍迟早会漂。
+func branchFor(sessionID string) string { return "xhunter/" + sessionID }
 
 func readEnv(lookup lookupEnv, name string) string {
 	if lookup == nil {
