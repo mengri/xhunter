@@ -276,6 +276,10 @@ func (s *Session) OnTurn(ctx context.Context, run *harness.Run, turn *harness.Tu
 	s.setPhase(PhaseTools)
 	defer s.setPhase(PhaseInfer)
 
+	// 处置是本轮的：每轮开工先复位止损观测，避免上一轮的失败状态泄漏到本轮、把后面每一轮
+	// 都判成终止（观测在 executeCall 里逐次累加，复位必须早于任何 executeCall）。
+	s.stopLoss, s.stopMsg = StopContinue, ""
+
 	// 入口守卫：取消优先——已取消就不再开工，也不让通道问题改写取消。
 	if ctx.Err() != nil {
 		run.SetTerminal(harness.Terminal{Status: harness.StatusCancelled, Reason: "cancelled", Code: harness.ExitCancelled})
@@ -372,11 +376,34 @@ func (s *Session) OnTurn(ctx context.Context, run *harness.Run, turn *harness.Tu
 		})
 		return false, nil
 	}
+	// 业务止损：连续同类失败超上限 / 连续拒绝达阈值 → 终止（退出 2）。排在提交连败之后（连败是
+	// 环境问题、退出 1、修好可重跑，更根因）、排在预算之前（同为退出 2，但止损说得出撞的是哪堵
+	// 墙，比"预算耗尽"更可诊断）。止损内部：同类失败先于连续拒绝——同轮两者皆成立时上报同类失败，
+	// 固定次序只为"终态不取决于谁先被读到"。
+	if s.cfg.Policy != nil {
+		if s.stopLoss == StopTerminate {
+			run.SetTerminal(harness.Terminal{Status: harness.StatusFailed,
+				Reason: stopLossSameKind + "：" + s.stopMsg, Code: harness.ExitAborted})
+			return false, nil
+		}
+		if n, over := s.cfg.Policy.DeniedCount(); over {
+			run.SetTerminal(harness.Terminal{Status: harness.StatusFailed,
+				Reason: stopLossDenied + "：连续 " + strconv.Itoa(n) + " 次策略拒绝", Code: harness.ExitAborted})
+			return false, nil
+		}
+	}
 	if s.cfg.Policy != nil {
 		if yes, dim := s.cfg.Policy.Exhausted(TurnNo(turn.No)); yes {
 			run.SetTerminal(harness.Terminal{Status: harness.StatusFailed, Reason: "budget_exhausted:" + dim, Code: harness.ExitAborted})
 			return false, nil
 		}
+	}
+	// 换策略提示：达 switch 阈值但本轮不终止时，把提示附在下一轮消息末尾——**只影响下一轮、不进
+	// 历史**：这是一次性纠偏，写进历史反而污染上下文；也刻意不扩 ContextBuilder 接口（那会波及
+	// 上下文替身与会话材料），只在组装好的消息末尾追加一条 user 消息。
+	if s.stopLoss == StopSwitch && s.stopMsg != "" {
+		run.Messages = append(run.Messages, llm.Message{Role: llm.RoleUser, Content: s.stopMsg})
+		s.logf("info", "连续同类失败达阈值：已注入换策略提示", "turn", turn.No)
 	}
 	return true, nil
 }
@@ -388,6 +415,13 @@ const checkpointFailStreakLimit = 3
 // checkpointFailedStreak 是「提交连败」的固定原因前缀（使用手册 §7 的"检查点连续提交失败达上限"
 // 一档）；后接连败次数与最后一次失败原因，便于远程定位。
 const checkpointFailedStreak = "checkpoint_failed_streak"
+
+// stopLossSameKind / stopLossDenied 是业务止损两条轴的固定原因前缀（使用手册 §7 的两行）；分别
+// 后接"连续 N 次同类失败（kind）"的诊断尾巴与连续拒绝次数，便于远程定位撞的是哪堵墙。
+const (
+	stopLossSameKind = "stop_loss_same_kind"
+	stopLossDenied   = "stop_loss_denied"
+)
 
 // checkpoint 在本轮已应用的改动上产生检查点。触发条件只有两条：
 //   - **模型显式请求**（`checkpoint` 原语的语义判断——它说「这里自洽」，那是它的判断）；

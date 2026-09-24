@@ -113,6 +113,12 @@ type Session struct {
 	// structuralDegradedReported 保证"不可判定"的 degraded **每次运行最多一条**。
 	structuralDegradedReported bool
 
+	// stopLoss / stopMsg 记录本轮工具调用的止损处置（两段式的观测结果）：executeCall 每次调用
+	// 后把结局喂给策略，这里"只升不降"地记下最重的一档（continue < switch < terminate）。OnTurn
+	// 每轮开工先复位——处置是本轮的，上一轮的失败不该把后面每一轮都判成终止。
+	stopLoss StopLoss
+	stopMsg  string
+
 	// declared 是模型在正文里自陈的两类清单（缺什么条件、采取了哪些默认）：轮边界登记、
 	// 收尾据此收敛终态——见 AppendDeclared 与 Finalize。
 	declared Declared
@@ -151,6 +157,37 @@ func (s *Session) Phase() Phase {
 // setPhase 记录当前阶段。业务 goroutine 写、心跳 goroutine 读，故走 atomic.Value。
 func (s *Session) setPhase(p Phase) { s.phase.Store(p) }
 
+// observeOutcome 把一次工具调用的结局喂给策略止损（两段式的观测点），并记下处置。
+//
+// f == nil 表示这次调用成功——喂空串，让策略把"连续同类失败"归零；否则喂失败的 kind。处置
+// "只升不降"地记进 stopLoss（continue < switch < terminate）：一轮内可能多次调用，最重的处置
+// 胜出——同轮内先 switch 后 terminate 时，不能因为处理顺序反过来把终止降级成换策略。
+func (s *Session) observeOutcome(f *llm.Fault) {
+	if s.cfg.Policy == nil {
+		return
+	}
+	kind := ""
+	if f != nil {
+		kind = f.Kind
+	}
+	sl, msg := s.cfg.Policy.ObserveFailure(kind)
+	if stopLossRank(sl) > stopLossRank(s.stopLoss) {
+		s.stopLoss, s.stopMsg = sl, msg
+	}
+}
+
+// stopLossRank 给出处置的严重度秩，供"只升不降"地收敛一轮内的多次观测。
+func stopLossRank(sl StopLoss) int {
+	switch sl {
+	case StopTerminate:
+		return 2
+	case StopSwitch:
+		return 1
+	default:
+		return 0
+	}
+}
+
 // NewSession 构造 Session。
 func NewSession(cfg Config) *Session {
 	return &Session{
@@ -159,6 +196,8 @@ func NewSession(cfg Config) *Session {
 		stopHeartbeat: func() {},
 		// 默认判据：不可判定（符号扩展未接入）。三态见 structuralVerdict。
 		structuralJudge: func() structuralVerdict { return structuralUndecidable },
+		// 本轮处置从"继续"起步；OnTurn 每轮开工再复位一次。
+		stopLoss: StopContinue,
 	}
 }
 
@@ -262,7 +301,14 @@ func (s *Session) decls() []llm.ToolDecl {
 func (s *Session) executeCall(ctx context.Context, turn *harness.Turn, tc llm.ToolCall) llm.ToolResult {
 	started := time.Now()
 	ev := toolResultEvent{callID: tc.ID}
-	defer func() { s.emitToolResult(ev, time.Since(started)) }()
+	defer func() {
+		s.emitToolResult(ev, time.Since(started))
+		// 止损观测点：每条出口（绑定失败、未知工具、策略拒绝、执行报错、原语自身错误、落盘
+		// 失败）都在这里喂一次结局——f == nil 即一次成功（喂空串归零同类连续），否则喂失败类别。
+		// 它排在 emitToolResult 之后，且必然早于 OnTurn 把本轮记进 turn / 历史：处置读到的是
+		// 这一轮已经定格的结局。
+		s.observeOutcome(ev.fault)
+	}()
 	s.emitToolCall(tc)
 
 	call, fault := BindToolCall(tc)
