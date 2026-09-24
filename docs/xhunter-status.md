@@ -33,12 +33,12 @@
 | 基础原语 5/5 | `hunt/basic`：`read`（行范围＋截断续读提示）、`write`（仅新建）、`edit`（内容寻址唯一性校验）、`find`（内容检索）、`glob` | `read_test.go` / `write_test.go` / `edit_test.go` / `find_test.go` / `glob_test.go` |
 | 执行流水线 | `hunt/session.go`：Bind → 查表 → `Policy.Decide` → `Execute` → `Committer` 落盘 → 结果回灌＋事件 | `hunt/session_test.go` |
 | 写盘唯一入口与读后校验 | `hunt/commit.go`（指纹校验、只改目标区间、批量先全验证后落盘） | `hunt/commit_test.go`（IA-3.3/3.6） |
-| 策略引擎 | `internal/policy`：默认拒绝、路径边界（**只对写操作**；`.xhunter/**` 禁写、`skills.draft/**` 放行）、三重预算（token/轮数/墙钟）；**是否写盘由原语自述**（`Writes()`），策略不维护原语分类表 | `policy_test.go`（IA-4.5~4.7） |
+| 策略引擎 | `internal/policy`：默认拒绝、路径边界（**只对写操作**；`.xhunter/**` 禁写、`skills.draft/**` 放行）、三重预算（token/轮数/墙钟）；**是否写盘由原语自述**（`Writes()`），策略不维护原语分类表；**两段式止损**（连续同类失败：达 2 次换策略、超上限 3 次终止；连续拒绝：达 3 次终止），阈值由策略自述进 `config_snapshot` | `policy_test.go`（IA-4.5~4.9） |
 | 提示词组装 | `prompt/agentsmd`（根级注入）· `prompt/skills`（清单注入）· `prompt/task`；内核条款＋环境事实由内核拼在固定位置 | `hunt/session_test.go`、`cmd/xhunter/prompt_test.go`（IA-2.1/2.10/2.11/2.13） |
 | Provider 三协议 | `provider/openaichat` · `openairesponses` · `anthropicmessages` + `provider/adapter` + `providerconfig`（环境变量契约） | 各包 `*_test.go`（IA-8.x/9.x） |
 | CLI 与组装层 | `cmd/xhunter`：`--bounty/--log-file/--result/--patch`、`version`；环境变量投递（仓库事实 ＋ 模型接入）、退出码 0/1/2/3、信号接线 | `bounty_test.go`、`channel_test.go`、`provider_test.go`、`signal_test.go`、`e2e_test.go` |
 | 端到端夹具 | 真 git（本地裸仓库）＋ 真 SSE 假上游，不联网 | `TestEndToEnd_LocalRunProducesDeliveryCommit` 等 5 条 |
-| 事件出口 | 信封四字段统一盖章；已发 `hunt_start` · `tool_call` · `tool_result` · `assistant_text` · `usage` · `heartbeat` · `error` · `policy_denied` · `degraded` · `deliverable` · `hunt_end` | `hunt/session.go`（工具调用/结果/策略拒绝）、`hunt/hooks.go`（起飞/正文/用量/降级/终态） |
+| 事件出口 | 信封四字段统一盖章；已发 `hunt_start` · `config_snapshot` · `tool_call` · `tool_result` · `assistant_text` · `usage` · `heartbeat` · `error` · `policy_denied` · `degraded` · `deliverable` · `hunt_end` | `hunt/session.go`（工具调用/结果/策略拒绝）、`hunt/hooks.go`（起飞/正文/用量/降级/终态） |
 | 结果文件 | `--result` 无论成败都写；含终态/退出码/仓库事实/提交/改动清单/用量/error | `cmd/xhunter/result.go`（IA-12.9） |
 | 模型声明终态（`needs` / `assumptions`） | `hunt/declare.go`（解析固定小节）＋ `Session.OnTurn`（轮边界登记）＋ `Session.Finalize`（收尾收敛为 `blocked`）；事件 `needs_input` / `assumption`；结果文件 `needs` / `assumptions` | `hunt/declare_test.go`（IA-1.13）、`cmd/xhunter/result_test.go` |
 
@@ -63,7 +63,6 @@
 | 符号能力与扩展宿主 | `ext/ext.go` 只有接口，无实现；`hunt/symbolic` 声明不实现 |
 | 结构检查（自动检查点的判据） | `Session.structuralJudge` 默认返回**不可判定**——判据随符号扩展接入；**接入前不产生自动检查点**（不可判定 → 不提交），跳过原因如实进日志与 `degraded`（`scope: checkpoint`） |
 | 流看门狗 | 无（`StreamIdleTimeout` 未接入） |
-| 止损两段式 | `hunt/policy.go` 只有 `Decide`/`Charge`/`Exhausted`，无 `ObserveFailure`/`DeniedCount` |
 | **用量口径（输出明细与缓存写）** | 输入侧已按统一口径落地（见 §2.3）：全部输入含缓存读/写、缓存读为子集。仍未取的：OpenAI 的输出明细（`completion_tokens_details` / `output_tokens_details`：reasoning / audio / accepted·rejected prediction），以及把「缓存写」单列出来（Anthropic 的写溢价 1.25×/2× 目前按普通输入价计） |
 | 差异排除材料目录 | `internal/git/cli/git.go:173` — `Diff`/`Patch` 无 `.xhunter/<session_id>/**` 排除 |
 | 本地驱动 | `xhunter run`（Bounty 生成器）尚未接线（使用手册 §1.2 已标注） |
@@ -98,7 +97,7 @@
 | <a id="fr-4-3"></a>FR-4.3（符号内插入 / 跨文件重命名） | 待接入 | MS-10 | `symbol_rename` 未实现 |
 | <a id="fr-5-2b"></a>FR-5.2b~5.2i（门禁全链） | 待接入 | MS-5 | `s.gates = nil`；`check` 声明不实现 |
 | <a id="fr-6-3"></a>FR-6.3/6.4（`needs` / `assumptions` / `unverified`） | 已落地 | MS-2 | 三类自陈均由正文固定小节采集（`## 需要补全` / `## 假设` / `## 未验证`）：轮边界登记（`AppendDeclared`）、收尾可读；`needs` 非空收敛 `blocked`（退出 0），`unverified` 只陈述、不改终态。结果文件 `needs` / `assumptions` / `unverified` 三态。用例 `TestParseDeclared_ThreeSectionsAreSeparated`、`TestParseDeclared_UnverifiedAloneIsNotNeeds`、`TestParseDeclared_UnverifiedThreeState`、`TestFinalize_UnverifiedDoesNotBlock`、`TestResultFile_UnverifiedIsThreeState` |
-| <a id="fr-9-4"></a>FR-9.4（两段式止损） | 待接入 | MS-3 | 无 `ObserveFailure` / `DeniedCount` |
+| <a id="fr-9-4"></a>FR-9.4（两段式止损） | 已落地 | MS-3 | 连续同类失败达 2 次换策略（回灌「换一种做法」提示）、超上限 3 次终止（`stop_loss_same_kind`）；连续拒绝达 3 次终止（`stop_loss_denied`）；阈值由策略自述（`policy.Facts()`）进 `config_snapshot`，机制硬顶由装配层注入。用例 `TestObserveFailure_SwitchThenTerminate`、`TestSameKindLimitsAreTwoAndThree`、`TestDeniedStreakLimitIsThree`、`TestOnTurn_SameKindStopLossOutranksBudget`、`TestOnTurn_CommitStreakOutranksStopLoss`、`TestEndToEnd_RepeatedFailureSwitchesBeforeFailing`、`TestEndToEnd_DeniedStreakFailsTheRun` |
 | <a id="fr-9-7"></a>FR-9.7（用量不可得时不得估算） | 已落地 | MS-2 | 上游未回报用量时不报数字：`usage` 事件三字段全零则不发、结果文件 `usage.reported: false` ＋ 一条 `degraded`（`scope: usage`）；预算仍按上报值计（不拿 0 触发/不触发）。用例 `TestOnTurn_NoUsageEventWhenUpstreamSilent`、`TestFinalize_DegradedOnceWhenUsageUnavailable`、`TestResultFile_UsageReportedFalseWhenUpstreamSilent` |
 | <a id="fr-10-1"></a>FR-10.1~10.3（心跳 / 终态事件） | 已落地 | MS-2 | 任务级心跳（间隔可配、随取消即停、带 `phase`/ `elapsed_ms`）与全部轮级/终态事件已发，`hunt_end` 为最后一条。用例 `TestHeartbeat_*`、`TestSession_PhaseTracksStages`、`TestFinalize_StopsHeartbeatBeforeHuntEnd`、`TestParseHeartbeatInterval_DefaultOverrideAndRejects`、`TestEndToEnd_HeartbeatEmittedAndHuntEndLast` |
 | <a id="fr-10-4"></a>FR-10.4（事件/心跳写失败即终止） | 已落地 | MS-2 | 出口自述健康状态（`EventSink.Failed()`，覆盖事件与心跳两条写路径）；`OnTurn` 轮前/轮末复查 → `event_channel_failed`（退出 1），取消优先（不被通道问题改写）；进程末尾 `sink.Failed()` 收口保留为兜底。用例 `TestOnTurn_StopsBeforeWorkWhenChannelAlreadyFailed`、`TestOnTurn_StopsAfterTurnWhenChannelFailsDuringTurn`、`TestOnTurn_ChannelFailureDoesNotOverrideCancellation`、`TestEventSink_FailedCoversHeartbeatWrites`、`TestEndToEnd_BrokenEventChannelIsEnvError` |
@@ -182,10 +181,10 @@
 | <a id="ia-4-6"></a>IA-4.6 | 已落地 | `TestDecide_PathEscapeDenied`、`TestDecide_WriteToControlDirDenied`、`TestDecide_WriteToSkillsDraftAllowed` | — | — |
 | <a id="ia-4-7"></a>IA-4.7 | 已落地 | `TestChargeAndExhausted_Tokens`、`TestExhausted_Turns`、`TestExhausted_WallClock`、`TestExhausted_ZeroMeansUnlimited` | — | — |
 | <a id="ia-4-7b"></a>IA-4.7b | 已落地 | `TestBountyFromEnv_DeliversBudget`、`TestEndToEnd_BudgetExhaustionStopsTheRun` | — | — |
-| <a id="ia-4-8"></a>IA-4.8 | 待接入 | — | MS-3 | `DeniedCount`（连续拒绝达阈值终止） |
-| <a id="ia-4-9"></a>IA-4.9 | 待接入 | — | MS-3 | 止损三态 continue/switch/terminate（FR-9.4） |
+| <a id="ia-4-8"></a>IA-4.8 | 已落地 | `TestDeniedStreakLimitIsThree`、`TestDeniedCount_TerminatesAfterThreshold`、`TestDecide_DeniedStreakResetsOnAllow`（policy）、`TestOnTurn_DeniedStreakOutranksBudget`（hunt）、`TestEndToEnd_DeniedStreakFailsTheRun`（cmd） | MS-3 | `DeniedCount`：连续拒绝达 3 次终止；出现一次 Allow 归零 |
+| <a id="ia-4-9"></a>IA-4.9 | 已落地 | `TestObserveFailure_SwitchThenTerminate`、`TestSameKindLimitsAreTwoAndThree`、`TestObserveFailure_ResetsOnSuccessAndKind`（policy）、`TestExecuteCall_ObservesOutcomePerCall`、`TestOnTurn_SwitchHintAppendedToNextTurnMessages`（hunt） | MS-3 | 止损三态 continue/switch/terminate，阈值 2／上限 3 分离（FR-9.4） |
 | <a id="ia-4-10"></a>IA-4.10 | 已落地 | `TestPolicy_ChargeReceivesIncrements` | MS-2 | `Session.charge` 把**增量**交策略：按用量水位算、非增长轮不上报 |
-| <a id="h4-裁决点"></a>H4-裁决点 | 见说明 | 见 IA-4.5~4.9 | MS-3 | 路径边界 / 破坏性 / 预算**已落地**；止损**待接入**（MS-3）；影响面**不做**（设计）；权限询问**不适用**（设计，路径不存在） |
+| <a id="h4-裁决点"></a>H4-裁决点 | 已落地 | 见 IA-4.5~4.9 | — | 路径边界 / 破坏性 / 预算 / 止损**全部已落地**（MS-3 收口：两段式止损两轴）；影响面**不做**（设计）；权限询问**不适用**（设计，路径不存在） |
 | <a id="ia-5-1"></a>IA-5.1 | 已落地 | `TestEventSink_EmitsFlatJSONLine` | — | — |
 | <a id="ia-5-2"></a>IA-5.2 | 已落地 | `TestEventSink_StdoutIsPureNDJSON`、`TestHuntCmd_EventsGoToStdoutAndLogsGoToStderr` | MS-2 | stdout 逐行合法事件行（含信封四字段、`ts` RFC3339），无杂质 |
 | <a id="ia-5-3"></a>IA-5.3 | 已落地 | `TestEventSink_RemembersFirstWriteFailure`、`TestEventSink_FailedCoversHeartbeatWrites`、`TestEndToEnd_BrokenEventChannelIsEnvError` | — | — |
@@ -340,6 +339,7 @@
 | ~~修复：会话材料缺末轮用量~~（快照与记账次序） | **已修复**（2026-09-23）：`OnTurn` 里 `snapshot()` 原排在 `charge()` **之前** → 本轮用量要等下一次快照才落盘；`Finalize` 的最终 `snapshot()` 原排在**交付提交之后** → 那份写在工作树里的记录进不了提交、还被 `Clean` 删掉。两处次序对调后，交付分支上的材料含**每轮各一条** usage。收紧 `TestEndToEnd_MaterialIsSelfSufficientForResume`（改断言"每轮各一条"，修复前实测**红**）、新增 `TestRecorder_SnapshotAfterCharge`（钉调用次序） |
 | ~~契约：扩展接入位与 panic 哨兵~~（H7 / MS-8） | **契约已定义**（2026-09-23，未冻结期：先定契约后填实现）：`ext.ExtHost` 补 `Fingerprint() []string`（服务会话材料 `meta.ext` 与生效快照的能力指纹，IA-6.5）；新增 `ext.Unimplemented{}` **panic 哨兵**；`cmd/xhunter` 把它**显式装上**（不再传 `nil`——A 类入口，符号原语声明不实现，走不到）。**实现待 MS-8** |
 | ~~契约：门禁清单来源 ＋ 结果文件 `gates` 形状~~（MS-5 / H4） | **契约已定义**（2026-09-23，未冻结期）：新增 `hunt.GateSource`（`Load(ctx, repo) ([]Gate, source, err)`）与来源档位常量 `bounty` / `repo` / `none`；`hunt.Config` 加装配槽 `Gates`；结果文件加 `gateFile`（`passed` **三态** `*bool`：true / false / null=未运行）与 `resultFile.Gates`（`omitempty`，写入端未接 → 不写该键）。`Prepare` 的来源裁决**不接**（B 类入口，接上任何一次运行都跑不起来，调用点留 MS-5）。**实现待 MS-5** |
+| ~~两段式止损（MS-3）~~ | **已落地**（2026-09-24，MS-3）：`Policy.ObserveFailure` / `DeniedCount` 从 panic 哨兵回收为运行期如实判定——同类 = 同 `Fault.Kind`（空串 = 一次成功，归零；`policy_denied` 忽略），连续同类失败达 2 次换策略（回灌「换一种做法」提示、只影响下一轮）、超上限 3 次终止（`stop_loss_same_kind`）；连续拒绝在 `Decide` 计数、达 3 次终止（`stop_loss_denied`）。守卫次序「取消 → 通道 → 提交连败 → 止损 → 预算」由 `TestOnTurn_CommitStreakOutranksStopLoss` / `TestOnTurn_SameKindStopLossOutranksBudget` / `TestOnTurn_DeniedStreakOutranksBudget` 咬住。`config_snapshot` 与 `hunt_start` 同时点发出：两个止损阈值来自 `policy.Facts()`、两个机制硬顶由装配层从 `harness.DefaultConfig()` 注入。e2e：`TestEndToEnd_RepeatedFailureSwitchesBeforeFailing`（第 3 轮请求体含「换一种做法」）、`TestEndToEnd_DeniedStreakFailsTheRun`、`TestPrepare_EmitsConfigSnapshot` |
 | ~~交付 diff/patch 排除会话材料目录~~（IA-11.6） | **已落地**（2026-09-23）：`git.RepoRef` 加 `MaterialDir`（本次运行的仓库事实）；`GitWorktree.Diff`/`Patch` 改收 `RepoRef`，材料目录非空时加 `:(exclude)` pathspec——**只排本次会话的材料目录**，`.xhunter/` 下其它路径（如 `skills.draft/**`）是交付内容、照进 diff。材料目录路径唯一来源 `materialDirFor`（与落盘同源）；e2e 的临时过滤 `nonMaterial` 撤掉、改成直接断言交付清单不含材料。用例 `TestDiff_ExcludesMaterialDirButKeepsSkillsDraft`、`TestDiff_NoMaterialDirKeepsEverything`、`TestEndToEnd_LocalRunProducesDeliveryCommit` |
 
 ---
@@ -359,7 +359,6 @@
 | git 剩余语义 | `IA-11.12`、`L6-检查点` |
 | 流看门狗 | `L4-流看门狗`、`FR-1.11`（①） |
 | 结构检查 | `IA-11.11`、`L6-结构检查`、`FR-1.3d` |
-| 止损两段式 | `IA-4.8`、`IA-4.9`、`H4-裁决点`、`FR-9.4` |
 | 可观测补齐 | `usage§5·已发出事件`、`usage§6·待接入字段` |
 | 本地驱动 | `usage§1.2·Bounty生成器`、`FR-1.10` |
 
@@ -398,7 +397,7 @@
 |---|---|---|---|---|---|---|
 | **MS-1** | 验收入口与契约对齐 | 一期收口 | — | 小 | FR-2.2、IA-3.16 | **已完成**（2026-09-23；三项全部落地，见 §2.3） |
 | **MS-2** | 运行可观测补齐（事件流 ＋ 生效配置快照） | 一期收口 | MS-1 | 中 | FR-10、FR-11.1/11.6、FR-6.3/6.4、IA-5.2/5.4 | **已完成**（2026-09-23；事件流、生效配置快照、澄清回路三类自陈与收口验收（纯 NDJSON／事件序列／增量语义／插件失败）全部落地，见 §2.3） |
-| **MS-3** | 止损完备（两段式止损） | 一期收口 | MS-2 | 中 | FR-9.1/9.4、IA-4.8/4.9 | 未开始 |
+| **MS-3** | 止损完备（两段式止损） | 一期收口 | MS-2 | 中 | FR-9.1/9.4、IA-4.8/4.9 | **已完成**（2026-09-24；两段式止损两轴（同类失败 2/3、连续拒绝 3）、守卫次序、`config_snapshot` 落地，见 §4.3 与 §2.3） |
 | **MS-4** | 检查点分档与提交健壮性 | 一期收口 | MS-1 | 中 | FR-1.3b/1.3c/1.11②、IA-11.8/11.10/11.11/11.13 | **已完成**（2026-09-23；结构判据三态、连败上限、时序/不可见性/意图兑现断言全部落地，见 §2.3） |
 | **MS-5** | 门禁落地（`check` 实现 ＋ 全链护栏） | 一期收口 | MS-4 | 大 | FR-5.2b~5.2i、IA-11.12 | 未开始 |
 | **MS-6** | 会话材料落盘 | M1.5 前置 | MS-4 | 中 | FR-12.2/12.2b/12.3、IA-6.1/6.1b/6.1c | **已完成**（2026-09-23；材料落盘、Recorder 接口一次加齐、交付 diff/patch 排除材料目录、随检查点 `add -f` 全部落地，见 §2.3） |
@@ -479,16 +478,19 @@
 
 #### MS-3 止损完备（两段式）
 
+**状态**：**已完成**——两段式止损两轴与守卫次序落地，`config_snapshot` 与起飞同时点发出。
+
 **目标**：把 FR-9.4 的两段式止损补上——达到阈值先换策略，超过上限才失败；并把「连续策略拒绝」纳入终止条件。
 
 **范围**
-- 业务止损（`hunt.Policy` 扩展）：`ObserveFailure`（连续同类失败达阈值 → 回灌「换策略」提示，不终止）、超上限 → 失败；`DeniedCount`（连续策略拒绝累积 → 失败）。
+- 业务止损（`hunt.Policy` 扩展）：`ObserveFailure`（连续同类失败达 2 次 → 回灌「换策略」提示，不终止）、超上限 3 次 → 失败；`DeniedCount`（连续策略拒绝达 3 次 → 失败）。
 - 与 harness 的分工写清：机制硬顶留在 `harness.Config`，业务止损在 `Policy`。
 - 新终止条件进使用手册 §7 的映射表。
 
 **独立验收的证据**
-- 单测：`TestObserveFailure_SwitchThenTerminate`、`TestDeniedCount_TerminatesAfterThreshold`。
-- e2e：`TestEndToEnd_DeniedStreakFailsTheRun`、`TestEndToEnd_RepeatedFailureSwitchesBeforeFailing`。
+- 单测（`internal/policy`）：`TestObserveFailure_SwitchThenTerminate`、`TestObserveFailure_ResetsOnSuccessAndKind`、`TestObserveFailure_KindScopedAndDenialIgnored`、`TestDeniedCount_TerminatesAfterThreshold`、`TestDeniedStreakLimitIsThree`、`TestSameKindLimitsAreTwoAndThree`、`TestDecide_DeniedStreakResetsOnAllow`、`TestFacts_CarriesStopLossLimits`。
+- 接线（`hunt`）：`TestExecuteCall_ObservesOutcomePerCall`、`TestOnTurn_SameKindStopLossOutranksBudget`、`TestOnTurn_DeniedStreakOutranksBudget`、`TestOnTurn_CommitStreakOutranksStopLoss`、`TestOnTurn_SwitchHintAppendedToNextTurnMessages`。
+- e2e（`cmd/xhunter`）：`TestEndToEnd_RepeatedFailureSwitchesBeforeFailing`、`TestEndToEnd_DeniedStreakFailsTheRun`、`TestPrepare_EmitsConfigSnapshot`。
 - IA-4.8 / IA-4.9 的「待接入」改成用例名。
 
 **依赖**：MS-2。**不做**：影响面阈值（已决：不做，见 §7）。
@@ -730,7 +732,7 @@
 | **信号组合** | SIGTERM 的进程级断言已落地（`TestEndToEnd_SigtermConvergesToCancelled`，AC-6）；SIGKILL / 中断时机的更多组合仍可补 |
 | **单步驱动（FR-1.9 形态 C）** | 明确不进一期 |
 | **多 agent 路线**（备忘录，未采纳） | V 层已定判据路线，多 agent 不作为补法；若将来要做，落点是**操作原语**（`harness` 不动），缺口清单（用量回流 / 事件嵌套标识 / 递归上限 / 工具面冲突）见 `docs/xhunter-memo-multi-agent-route.md`。其中**最硬的是第 7 条**：「子 agent 裁剪工具面」与已承诺的「工具面恒定」（AC-26）直接冲突，必须先解决该设计冲突再编码 |
-| **冻结前回收：panic 哨兵**（**冻结前置条件**） | 未冻结期以 `panic` 哨兵装配了尚未实现的装配扩展点（如 `Policy.ObserveFailure` / `DeniedCount`，见 §7.1 决策 18、架构 §8 例外）。**冻结前必须逐条回收**：把每个 panic 哨兵换成**显式失败或如实降级**，并补用例——"走到即炸"只允许存在于未冻结期 |
+| **冻结前回收：panic 哨兵**（**冻结前置条件**） | 未冻结期以 `panic` 哨兵装配了尚未实现的装配扩展点（见 §7.1 决策 18、架构 §8 例外）。**冻结前必须逐条回收**：把每个 panic 哨兵换成**显式失败或如实降级**，并补用例——"走到即炸"只允许存在于未冻结期。**进度**：`Policy.ObserveFailure` / `DeniedCount`（哨兵 5、6）已随 MS-3 回收为运行期如实判定；**尚余 5 处**：`ext/ext.go` 四处（`ExtHost` 的 `Capabilities` / `Locate` / `Fingerprint` / `Close`，待 MS-8）、`cmd/xhunter/material.go:132` 一处（会话恢复 `Load`，待 MS-7） |
 
 ---
 

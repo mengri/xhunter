@@ -164,7 +164,7 @@ xhunter version
 {"type":"check_result","gate":"unit-test","passed":true,"cached":false,"exit_code":0,"duration_ms":1234,"source":"repo","summary":"..."}
 {"type":"policy_denied","action":"...","reason":"..."}
 {"type":"gate_config_changed","source":"working_tree","gates":["..."]}   // 仅当 Bounty 授予 working_tree 时
-{"type":"config_snapshot","max_denied_streak":5,"max_fail_streak":3,"max_turns_hard":0}
+{"type":"config_snapshot","max_denied_streak":3,"max_same_kind_streak":3,"max_fail_streak":3,"max_turns_hard":1000}
 {"type":"usage","input_tokens":0,"output_tokens":0,"cached_input_tokens":0}   // 每轮末发**增量**（配对的是这一轮）
 {"type":"heartbeat","phase":"...","elapsed_ms":0}
 {"type":"context_compacted","level":"L2","released_tokens":0,"watermark":"warn"}
@@ -179,6 +179,8 @@ xhunter version
 > 第二条起为载荷示例，**省略公共字段**（信封四字段每行都有）。
 >
 > `call_id` 是调用与结果配对的唯一标识：一轮内可能出现同一原语的多次调用，外部消费者据此配对（IA-1.5）；`policy_denied` 与 `check_result` 同属 L5 后的时点，故这两类事件也应携带相应 `call_id` 以便回溯到具体调用。
+>
+> **`config_snapshot` 与起飞同时点发出**（紧随 `hunt_start`）：一次报出本次运行**实际生效的四个阈值**——`max_denied_streak`（连续策略拒绝阈值）与 `max_same_kind_streak`（连续同类失败上限）是**业务止损**阈值（来自策略自述），`max_fail_streak`（机制连续失败阈值）与 `max_turns_hard`（轮数硬顶，0 = 不限）是**机制硬顶**（来自循环实际生效的配置）。平台据此解释后续的机制性终止（如 `stop_loss_same_kind` / `stop_loss_denied`）。
 >
 > **实现状态**见 xhunter-status.md 状态索引 · usage§5·已发出事件；本节事件类型与字段的**契约**以本手册为准，哪些已发出以状态文档为准；`effective_config` 的完整语义以结果文件（§6）与 FR-11.6 为准。
 >
@@ -220,7 +222,7 @@ xhunter version
     "system_plugins": ["agentsmd","skills"],
     "user_plugins": ["task"],
     "filters": [],
-    "policy": {"default":"deny","write_protected":".xhunter","write_exception":".xhunter/skills.draft"},
+    "policy": {"default":"deny","write_protected":".xhunter","write_exception":".xhunter/skills.draft","max_denied_streak":3,"max_same_kind_streak":3},
     "budget": {"max_turns":0,"max_tokens":0,"max_wall_clock_ms":0},
     "checkpoint": "on_structure",
     "ext": [],
@@ -264,7 +266,9 @@ xhunter version
 | `required` 门禁未通过，或从未运行 | 0 | 对话正常走完，失败由**证据**给出：`status=failed`（FR-5.2d、FR-6.5），改动照常交付 |
 | 缺内容 → `status=blocked` / `reason=needs_input` | 0 | 需要补全的清单已产出、改动已交付；补齐条件后带同一 session 重投（见 §3 澄清回路） |
 | 轮数 / token / 墙钟耗尽 | 2 | 任务自身的预算问题，重跑同样会耗尽 |
-| 连续失败止损、策略连续拒绝累积 | 2 | 模型在撞不该撞的墙 |
+| 连续失败止损（**机制**：连续 3 轮工具失败） | 2 | 模型在撞不该撞的墙；机制侧不认原因，只在同一堵墙前反复撞时抽身 |
+| 连续同类失败超上限（`stop_loss_same_kind`） | 2 | 模型在同一**类**错误上反复撞墙（连续 3 次同类失败）；达 2 次先换策略（回灌「换一种做法」提示）、超上限即终止 |
+| 连续策略拒绝达阈值（`stop_loss_denied`） | 2 | 模型反复发起被策略拒绝的操作（连续 3 次）——业务止损在机制止损之前先判并胜出，平台读到的是「撞的是哪堵墙」 |
 | 上下文达硬上限 | 2 | 按预算耗尽处理 |
 | 轮数达机制硬顶 | 2 | 兜住编排缺陷导致的死循环 |
 | `OnTurn` 报错（引擎侧错误，如过滤器挂掉） | 2 | 重跑是同一结果 |

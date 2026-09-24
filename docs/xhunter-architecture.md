@@ -320,7 +320,7 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 |---|---|---|---|
 | 检查点决策（**本轮单一提交点**） | `Session.checkpoint` → `git.Commit` | FR-1.3c | 触发条件只有两条：**模型显式请求** 或 **落在结构完整点**；都不满足则不提交。**提交的是本轮已应用的改动**；单次失败不终止——下一轮累积重提 |
 | 结构检查 | `Session`（结构判据） | FR-1.3d | 只读定位判断"语法完整 / 区间封闭"，三态判定 |
-| 止损 | harness（`Config.MaxFailStreak`）＋ `Policy` | FR-9.4 | 连续失败达阈值即收敛（退出 2） |
+| 止损 | harness（`Config.MaxFailStreak`）＋ `Policy` | FR-9.4 | **机制硬顶**（连续失败轮数达 `Config.MaxFailStreak`）＋**业务两轴**（连续同类失败：达 2 次先换策略、超上限 3 次终止；连续拒绝：达 3 次终止）。守卫次序写死为「取消 → 通道 → 提交连败 → 止损 → 预算」——连败更根因（退出 1、可重跑）先于同为退出 2 的止损与预算；止损内部同类失败先于连续拒绝 |
 | 事件通道复查 | `OnTurn` 守卫 | FR-10.4 | → 环境错误（退出 1） |
 | 提交连败复查 | `OnTurn` 守卫 | FR-1.3b、FR-1.11② | 连续 3 次提交失败 → 本轮结束即收敛（退出 1），不跑完剩余轮次 |
 | 终止判定 | harness | FR-6、使用手册 §7 | 本轮无工具调用 → **模型正常完成对话**（`status` 由模型在最后答复里声明，默认 `succeeded`；退出码 0）；否则回 L2 |
@@ -411,8 +411,9 @@ Prepare ──► ┌──  infer ──► receive ──► OnTurn  ──┐
 | 取消（`ctx` 结束） | 取消 | 退出 3 |
 | panic | 环境错误 | 收敛为终态，不让进程带着半截状态崩掉 |
 | 预算耗尽（业务口径） | 失败 | 维度名由 `Policy.Exhausted` 给出（tokens / turns / wall_clock） |
-| 连续同类失败**达阈值** | 继续（**切换策略**） | FR-9.4 第一段：换策略而不终止（`Policy.ObserveFailure`） |
-| 策略连续拒绝累积 | 失败 | 模型在撞不该撞的墙（`DeniedCount`） |
+| 连续同类失败**达 2 次**（`MaxSameKindSwitch`） | 继续（**切换策略**） | FR-9.4 第一段：回灌「换一种做法」提示而不终止（`Policy.ObserveFailure`）；判据 `TestObserveFailure_SwitchThenTerminate`、`TestOnTurn_SwitchHintAppendedToNextTurnMessages` |
+| 连续同类失败**超上限 3 次**（`MaxSameKindStreak`） | 失败（退出 2） | FR-9.4 第二段：`stop_loss_same_kind`；判据 `TestSameKindLimitsAreTwoAndThree`、`TestOnTurn_SameKindStopLossOutranksBudget` |
+| 策略连续拒绝**达 3 次**（`MaxDeniedStreak`） | 失败（退出 2） | 模型在撞不该撞的墙：`stop_loss_denied`（`DeniedCount`）；判据 `TestDeniedStreakLimitIsThree`、`TestOnTurn_DeniedStreakOutranksBudget` |
 | 外部信号 | 取消 | SIGTERM / SIGINT |
 
 > 上述机制判定与止损各段的**实现状态**见 xhunter-status.md 状态索引 · H1 / IA-4.8 / IA-4.9。
@@ -1067,7 +1068,7 @@ Bounty(session) ──► H6.Session
 
 ### 12.4 H4 — `hunt.Policy`
 
-**契约**：`Decide(ctx, Call) (Decision, error)` / `Charge(llm.Usage)` / `Exhausted(TurnNo) (bool, string)` / `ObserveFailure(failKind string) (StopLoss, string)` / `DeniedCount() (int, bool)`（止损入口**已定义、实现待 MS-3**，见 xhunter-status.md 状态索引 · IA-4.8/4.9）。无人类场景下它是唯一顶替人的位置，默认拒绝。
+**契约**：`Decide(ctx, Call) (Decision, error)` / `Charge(llm.Usage)` / `Exhausted(TurnNo) (bool, string)` / `ObserveFailure(failKind string) (StopLoss, string)` / `DeniedCount() (int, bool)`（止损两段式**已落地**：同类失败阈值 2／上限 3、连续拒绝阈值 3）。无人类场景下它是唯一顶替人的位置，默认拒绝。
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|
@@ -1079,8 +1080,8 @@ Bounty(session) ──► H6.Session
 | IA-4.6 | 路径边界：绝对路径 / `..` 逃逸 / `.xhunter/**` 拒绝，`skills.draft/**` 放行 | `TestDecide_PathEscapeDenied`、`TestDecide_WriteToControlDirDenied`、`TestDecide_WriteToSkillsDraftAllowed` |
 | IA-4.7 | 三重预算独立判定，耗尽给出维度名；0 = 不限 | `TestChargeAndExhausted_Tokens`、`TestExhausted_Turns`、`TestExhausted_WallClock`、`TestExhausted_ZeroMeansUnlimited` |
 | IA-4.7b | **预算真的从投递走到止损**：环境变量 → Bounty → 策略 → 轮末守卫 → `budget_exhausted:<维度>`（FR-9、AC-5）；写错的取值在启动期失败 | `TestBountyFromEnv_DeliversBudget`、`TestEndToEnd_BudgetExhaustionStopsTheRun`（cmd） |
-| IA-4.8 | 连续拒绝达阈值 → 终止（防止模型反复撞墙） | （实现状态见 xhunter-status.md 状态索引 · IA-4.8） |
-| IA-4.9 | 止损三态：continue / switch / terminate，阈值与上限分离 | （实现状态见 xhunter-status.md 状态索引 · IA-4.9） |
+| IA-4.8 | 连续拒绝达阈值（3 次）→ 终止（防止模型反复撞墙） | `TestDeniedStreakLimitIsThree`、`TestDeniedCount_TerminatesAfterThreshold`、`TestDecide_DeniedStreakResetsOnAllow`（policy）、`TestOnTurn_DeniedStreakOutranksBudget`（hunt）、`TestEndToEnd_DeniedStreakFailsTheRun`（cmd） |
+| IA-4.9 | 止损三态：continue / switch / terminate，阈值（2）与上限（3）分离 | `TestObserveFailure_SwitchThenTerminate`、`TestSameKindLimitsAreTwoAndThree`、`TestObserveFailure_ResetsOnSuccessAndKind`（policy）、`TestOnTurn_SameKindStopLossOutranksBudget`、`TestExecuteCall_ObservesOutcomePerCall`（hunt） |
 | IA-4.10 | 用量按**增量**转交：累计值不得被反复当作增量上报（执行体自记水位） | （实现状态见 xhunter-status.md 状态索引 · IA-4.10） |
 
 ### 12.5 H5 — `hunt.EventSink`
