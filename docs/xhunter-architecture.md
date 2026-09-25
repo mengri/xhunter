@@ -280,7 +280,7 @@ Xhunter 的契约边界：**进程内只认 running→terminal**；created/queue
 | 事件通道健康 | 组装层 sink（首次失败记录）＋ `OnTurn` 守卫 | FR-10.4 | writeErr → 环境错误（退出 1，AC-19） |
 | 预算判定 | `OnTurn` → `Policy.Exhausted(turn)` | FR-9.2 | 耗尽 → **被引擎中止**（退出 2，含维度） |
 | 消息组装 | `OnTurn` 末尾 `Context.Assemble()` → `run.Messages`（首轮由 `Prepare` 给） | FR-7.1/7.6 | 提示词取 `Prepare` 冻结的那一份，历史来自 `ContextBuilder` |
-| 压缩 | `ContextBuilder` 内 | FR-14.1 | 三档水位 ＋ 冷却；硬上限 → 错误 |
+| 压缩 | `ContextBuilder` 内 | FR-14.1 | 三档水位 ＋ 冷却；撞硬上限同样一路压到目标水位、只把 `watermark` 记 `hard`；**压完仍不低于它**才终止（`budget_exhausted:context`，退出 2、不重派）——判据问的是压完之后的水位，不是压之前（见 xhunter-status.md §7.1 决策 25） |
 
 #### L3 请求发送（每轮，harness）
 
@@ -430,7 +430,7 @@ Prepare ──► ┌──  infer ──► receive ──► OnTurn  ──┐
 
 **契约（`hunt/runtime.go`）**：`SetPrompt(msgs)`（`Prepare` 调一次，此后不变）／`Assemble()`（给出「提示词 ＋ 历史」）／`Append(rec harness.Turn)`（累积本轮产生的消息）。**历史只住在这里**——轮级状态只装「本轮那段」，handler 物理上碰不到历史。
 
-**压缩位**（FR-14、MS-11）：压缩落在 `ContextBuilder` **内部**（触发点在 `Assemble`）；`CompactionConfig`（三档水位 ＋ 冷却）是它的**装配参数**——水位由 `providerconfig.Resolved.Watermarks` 从**可用输入预算**算出（FR-14.1），冷却默认 3 轮；命中即下压一级并产出 `context_compacted`。**分层下压的实现待 MS-11**，本次只定义入口与形状。
+**压缩位**（FR-14、MS-11）：压缩落在 `ContextBuilder` **内部**（触发点在 `Assemble`）；`CompactionConfig`（三档水位 ＋ 冷却）是它的**装配参数**——水位由 `providerconfig.Resolved.Watermarks` 从**可用输入预算**算出（FR-14.1），冷却默认 3 轮；命中即按 **L0→L3** 分层下压、够用即停，每层产出一条 `context_compacted`（`level`/`released_tokens`/`watermark`）。**L4（模型摘要）不实现**：它默认不启用（FR-14.4 确定性优先），而「生成一次即落盘、恢复时读回」要动会话材料与恢复两条链路——不做半个版本。实现状态见 xhunter-status.md 状态索引 · `L2-压缩`。
 
 ```
 system ─┬─ 插件正文       约定与 skill 清单 · 角色与风格        ← 稳定，可长期复用
@@ -479,7 +479,7 @@ user  ─┬─ 内核注入        环境事实（cwd / git / shell）· 门禁
 
 **"写操作记录永不丢"是硬要求**：它是"只碰必要字节"与交付物可解释性的基础。注意分工：**事实类**（哪些门禁没跑、哪些调用失败过）能从它推出；**判断类**（模型做了哪些保守默认、缺哪些条件）只能由模型自陈——两者不可互相替代。
 
-**结构化工作日志是投影，不是总结**：字段固定为「任务与验收标准 / 已完成改动 / 已确认事实 / 失败尝试与原因 / 未决问题与假设」，由 H6 的 session 记录**投影**得出——零模型调用、内容与顺序可复现、可脱离模型单测（NFR-8）。L4 若启用，摘要文本同样"生成一次即落盘、恢复时读回"。
+**结构化工作日志是投影，不是总结**：由 H6 的 session 记录**投影**得出——零模型调用、内容与顺序可复现、可脱离模型单测（NFR-8）。字段固定为「已完成改动 / 失败尝试与原因 / 未决问题与假设」，外加折叠范围的调用与结果统计；**任务与验收标准不进日志**——它一直在首轮提示词里、而提示词永不裁剪，抄进日志只是给同一份事实开第二个来源；**「已确认事实」不单列**——能从记录推出的正面事实目前没有稳定的投影来源（门禁结论归 `gates`、改动归「已完成改动」），不为凑齐字段编一段。L4 若启用，摘要文本同样"生成一次即落盘、恢复时读回"。
 
 **交付物不依赖上下文（FR-14.6）**：patch、`files_changed`、`gates` 全部由执行体从 session 记录生成——模型压缩后"忘记"改过什么，不影响交付物完整性。而 `assumptions` / `needs` 是**模型的判断**，只能自陈，因此**在模型说出的当轮就登记进材料**（不靠收尾从上下文里捞），压缩因此丢不掉它们。
 
@@ -1020,7 +1020,7 @@ Bounty(session) ──► H6.Session
 
 ### 12.2 H2 — `hunt.ContextBuilder`
 
-**契约**（`hunt/runtime.go`）：`SetPrompt(msgs []llm.Message)` / `Assemble() []llm.Message` / `Append(rec harness.Turn)`。压缩与恢复所需的 `Compact` / `Restore` / `TokenCount`（实现状态见 xhunter-status.md 状态索引 · H2）。
+**契约**（`hunt/runtime.go`）：`SetPrompt(msgs []llm.Message)` / `Assemble() []llm.Message` / `Append(rec harness.Turn)`。压缩**不进这个契约**：三档水位与冷却是装配参数（`hunt.CompactionConfig`），压缩结论经**可选**上报面 `CompactionReporter.TakeCompactions()` 取走——未实现即「本次没有压缩」，不另加契约方法；恢复回灌与正常运行共用同一条压缩管线（FR-14.8，实现状态见 xhunter-status.md 状态索引 · H2）。
 
 | 编号 | 验收项 | 判定方式 |
 |---|---|---|

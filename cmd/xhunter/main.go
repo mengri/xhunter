@@ -180,11 +180,31 @@ func executeHunt(bounty hunt.Bounty, opts runOptions) int {
 		hcfg.StreamIdleTimeout = idle
 	}
 
+	// 压缩的三档水位：与可用输入预算**同源**（装配层按 `providerconfig` 算出，契约只收绝对阈值）。
+	// 固定开销按 0 计——提示词与工具 schema 会占掉一部分预算，当它们是 0 会让水位偏松，而偏松的
+	// 方向是"晚压一点"，不是"压坏"；真撞墙时由硬上限档兜住（FR-14.1）。
+	// 预算非正即启动期失败（与缺模型接入同一出口）：窗口装不下一轮推理这件事不该留到运行期。
+	warnAt, targetAt, hardAt, err := resolved.Watermarks(0,
+		compactionWarnRatio, compactionTargetRatio, compactionHardRatio)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v（任务与仓库事实已就绪，缺的是可用输入预算）\n", err)
+		return exitEnv
+	}
+
 	// 业务执行体：向循环提供三组 handler，同时是原语看到的 Facts。上下文、会话材料与
 	// 事件出口都由它自己持有——循环不认识这些东西。
 	// 门禁的两端共用同一份执行器：模型主动调用与收尾补跑跑的是同一条命令、同一份判据。
 	gateRunner := gate.NewRunner()
 	gitBackend := defaultGit()
+	recorder := &sessionRecorder{bounty: bounty}
+	// 上下文组装器：压缩的三档水位与冷却在这里交给它；写操作序列也给它——折叠工作日志的
+	// 「已完成改动」一节是**投影**（不是总结），只能来自会话记录那一份事实。
+	ctxb := &contextBuilder{
+		cfg: hunt.CompactionConfig{
+			WarnAt: warnAt, TargetAt: targetAt, HardAt: hardAt, Cooldown: compactionCooldown,
+		},
+		opsSrc: recorder.Ops,
+	}
 	session := hunt.NewSession(hunt.Config{
 		Bounty: bounty,
 		// 原语面与结构判据**共用同一个宿主**：符号能力只有一份事实，各造一份会在换成
@@ -199,8 +219,8 @@ func executeHunt(bounty hunt.Bounty, opts runOptions) int {
 		// 门禁清单从基线 commit 读（判据必须在运行开始前定死）。
 		Gates:         gates.New(gitBackend, ""),
 		GateRunner:    gateRunner,
-		Context:       &contextBuilder{},
-		Session:       &sessionRecorder{bounty: bounty},
+		Context:       ctxb,
+		Session:       recorder,
 		Sink:          sink,
 		SystemPlugins: defaultSystemPlugins,
 		UserPlugins:   defaultUserPlugins,

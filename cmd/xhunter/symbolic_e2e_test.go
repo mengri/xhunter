@@ -16,6 +16,12 @@ import (
 // 串起来是否仍然成立是另一件事。
 
 func runSymbolicHunt(t *testing.T, files map[string]string, scripts []string) (int, map[string]any, string, string) {
+	return runSymbolicHuntEnv(t, files, scripts, nil)
+}
+
+// runSymbolicHuntEnv 同上，但允许在装配前**追加/覆盖**部署环境变量——
+// 制造"窗口很小"这类场景只能从部署事实入手（例如把上下文调到 6000 以触发压缩）。
+func runSymbolicHuntEnv(t *testing.T, files map[string]string, scripts []string, env map[string]string) (int, map[string]any, string, string) {
 	t.Helper()
 	requireGitForE2E(t)
 	fx := newRepoFixtureWith(t, files)
@@ -49,6 +55,9 @@ func runSymbolicHunt(t *testing.T, files map[string]string, scripts []string) (i
 
 	taskPath := writeRunInputs(t, tmp, "把 Alpha 的返回值改成 new\n验收：symbol_edit 的改动出现在交付提交里")
 	setRunEnv(t, fx, srv.URL+"/v1")
+	for k, v := range env {
+		t.Setenv(k, v)
+	}
 	resultPath := filepath.Join(tmp, "out", "result.json")
 
 	stdout, stderr := swapStdStreams(t)

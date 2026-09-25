@@ -42,6 +42,7 @@
 | 结果文件 | `--result` 无论成败都写；含终态/退出码/仓库事实/提交/改动清单/用量/error | `cmd/xhunter/result.go`（IA-12.9） |
 | 模型声明终态（`needs` / `assumptions`） | `hunt/declare.go`（解析固定小节）＋ `Session.OnTurn`（轮边界登记）＋ `Session.Finalize`（收尾收敛为 `blocked`）；事件 `needs_input` / `assumption`；结果文件 `needs` / `assumptions` | `hunt/declare_test.go`（IA-1.13）、`cmd/xhunter/result_test.go` |
 | 会话恢复（resume） | `hunt/hooks.go`（`Prepare` 纯读回灌 ＋ 新条件追加）＋ `cmd/xhunter/material.go`（`Load`）＋ `hunt/session.go`（`SessionDelta`） | `TestEndToEnd_ResumeContinuesFromLastCheckpoint`、`TestLoad_ReadsTurnsOpsAndUsageInOrder`、`TestPrepare_ResumeSeedsContextWithoutExecutingTools` |
+| 上下文压缩 | 压缩落在 `cmd/xhunter/context.go` 的 `Assemble` 内（三档水位 ＋ 冷却、L0→L3 按序下压、当前轮永不压）；水位由装配层用 `providerconfig.Resolved.Watermarks` 从可用输入预算算出；结论经 `hunt.Compaction` ＋ 可选上报面 `CompactionReporter` 搬到事件出口 | `TestCompaction_*`（`cmd/xhunter` 15 条）、`TestCompaction_*`／`TestDeliverables_DoNotDependOnContext`（`hunt` 4 条）、`TestEndToEnd_OverWindowCompactsAndStillConverges` |
 
 ### 1.2 声明齐备、调用返回 `not_implemented`
 
@@ -61,7 +62,7 @@
 | 缺口 | 现状证据 |
 |---|---|
 | 恢复的轮数 / 预算口径 | `Load` 读回的轮数按**记录条数**算、不取 `turn.no` 最大值（恢复后本趟轮号从 1 **重新起计**，材料里会出现两段都从 1 开始的 `turn` 记录）；**轮数预算不跨恢复续算**（本次轮号重新起计，无累计口径）；token 预算已续算（`Prepare` 补喂 `Restored.Usage` 的输入/输出）。见 §4.3 MS-7 |
-| 上下文压缩 | `contextBuilder` 只有组装（`Assemble`），无水位、无下压 |
+| 上下文压缩 | 已落地（MS-11）：三档水位 ＋ 冷却、分层下压 L0→L3、`context_compacted` 事件、投影式工作日志（零模型调用）。**余**：L4 模型摘要（FR-14.5，默认不启用；且「生成一次即落盘、恢复时读回」要动材料与恢复两条链路） |
 | 门禁全链 | 已落地：`Prepare` 做来源裁决（下发 > 基线 `gates.yml` > 无），`check` 跑具名条目、按清单判据判定；收尾补跑 + 终态裁决 + 检查点抑制均已接线（`hunt/hooks.go`、`hunt/gates.go`） |
 | 符号能力与扩展宿主 | `ext/syntax`（内置语法级后端，进程内、零外部依赖）已实现 `ext.ExtHost`；`hunt/symbolic` 三原语已注册。**待补**：第三方后端的外挂通道（MCP over stdio） |
 | 结构检查（自动检查点的判据） | 已落地：`Session.judgeStructural` 接真判据（① `Parse` 语法完整 ＋ ② `Enclose` 区间封闭，三态收敛）；判不了 → 不提交 ＋ 如实上报（`degraded`，`scope: checkpoint`，每次运行最多一条） |
@@ -108,14 +109,14 @@
 | <a id="fr-12-1"></a>FR-12.1（会话恢复 resume） | 已落地 | MS-7 | `Prepare` 读回材料（**纯读、先于 `Open`**）→ 回灌上下文 → 从下一轮继续；全程**零工具执行、零模型调用、不重放写操作**（工作区已由分支 tip 给出）。用例 `TestEndToEnd_ResumeContinuesFromLastCheckpoint`、`TestPrepare_ResumeSeedsContextWithoutExecutingTools`、`TestPrepare_ResumeAppendsNewConditionsAfterRestoredHistory`、`TestPrepare_FreshSessionWithoutMaterialIsNotResumed` |
 | <a id="fr-12-2"></a>FR-12.2/12.2b/12.2c/12.3（会话材料） | 已落地 | MS-6 / MS-7 | 材料已落盘（`.xhunter/<session_id>/session.jsonl`，meta 带 `schema_version`、按任务隔离、追加写）；**读回**随 MS-7 落地（`Load` 纯读、先于 `Open`；turn/op/usage 三类按行序解析、usage 按记录累加）。用例 `TestLoad_ReadsTurnsOpsAndUsageInOrder`、`TestLoad_MissingMaterialIsZeroValueNotAnError`、`TestLoad_UnknownRecordTypeIsAnError`、`TestSave_MaterialLandsUnderSessionDirWithSchemaVersion` |
 | <a id="fr-13-1"></a>FR-13.1~13.9（扩展接入） | 部分具备 | MS-8 | **已落地**：内置语法级后端（`ext/syntax`，进程内、零外部依赖、首发 Go）实现 `ext.ExtHost`，能力描述符、精度与指纹如实上报；后端不可用时符号原语返回结构化错误、工具名不撤回。**待补**：第三方后端的**外挂通道**（MCP over stdio 子进程，含懒启动/崩溃隔离/超时/回收）与其假扩展夹具用例 |
-| <a id="fr-14-1"></a>FR-14.1~14.8（上下文压缩） | 待接入 | MS-11 | `ContextBuilder` 只有组装 |
+| <a id="fr-14-1"></a>FR-14.1~14.8（上下文压缩） | 部分已落地 | MS-11 | 14.1/14.2/14.3/14.4/14.6/14.7/14.8 已落地：三档水位（预警 70% / 目标 50% / 硬上限 90%，基数＝**可用输入预算**，由 `providerconfig.Resolved.Watermarks` 算出）＋ 冷却 3 轮；`Assemble` 内按 **L0→L3** 分层下压、够用即停；**当前轮永不压**；永不丢清单（Bounty 正文／当前轮／写操作记录）；工作日志由会话记录**投影**（零模型调用）；`context_compacted` 事件带 `level`/`released_tokens`/`watermark`；交付物不依赖上下文；恢复回灌走同一管线。**压完仍不低于硬上限才终止**——按预算耗尽处理（`budget_exhausted:context`，退出 2、不重派，usage§7「上下文达硬上限」）：撞硬上限本身不判错，照样一路压到目标、只把 `watermark` 记 `hard`。用例 `TestWatermark_TriggersAtWarnAndCoolsDown`、`TestCompaction_LayersDownToFit`、`TestCompaction_PressesThroughAllLayersWhenTargetIsUnreachable`、`TestCompaction_ReleasedTokensIsAMeasuredDelta`、`TestCompaction_ProjectionIsReproducible`、`TestCompaction_NeverDropsBountyOrWriteOps`、`TestCompaction_HardWatermarkIsReported`、`TestCompaction_WarnWatermarkBelowHard`、`TestCompaction_L0KeepsBothEndsAndMarksTheDrop`、`TestCompaction_L2KeepsAddressability`、`TestCompaction_FoldPreservesDeclaredSections`、`TestCompaction_NoWatermarksMeansNoCompaction`、`TestCompaction_CurrentTurnIsNeverCompacted`、`TestCompaction_NothingToCompactDoesNotArmCooldown`、`TestCompaction_HardLimitIsJudgedAfterPressing`、`TestCompaction_ResumeUsesTheSamePipeline`、`TestEndToEnd_OverWindowCompactsAndStillConverges`、`TestEndToEnd_HardWatermarkStopsTheRun`（`cmd/xhunter`）、`TestCompaction_EventCarriesLevelAndReleasedTokens`、`TestCompaction_NoReporterMeansNoEvent`、`TestCompaction_EmittedOnTurnBoundary`、`TestCompaction_OverHardLimitStopsTheRun`、`TestDeliverables_DoNotDependOnContext`（`hunt`）。**FR-14.5（L4 模型摘要）待补**：它默认不启用（FR-14.4 确定性优先），且「生成一次即落盘、恢复时读回」要动材料与恢复两条链路，缺了它就不许声称做了 L4 |
 | <a id="fr-15-2"></a>FR-15.2/15.5/15.6（skill 清单注入与解析容错） | 已落地 | — | `prompt/skills`；正文按需读取（FR-15.3） |
 | <a id="ac-6"></a>AC-6（SIGTERM 取消） | 已落地 | — | 进程级断言 `TestEndToEnd_SigtermConvergesToCancelled`；其余信号形态待补（见 §5） |
 | <a id="ac-7"></a>AC-7（崩溃重派 resume） | 已落地 | MS-7 | 投递同一 `XHUNTER_SESSION_ID` → checkout 分支 tip（最后检查点）＋ 读回材料 ＋ 从下一轮继续（不重做已完成轮次）；恢复失败（版本不兼容 / 坏材料）退出 1。用例 `TestEndToEnd_ResumeContinuesFromLastCheckpoint`、`TestEndToEnd_ResumeCorruptedMaterialIsEnvError`、`TestEndToEnd_ResumeAfterClarificationAppliesNewConditions`、`TestEndToEnd_FreshSessionWithoutMaterialIsNotAnError` |
 | <a id="ac-8"></a>AC-8（凭据不落事件/日志/patch/材料） | 待补 | §5 | 需 CI 级静态扫描，非单测能覆盖 |
 | <a id="ac-9"></a>AC-9（stdout 全为合法事件行） | 已落地 | MS-2 | 逐行合法 JSON ＋ 信封四字段（`ts` 为 RFC3339），无杂质。用例 `TestEventSink_StdoutIsPureNDJSON`、`TestHuntCmd_EventsGoToStdoutAndLogsGoToStderr` |
-| <a id="ac-17"></a>AC-17（压缩保真） | 待接入 | MS-11 | 压缩未接入；**契约已定义**（D4：`CompactionConfig` ＋ 压缩位在 `ContextBuilder` 内），实现待 MS-11 |
-| <a id="ac-18"></a>AC-18（压缩可观测可复现） | 待接入 | MS-11 | 同上；**契约已定义**（D4：`context_compacted` 载荷 `level`/`released_tokens`/`watermark`），实现待 MS-11 |
+| <a id="ac-17"></a>AC-17（压缩保真） | 已落地 | MS-11 | 永不丢（Bounty 正文与验收标准、当前轮 messages、写操作记录）由 `TestCompaction_NeverDropsBountyOrWriteOps` 钉住；结果文件不因压缩缺失任何已发生的改动由 `TestDeliverables_DoNotDependOnContext` 钉住（FR-14.6） |
+| <a id="ac-18"></a>AC-18（压缩可观测可复现） | 已落地 | MS-11 | `context_compacted` 事件带 `level`/`released_tokens`/`watermark`（`TestCompaction_EventCarriesLevelAndReleasedTokens`、`TestCompaction_HardWatermarkIsReported`、`TestCompaction_WarnWatermarkBelowHard`）；同一份记录两次投影逐字一致（`TestCompaction_ProjectionIsReproducible`） |
 | <a id="ac-20"></a>AC-20（交付形态 / fast-forward） | 已落地 | — | `TestEndToEnd_LocalRunProducesDeliveryCommit`；`find`/edit 相关注脚见 §2.3 |
 | <a id="ac-22"></a>AC-22（检查点自愈与止损） | 已落地 | MS-4 | 自愈（单次失败不中止、下一轮累积重提）＋ 连败上限（连续 3 次 → 退出 1）。用例 `TestCheckpoint_SingleFailureSelfHeals`、`TestCheckpoint_StreakLimitConvergesAsEnvError` |
 | <a id="ac-26"></a>AC-26（工具面恒定） | 已落地 | — | 规则已落地并有用例（`TestDefaultTools_FaceIsFixed`、`TestDefaultTools_FaceIsIdenticalWhetherTheBackendIsAvailable` 等）；**环境能力不决定注册、同一构建内工具名与 schema 不增减**；符号三原语一期**不注册**、随 MS-8 接入，`check` 一期注册、返回 `not_implemented` |
@@ -145,10 +146,10 @@
 | <a id="ia-2-2"></a>IA-2.2 | 已落地 | `TestContextBuilder_AssemblesPromptThenHistory` | — | — |
 | <a id="ia-2-3"></a>IA-2.3 | 已落地 | `TestOnTurn_FiltersRunBeforeRecording` | — | — |
 | <a id="ia-2-4"></a>IA-2.4 | 已落地 | 同 `TestOnTurn_FiltersRunBeforeRecording`（值拷贝断言之一） | — | — |
-| <a id="ia-2-5"></a>IA-2.5 | 待接入 | — | MS-11 | 压缩未接入，当前轮 messages 与 Bounty 正文永不裁剪待断言（AC-17）；**契约已定义**（D4：`CompactionConfig`），实现待 MS-11 |
-| <a id="ia-2-6"></a>IA-2.6 | 待接入 | — | MS-11 | 水位线触发压缩（FR-14.1）；**契约已定义**（D4：水位来自 `providerconfig.Resolved.Watermarks` ＋ `CompactionConfig`），实现待 MS-11 |
-| <a id="ia-2-7"></a>IA-2.7 | 待接入 | — | MS-11 | 分层下压 L0→L4（FR-14.2、FR-14.4）；**契约已定义**（D4：`context_compacted` 载荷形状），实现待 MS-11 |
-| <a id="ia-2-8"></a>IA-2.8 | 待接入 | — | MS-11 | 投影可复现（AC-18）；**契约已定义**（D4），实现待 MS-11 |
+| <a id="ia-2-5"></a>IA-2.5 | 已落地 | `TestCompaction_NeverDropsBountyOrWriteOps`、`TestCompaction_CurrentTurnIsNeverCompacted` | MS-11 | 当前轮与 Bounty 正文永不裁剪（首轮提示词不在下压范围内） |
+| <a id="ia-2-6"></a>IA-2.6 | 已落地 | `TestWatermark_TriggersAtWarnAndCoolsDown`、`TestCompaction_NoWatermarksMeansNoCompaction`、`TestCompaction_NothingToCompactDoesNotArmCooldown` | MS-11 | 低于预警不压、达预警才压、冷却期内不重复压；**一层都没压动时不上冷却**（只有当前轮时无从压，冷却若在那时上膛，冷却若在「压不动」时就上膛，下一轮第一个可压的老轮会被自己的冷却挡住（该压的时候压不动）；硬上限在**压完之后**才问——压得下来就不终止，哪怕压之前确实站在它之上 |
+| <a id="ia-2-7"></a>IA-2.7 | 部分已落地 | `TestCompaction_LayersDownToFit`、`TestCompaction_PressesThroughAllLayersWhenTargetIsUnreachable`、`TestCompaction_L0KeepsBothEndsAndMarksTheDrop`、`TestCompaction_L2KeepsAddressability`、`TestCompaction_FoldPreservesDeclaredSections` | MS-11 | L0→L3 按序下压、够用即停、零模型调用；**L4（模型摘要）不实现**——它默认不启用（FR-14.4），且「生成一次即落盘」要动材料与恢复链路，不做半个版本 |
+| <a id="ia-2-8"></a>IA-2.8 | 已落地 | `TestCompaction_ProjectionIsReproducible`、`TestCompaction_ResumeUsesTheSamePipeline` | MS-11 | 同一份记录两次投影逐字一致；恢复回灌与正常运行时投影一致（FR-14.8） |
 | <a id="ia-2-9"></a>IA-2.9 | 已落地 | `TestInputBudget`、`TestWatermarks` | — | — |
 | <a id="ia-2-10"></a>IA-2.10 | 已落地 | `TestBuild_InjectsRootConventions`、`TestBuild_CaseVariantIsNotRecognized`、`TestBuild_BlankContentIsTreatedAsAbsent`、`TestBuild_OversizeTruncatesWithNotice`、`TestBuild_WithoutBaseCommitFallsBackToWorktree` | — | 嵌套约定附注待排期（见 §5） |
 | <a id="ia-2-11b"></a>IA-2.11(b) skill 发现清单 | 已落地 | `TestBuild_ListsNameDescriptionAndPath`、`TestBuild_InvalidEntryIsSkippedWithNotice`、`TestBuild_NameMustMatchDirectory`、`TestBuild_IgnoresSkillFilesOutsideDirectory`、`TestBuild_TruncatesBeyondLimit`、`TestBuild_NoSkillsYieldsEmptyPart`、`TestParseFrontmatter`、`TestParseFrontmatter_LengthLimitsComeFromSpec` | — | 编号重复，限定词 = skill 发现清单 |
@@ -278,7 +279,7 @@
 | <a id="l1-8"></a>L1-8 会话恢复（条件） | 已落地 | MS-7 | `XHUNTER_SESSION_ID` 非空时：`Prepare` 在 `openRecorder` 之前**纯读**回材料（`Load(root)`）→ 回灌上下文 → 从下一轮继续；材料不存在 → 零值（不算恢复），存在但读不出来 → 环境错误（退出 1）。用例 `TestPrepare_ResumeSeedsContextWithoutExecutingTools`、`TestEndToEnd_ResumeCorruptedMaterialIsEnvError` |
 | <a id="l1-9"></a>L1-9 生效配置快照 | 已落地 | MS-2 | 装配完成后冻结一次，进 `hunt_start` 与结果文件 `effective_config`（含原语顺序与殿后 `checkpoint`）；门禁清单随 MS-5。证据 `TestEffectiveConfig_ListsPrimitivesInToolFaceOrder`、`TestPrepare_EmitsHuntStart` |
 | <a id="l2-事件通道"></a>L2-事件通道健康 | 已落地 | MS-2 | `OnTurn` 入口复查 `Sink.Failed()`：通道已断则本轮零工具执行，收敛 `event_channel_failed`（退出 1）。用例 `TestOnTurn_StopsBeforeWorkWhenChannelAlreadyFailed` |
-| <a id="l2-压缩"></a>L2-压缩 | 待接入 | MS-11 | `ContextBuilder` 内无压缩；**契约已定义**（D4：`CompactionConfig` ＋ `context_compacted` 载荷），实现待 MS-11 |
+| <a id="l2-压缩"></a>L2-压缩 | 部分已落地 | MS-11 | 压缩已落在 `ContextBuilder`（`cmd/xhunter/context.go`）内：水位 ＋ 分层下压 ＋ `context_compacted`；**余 L4 模型摘要**（FR-14.5） |
 | <a id="l4-流看门狗"></a>L4-流看门狗 | 已落地 | MS-12 | 接收段不活动超时随 MS-12 接入：相邻两事件之间（含首事件之前）静默超上界 → **先落终态、再 `Cancel()`**，收敛为 `stream_idle_timeout`（环境错误，退出 1）；心跳不算活动、取消优先于超时、超时结构上不落 `no_tool_call`。取值口径：`StreamIdleTimeout` **0 = 取默认 120s / 正数 = 不活动上界 / 负数 = 关闭看门狗**（关闭不暴露给部署侧）。用例 `TestWatchdog_IdleStreamCancelsAsEnvError`、`TestWatchdog_TimeoutCannotBeNoToolCall`、`TestWatchdog_CancelOutranksTimeout`、`TestEndToEnd_IdleStreamConvergesToEnvError` |
 | <a id="l6-检查点"></a>L6-检查点决策 | 已落地 | MS-4 / MS-5 / MS-9 | 模型显式请求 ＋ 门禁驱动（MS-5）＋ 结构判据（MS-9）＋ 收尾交付提交，四条触发链已补全 |
 | <a id="l6-结构检查"></a>L6-结构检查 | 已落地 | MS-9 | 判据已接入（`judgeStructural`）：① 此刻语法完整 ② 改动封闭在符号内；三态收敛，判不了即不提交并如实上报。用例 `TestStructural_*`（8 条）、`TestHost_Parse*` / `TestHost_Enclose*`（`ext/syntax`）、`TestEndToEnd_CheckpointLandsOnCompleteSyntax` |
@@ -291,12 +292,12 @@
 | 编号 | 状态 | 说明 |
 |---|---|---|
 | <a id="h1-loop"></a>H1 Loop | 已落地 | 全部 IA-1.x |
-| <a id="h2-context"></a>H2 Context | 组装已落地 / 压缩待接入 | 见 IA-2.x；压缩属 MS-11 |
-| <a id="h3-tools"></a>H3 Tools | 基础＋流水线已落地 / 符号与门禁待接入 | 见 IA-3.x；符号属 MS-8/MS-10，门禁属 MS-5 |
+| <a id="h2-context"></a>H2 Context | 已落地（组装 ＋ 压缩） | 见 IA-2.x；压缩随 MS-11 落地（L4 除外） |
+| <a id="h3-tools"></a>H3 Tools | 已落地 | 见 IA-3.x；基础＋流水线（MS-1）、符号（MS-8 / MS-10）、门禁（MS-5）均已落地 |
 | <a id="h4-policy"></a>H4 Policy | 见 H4-裁决点 | 见上 |
 | <a id="h5-stream"></a>H5 Stream | 出口/信封 ＋ 心跳已落地 / 落盘待接入 | 心跳已接入（MS-2）；session 落盘 MS-6 |
 | <a id="h6-session"></a>H6 Session | 已落地 | 材料落盘（MS-6）与恢复（MS-7）均已落地：`Load(root)` 纯读回灌、`SessionDelta` 随交付事实定型 |
-| <a id="h7-ext"></a>H7 Ext | 待接入 | `ext.ExtHost` 无实现（MS-8） |
+| <a id="h7-ext"></a>H7 Ext | 部分具备 | 内置语法级后端 `ext/syntax` 已实现 `ext.ExtHost`（MS-8）；**余**：第三方后端的外挂通道（MCP over stdio） |
 
 **使用手册（usage）外部契约的状态键**：
 
@@ -345,7 +346,8 @@
 | ~~一期移除符号操作（工具面口径变更）~~ | **已随 MS-8 反转**（2026-09-24）：装配层把 `symbol_read` / `symbol_edit` / `symbol_rename` 接回工具面（符号后端已接入）（**一期不注册**，模型看不到；`hunt/symbolic` 实现保留，随 MS-8 恢复注册）；工具面定格为 **6 + 1**（`read`/`write`/`edit`/`find`/`glob`/`check` ＋ 殿后 `checkpoint`；`check` 一期注册但返回 `not_implemented`，是刻意的不对称）。**「工具面恒定」由双轴改单轴**——环境能力不决定注册、同一构建内不增减，**随能力接入而扩展**；代价如实记：跨构建版本工具名集合会变，「前缀与 schema 稳定（缓存友好）」只在同一构建内成立。用例 `TestDefaultTools_FaceIsFixed`、`TestDefaultTools_FaceIsIdenticalWhetherTheBackendIsAvailable` |
 | ~~流看门狗（FR-1.11① / L4-流看门狗）~~（MS-12） | **已落地**（2026-09-24）：`harness` 接收段用 `select` + `time.Timer` 落看门狗——相邻两事件之间（含首事件之前）静默超 `StreamIdleTimeout` 即收敛。默认值唯一来源 `defaultStreamIdleTimeout`（120s）；**0 = 取默认、负数 = 关闭看门狗、正数 = 上界**。**超时先落终态、再 `sess.Cancel()`**：返回时 `run.Terminal != nil`，结构上不可能落进 `no_tool_call`；取消优先于超时（两路同时就绪时超时分支再复查 ctx）。部署事实 `XHUNTER_STREAM_IDLE_TIMEOUT`（Go duration；未设取默认，非法即启动期退出 1；"关闭"只程序内可达）。生效值经装配层注入 `AssemblyFacts.StreamIdleTimeoutMS` 进 `config_snapshot.stream_idle_timeout_ms`（0 = 不限/关闭）。用例 `TestWatchdog_*`（7 条）、`TestDefaultConfig_StreamIdleTimeoutDefaultsTo120s`、`TestConfig_ZeroIdleTimeoutTakesDefaultNegativeStays`、`TestParseStreamIdleTimeout_DefaultOverrideAndRejects`、`TestConfigSnapshot_CarriesStreamIdleTimeout`、`TestEndToEnd_IdleStreamConvergesToEnvError` |
 | ~~结构检查判据接入（FR-1.3d / IA-11.11 / L6-结构检查）~~（MS-9） | **已落地**（2026-09-25）：`Session.structuralJudge`（包内可替换位置）撤掉，换成真判据 `Session.judgeStructural`——判据①「此刻语法完整」在**判定时**取（`ext.ExtHost.Parse`），判据②「改动封闭在某个符号内」在**写盘前**就地取、记在与 `s.ops` 平行的 `opEnclose`（字节区间只有在它产生的那一瞬才与文件内容对齐，事后重问会被同文件后续编辑平移）。取样范围是**尚未提交的改动**（`pendingFrom` 起点，一次成功提交即推进——否则一次早年的越界编辑会永久关掉自动检查点）；整文件写入（含新建）不适用判据②，由判据①单独覆盖。宿主由装配层经 `hunt.ExtHostFactory` 注入、与符号原语**共用同一份实例**（`hunt.ToolFactory` 随之加 `ext.ExtHost` 入参）。`ext` 契约加 `Parse` / `Enclose` 与三态 `ParseVerdict`；`ext/syntax` 用 `go/parser` 实现（未注册语言一律"判不了"，不谎报"不封闭"）。触发链补全：门禁通过 > 模型显式 > 结构检查通过 > 不提交。用例 `TestStructural_ParseOKFlipCommits`、`TestStructural_IncompleteSyntaxSuppresses`、`TestStructural_UndecidableDoesNotCommit`、`TestStructural_EditOutsideAnySymbolSuppresses`、`TestStructural_WholeFileWriteIsNotJudgedAsUnenclosed`、`TestStructural_CommittedOpsLeaveTheJudgementWindow`、`TestStructural_ParseIsAskedOncePerFile`、`TestStructural_UndecidableDoesNotBlockWriting`（`hunt`）、`TestHost_Parse*` / `TestHost_Enclose*`（`ext/syntax`，10 条）、`TestEndToEnd_CheckpointLandsOnCompleteSyntax`、`TestEndToEnd_IncompleteSyntaxSuppressesCheckpoint`（`cmd/xhunter`）。MS-9 由此收口 |
-| ~~本地驱动（FR-1.10 / usage§1.2·Bounty生成器）~~（MS-12） | **已落地**（2026-09-24）：新增 `xhunter run --repo <path> --task <text> [--out <path>]`——只读探测（`internal/git/cli.ProbeLocalRepo`，仅 `rev-parse`/`remote`/`cat-file -e`，绝不 checkout/add/commit/fetch/push；门禁候选从基线 commit 读 `HEAD:gates.yml`）→ 组装 Bounty（分支/材料目录/预算复用既有唯一来源 `branchFor`/`materialDirFor`/`parseBudget`）→ **经同一条 `executeHunt`** 执行一次 Hunt。从 `huntCmd` 抽出 `executeHunt` 后两条驱动路径共用一份装配（零行为变化，既有 e2e 全绿）。用例 `TestRunCmd_ClonesIntoIsolatedWorkspace`、`TestRunCmd_ProbeIsReadOnly`、四类启动期失败、`TestEndToEnd_LocalRunDrivesBountyFromRepo` |
+| ~~上下文压缩（FR-14 / AC-17 / AC-18 / IA-2.5~2.8 / L2-压缩）~~（MS-11） | **已落地**（2026-09-25）：压缩落在 `cmd/xhunter/context.go` 的 `Assemble` 内——三档水位（预警 70% / 目标 50% / 硬上限 90%，基数＝**可用输入预算**，由 `providerconfig.Resolved.Watermarks` 算出）＋ 冷却 3 轮；命中即按 **L0→L3** 按序下压、够用即停，且**当前轮永不压**（它正被模型用来接着说，压它等于抽掉脚下的地板）。L0 工具输出两头各留 512 字符并标注丢弃量、L1 丢推理过程、L2 换成**可寻址摘要**（丢内容不丢地址）、L3 折叠为**结构化工作日志**（由会话记录**投影**：已完成改动／失败尝试与原因／未决问题与假设，零模型调用、可复现）。释放量是**同一把尺子的前后差**（不另估一次；可以为负——折叠日志本身占一点，如实报、不夹到 0，否则事件与前后差就对不上）。**一层都没压动时不上冷却**：只有当前轮时无从压，冷却若在那时上膛，下一轮第一个可压的老轮会被自己的冷却挡住（该压的时候压不动）。结论经 `hunt.Compaction` ＋ **可选**上报面 `CompactionReporter.TakeCompactions()` 搬到 Session 的事件出口（取走即清空，一次下压一条），发 `context_compacted`（`level`/`released_tokens`/`watermark`）。**压完仍不低于硬上限则终止**：按预算耗尽处理（`budget_exhausted:context`，退出 2、不重派，usage§7「上下文达硬上限」）——撞硬上限本身不判错（照样一路压到目标），判据问的是**压完之后**的水位，压得下来的超窗不该被误杀。**L4 模型摘要不实现**：它默认就不启用（FR-14.4 确定性优先），而「生成一次即落盘、恢复时读回」要动材料与恢复两条链路——宁可留缺口，也不做一个会在恢复路径上重新生成的版本（留 §5）。用例 `TestCompaction_*`（`cmd/xhunter` 15 条）、`TestCompaction_*`/`TestDeliverables_DoNotDependOnContext`（`hunt` 4 条）、`TestEndToEnd_OverWindowCompactsAndStillConverges`（窗口调小到 6000、两次读 20k 字符文件触发压缩，压完照常收敛且交付提交与改动清单不缺）。MS-11 由此收口 |
+ **已落地**（2026-09-24）：新增 `xhunter run --repo <path> --task <text> [--out <path>]`——只读探测（`internal/git/cli.ProbeLocalRepo`，仅 `rev-parse`/`remote`/`cat-file -e`，绝不 checkout/add/commit/fetch/push；门禁候选从基线 commit 读 `HEAD:gates.yml`）→ 组装 Bounty（分支/材料目录/预算复用既有唯一来源 `branchFor`/`materialDirFor`/`parseBudget`）→ **经同一条 `executeHunt`** 执行一次 Hunt。从 `huntCmd` 抽出 `executeHunt` 后两条驱动路径共用一份装配（零行为变化，既有 e2e 全绿）。用例 `TestRunCmd_ClonesIntoIsolatedWorkspace`、`TestRunCmd_ProbeIsReadOnly`、四类启动期失败、`TestEndToEnd_LocalRunDrivesBountyFromRepo` |
 
 ---
 
@@ -358,10 +360,9 @@
 | 主题 | §2 索引键 |
 |---|---|
 | 会话材料（仅余扩展能力指纹） | `IA-6.5`（MS-8） |
-| 压缩 | `IA-2.5`、`IA-2.6`、`IA-2.7`、`IA-2.8`、`L2-压缩`、`FR-14.1`、`AC-17`、`AC-18` |
+| 压缩（仅余 L4 模型摘要） | `IA-2.7`、`FR-14.1` |
 | 符号能力 | `IA-7.2`~`IA-7.6`（外挂后端相关，随 MCP 通道补）、`FR-13.2`~`FR-13.6`（外挂通道） |
 | git 剩余语义 | `IA-11.12`、`L6-检查点` |
-| 结构检查 | `IA-11.11`、`L6-结构检查`、`FR-1.3d` |
 | 可观测补齐 | `usage§5·已发出事件`、`usage§6·待接入字段` |
 
 ### 3.2 判定方式缺用例（对应原 §14.2）
@@ -407,7 +408,7 @@
 | **MS-8** | 扩展接入与符号读写 | M2 | MS-2 | 大 | FR-13、FR-4.1/4.2/4.4~4.8/4.13、IA-7.1~7.6 | **部分完成**（2026-09-24：内置语法级后端 ＋ 符号三原语注册 ＋ `symbol_read`/`symbol_edit` 落地，见 §4.3；**缺口**：第三方后端的 MCP 外挂通道与假扩展夹具用例） |
 | **MS-9** | 结构检查与 `on_structure` 默认档 | M2 收尾 | MS-5、MS-8 | 中 | FR-1.3d、IA-11.12 | **已完成**（2026-09-25；真判据接 `ext.ExtHost` 的 `Parse` / `Enclose`、取样时点与窗口定死、触发链补全，见 §2.3 与 §4.3） |
 | **MS-10** | `symbol_rename`（跨文件重命名）与规模上报 | M3 | MS-8 | 中 | FR-4.3、FR-6.2 | **已完成**（2026-09-24；语法级一次改完声明与全部出现点，规模与编辑计划同源，未穷尽如实标注，见 §4.3 与 §2.3） |
-| **MS-11** | 上下文压缩 | 二期 | MS-6、MS-7 | 大 | FR-14 全部、AC-17/AC-18 | 未开始 |
+| **MS-11** | 上下文压缩 | 二期 | MS-6、MS-7 | 大 | FR-14 全部、AC-17/AC-18 | **已完成**（2026-09-25；水位＋冷却、分层下压 L0→L3、`context_compacted`、投影式工作日志、保丢优先级与交付物不依赖上下文全部落地；**仅余 L4 模型摘要**，见 §2.3 与 §4.3） |
 | **MS-12** | 运行段看护与本地驱动 | 二期 | MS-3、MS-2 | 中 | FR-1.11①、FR-1.10 | **已完成**（2026-09-24；流看门狗与本地驱动落地，见 §4.3 与 §2.3） |
 
 **依赖与车道**：
@@ -698,10 +699,16 @@
 - `context_compacted` 事件。
 - 交付物不依赖上下文。
 
+**状态**：**已完成**（2026-09-25，见 §2.3）——水位与冷却、分层下压 L0→L3、`context_compacted` 事件、投影式工作日志、保丢优先级与「交付物不依赖上下文」全部落地；**不做** L4 模型摘要（FR-14.5，见 §5）。
+
 **独立验收的证据**
-- `TestWatermark_TriggersAtWarnAndCoolsDown`、`TestCompaction_LayersDownToFit`、`TestCompaction_ProjectionIsReproducible`（AC-18）。
+- 水位与分层：`TestWatermark_TriggersAtWarnAndCoolsDown`、`TestCompaction_LayersDownToFit`、`TestCompaction_PressesThroughAllLayersWhenTargetIsUnreachable`、`TestCompaction_NothingToCompactDoesNotArmCooldown`、`TestCompaction_NoWatermarksMeansNoCompaction`、`TestCompaction_HardWatermarkIsReported`、`TestCompaction_WarnWatermarkBelowHard`。
+- 各层形状：`TestCompaction_L0KeepsBothEndsAndMarksTheDrop`、`TestCompaction_L2KeepsAddressability`、`TestCompaction_FoldPreservesDeclaredSections`、`TestCompaction_CurrentTurnIsNeverCompacted`、`TestCompaction_ReleasedTokensIsAMeasuredDelta`。
+- 可复现与恢复：`TestCompaction_ProjectionIsReproducible`（AC-18）、`TestCompaction_ResumeUsesTheSamePipeline`（FR-14.8）。
 - 保真：`TestCompaction_NeverDropsBountyOrWriteOps`（AC-17）、`TestDeliverables_DoNotDependOnContext`（FR-14.6）。
-- e2e：构造超窗场景 → 有 `context_compacted` 事件且任务仍收敛。
+- 事件：`TestCompaction_EventCarriesLevelAndReleasedTokens`、`TestCompaction_NoReporterMeansNoEvent`、`TestCompaction_EmittedOnTurnBoundary`。
+- 硬上限终止：`TestCompaction_OverHardLimitStopsTheRun`、`TestCompaction_HardLimitIsJudgedAfterPressing`、`TestEndToEnd_HardWatermarkStopsTheRun`。
+- e2e：`TestEndToEnd_OverWindowCompactsAndStillConverges`（窗口调小到 6000、两次读 20k 字符文件）→ 有 `context_compacted` 事件，且任务仍收敛、交付提交与改动清单不缺。
 
 **依赖**：MS-6、MS-7。**风险**：压缩改的是已缓存前缀——低频一次压到位。
 
@@ -759,6 +766,7 @@
 | **信号组合** | SIGTERM 的进程级断言已落地（`TestEndToEnd_SigtermConvergesToCancelled`，AC-6）；SIGKILL / 中断时机的更多组合仍可补 |
 | **单步驱动（FR-1.9 形态 C）** | 明确不进一期 |
 | **多 agent 路线**（备忘录，未采纳） | V 层已定判据路线，多 agent 不作为补法；若将来要做，落点是**操作原语**（`harness` 不动），缺口清单（用量回流 / 事件嵌套标识 / 递归上限 / 工具面冲突）见 `docs/xhunter-memo-multi-agent-route.md`。其中**最硬的是第 7 条**：「子 agent 裁剪工具面」与已承诺的「**同一构建版本内**工具面恒定 ＋ **环境能力不决定注册** ＋ **随能力接入而扩展**」（AC-26）直接冲突——**同一构建、同一能力集之下所有 agent 的工具面必须一致**（不再是"双轴都不变"）；要按角色给不同工具面，必须先改这条口径或解决该冲突再编码 |
+| **L4 模型摘要（FR-14.5）** | 压缩的最深一层**不实现**：它默认就不启用（FR-14.4 确定性优先），而「生成一次即落盘、恢复时读回」要动会话材料与恢复两条链路——缺了它就不许声称做了 L4（宁可留缺口，也不做一个会在恢复路径上重新生成的版本）。将来要补时的落点：材料加一个 `compaction` 记录类型，`Load` 读回后直接注入 `contextBuilder`，**不在恢复路径上重新调用模型**（对齐 FR-12.1） |
 | **冻结前回收：panic 哨兵**（**冻结前置条件**） | 未冻结期以 `panic` 哨兵装配了尚未实现的装配扩展点（见 §7.1 决策 18、架构 §8 例外）。**冻结前必须逐条回收**：把每个 panic 哨兵换成**显式失败或如实降级**，并补用例——"走到即炸"只允许存在于未冻结期。**进度**：`Policy.ObserveFailure` / `DeniedCount`（哨兵 5、6）已随 MS-3 回收为运行期如实判定；**尚余 4 处**：`ext/ext.go` 四处（`ExtHost` 的 `Capabilities` / `Locate` / `Fingerprint` / `Close`，待 MS-8）。`cmd/xhunter/material.go` 的 `Load` 哨兵**已随 MS-7 回收**（真实现：纯读回灌）；`ext/ext.go` 四处**已随 MS-8 回收**（`Unimplemented` 改为如实降级：`Capabilities` 报不可用、`Locate` 返回 `ErrUnavailable`、指纹为空数组） |
 
 ---
@@ -808,6 +816,8 @@
 | 21 | **首发符号后端形态**（2026-09-24）：内置**语法级**后端（`ext/syntax`，标准库语法树、进程内、首发 Go），它是首发也是兜底；第三方后端走**外挂通道**（MCP over stdio，待补）。核心只认 `ext.ExtHost`，换后端不改业务代码 |
 | 22 | **语法级也做 `symbol_rename`**（2026-09-24）：出现点来自语法树扫描（结构化，非文本替换）＋ 如实标注未穷尽；列不出出现点即结构化错误。**不做**的只有"半套重命名"，不是重命名本身 |
 | 23 | **结构判据的取样时点与窗口**（2026-09-25）：①「语法完整」在**判定时**取（问的是此刻内容）；②「区间封闭」在**写盘前**就地取并存下来（字节区间只对它产生的那一瞬有效）；窗口是**尚未提交的改动**，一次成功提交即推进——否则一次早年的越界编辑会永久关掉自动检查点。整文件写入不适用判据②（文件本身就是单位），由判据①单独覆盖 |
+| 24 | **压缩的冷却只在实际压动后才上膛**（2026-09-25）：「当前轮永不压」意味着第一轮之后历史里还没有可压的老轮；冷却若在「压不动」时就上膛，下一轮第一个可压的老轮会被自己的冷却挡住（该压的时候压不动），与冷却「别反复改写已缓存前缀」的初衷正好相反。落点：`cmd/xhunter/context.go` 的 `compact`（`applied == 0` 直接返回、不上冷却）＋ 用例 `TestCompaction_NothingToCompactDoesNotArmCooldown` |
+| 25 | **硬上限：撞上不判错，压不下来才终止**（2026-09-25）：撞硬上限照样一路压到目标水位，只是事件里 `watermark` 记 `hard`（它是「差点撞墙」的诊断标记，不是终止理由）；**压完仍不低于硬上限**才按预算耗尽处理（`budget_exhausted:context`，退出 2、不重派，usage§7「上下文达硬上限」）。判据是「压完之后」而不是「压之前」——否则一次本可以压下来的超窗会被误杀。落点：架构 §6.3 L2 表「压缩」行、用例 `TestCompaction_HardWatermarkIsReported`、`TestCompaction_HardLimitIsJudgedAfterPressing`、`TestCompaction_OverHardLimitStopsTheRun`、`TestEndToEnd_HardWatermarkStopsTheRun` |
 
 | 20 | **门禁终态口径**（2026-09-24）：执行失败（起不来 / 超时）**不是质量结论**——按"未运行"计入终态并发 `degraded(scope: gate)`；`required` 门禁未通过或从未运行 → `status=failed` 且**退出码 0**，改动照常交付。终态只改写引擎给出的 `succeeded`，机制性终止不被抹掉 |
 

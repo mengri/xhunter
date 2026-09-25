@@ -170,6 +170,8 @@ func (s *Session) Prepare(ctx context.Context, run *harness.Run) error {
 
 	// 起飞事件：Prepare 成功后立即发——没进入对话就没有起飞事件（失败路径在上面直接 return）。
 	s.emitHuntStart()
+	// 压缩结论（恢复回灌走同一管线，首轮就可能压）：排在起飞事件之后——hunt_start 是第一条。
+	s.emitCompactions()
 
 	// 进入默认态（等模型——循环绝大部分时间花在这里）并启动心跳。心跳的生命周期归 Session：
 	// 这里起、Finalize 的终态块之前停，因此一条心跳也不会落到 hunt_end 之后（见 startHeartbeat）。
@@ -435,6 +437,7 @@ func (s *Session) OnTurn(ctx context.Context, run *harness.Run, turn *harness.Tu
 	// 下一轮的输入 = 提示词 + 历史（含刚记下的本轮）。
 	if s.cfg.Context != nil {
 		run.Messages = s.cfg.Context.Assemble()
+		s.emitCompactions()
 	}
 
 	// 守卫：取消优先于通道、通道优先于预算。
@@ -478,6 +481,12 @@ func (s *Session) OnTurn(ctx context.Context, run *harness.Run, turn *harness.Tu
 			return false, nil
 		}
 	}
+	// 上下文压完仍不低于硬上限 → 下一轮装不进窗口（usage§7“上下文达硬上限 → 2”，按预算耗尽处理）。
+	// 排在预算之前：它与预算同为“任务自身的量不够了、重跑一样”，但说得出撞的是哪堵墙。
+	if s.contextOverHard() {
+		run.SetTerminal(harness.Terminal{Status: harness.StatusFailed, Reason: budgetExhaustedContext, Code: harness.ExitAborted})
+		return false, nil
+	}
 	if s.cfg.Policy != nil {
 		if yes, dim := s.cfg.Policy.Exhausted(TurnNo(turn.No)); yes {
 			run.SetTerminal(harness.Terminal{Status: harness.StatusFailed, Reason: "budget_exhausted:" + dim, Code: harness.ExitAborted})
@@ -508,6 +517,11 @@ const (
 	stopLossSameKind = "stop_loss_same_kind"
 	stopLossDenied   = "stop_loss_denied"
 )
+
+// budgetExhaustedContext 是“上下文压完仍不低于硬上限”的固定原因（使用手册 §7 的
+// “上下文达硬上限 → 2”一档）。沿用 `budget_exhausted:` 前缀：平台据此把它归入
+// “任务自身的预算问题”，`kind` 与预算耗尽同源。
+const budgetExhaustedContext = "budget_exhausted:context"
 
 // checkpoint 在本轮已应用的改动上产生检查点。触发条件只有两条：
 //   - **模型显式请求**（`checkpoint` 原语的语义判断——它说「这里自洽」，那是它的判断）；
@@ -799,6 +813,41 @@ func (s *Session) charge(total llm.Usage) {
 	}
 	// 策略只吃输入／输出两项（它管的是预算，不关心缓存明细），且拿的是增量——语义不动。
 	s.cfg.Policy.Charge(llm.Usage{InputTokens: in, OutputTokens: out})
+}
+
+// emitCompactions 把上下文本轮压掉的层级逐条发出（FR-14.7、AC-18）。
+//
+// 压缩发生在 `ContextBuilder` 内部，事件出口却在 Session 上，所以这里只是**搬运**：结论由压缩
+// 那一侧给出、取走即清空，执行体不重算、不合并——一次下压一条，平台据此看出"压了几层、
+// 每层放了多少"。装配的 `ContextBuilder` 没实现上报面就不发：那是"这次没有压缩"的如实形态。
+func (s *Session) emitCompactions() {
+	if s.cfg.Context == nil || s.cfg.Sink == nil {
+		return
+	}
+	reporter, ok := s.cfg.Context.(CompactionReporter)
+	if !ok {
+		return
+	}
+	for _, c := range reporter.TakeCompactions() {
+		_ = s.cfg.Sink.Emit(ExternalEvent{Type: "context_compacted", Payload: map[string]any{
+			"level":           c.Level,
+			"released_tokens": c.ReleasedTokens,
+			"watermark":       c.Watermark,
+		}})
+	}
+}
+
+// contextOverHard 问上下文：压完之后仍不低于硬上限吗（FR-14.1“硬上限视为不可继续”）。
+// 未装配上下文、或它没实现这块上报面 → false（“这次没有硬上限”，不是“没超”）。
+func (s *Session) contextOverHard() bool {
+	if s.cfg.Context == nil {
+		return false
+	}
+	reporter, ok := s.cfg.Context.(CompactionHardLimit)
+	if !ok {
+		return false
+	}
+	return reporter.OverHardLimit()
 }
 
 // emitUsage 上报本轮用量的**增量**（配对的是这一轮）。字段与使用手册 §5 一致，每轮末发。
