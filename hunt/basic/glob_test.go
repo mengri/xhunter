@@ -9,14 +9,14 @@ import (
 	"xhunter/workspace"
 )
 
-// globFixture 造一棵小树：够覆盖"按文件名匹配、递归、跳过隐藏目录"三件事。
+// globFixture 造一棵小树：覆盖"按文件名匹配、递归、点开头目录可见、.git 不可见"四件事。
 func globFixture(t *testing.T) (hunt.Call, workspace.Storage) {
 	t.Helper()
 	st := newStore(t)
 	for _, p := range []string{"a.go", "b.md", "sub/c.go", "sub/deep/d.go"} {
 		seed(t, st, p, "x")
 	}
-	// 隐藏目录里的同名文件：工作区的枚举面会把 .git 这类噪音挡在外面。
+	// .git 是宿主内部（永不放行）；.cache 是点开头目录，点开头不代表不是项目内容，因此可见。
 	for _, p := range []string{".git/e.go", ".cache/f.go"} {
 		seed(t, st, p, "x")
 	}
@@ -38,14 +38,19 @@ func TestGlob_MatchesByFileNameRecursively(t *testing.T) {
 			t.Errorf("应匹配到 %s：%s", want, res.Summary)
 		}
 	}
-	// 模式按**文件名**匹配，不是路径：所以 b.md 不进来，.git 里的也不进来。
+	// 模式按**文件名**匹配，不是路径：所以 b.md 不进来。
 	if strings.Contains(res.Summary, "b.md") {
 		t.Errorf("不匹配的扩展名不得出现：%s", res.Summary)
 	}
-	if strings.Contains(res.Summary, "e.go") || strings.Contains(res.Summary, "f.go") {
-		t.Errorf("隐藏目录是噪音，不该进入枚举面：%s", res.Summary)
+	// .git 是宿主内部，永不进入枚举面。
+	if strings.Contains(res.Summary, "e.go") {
+		t.Errorf(".git 不该进入枚举面：%s", res.Summary)
 	}
-	if !strings.Contains(res.Summary, "3 个匹配") {
+	// 点开头目录**可见**：点开头只是“默认不显示”的约定，不代表不是项目内容。
+	if !strings.Contains(res.Summary, ".cache/f.go") {
+		t.Errorf("点开头目录必须可见：%s", res.Summary)
+	}
+	if !strings.Contains(res.Summary, "4 个匹配") {
 		t.Errorf("应报出匹配数量：%s", res.Summary)
 	}
 }
@@ -96,8 +101,8 @@ func TestGlob_DeclShape(t *testing.T) {
 		t.Errorf("声明名 = %q，期望 %q", d.Name, Glob)
 	}
 	s := decodeSchema(t, d)
-	if got := propNames(s.Properties); len(got) != 1 || got[0] != "scope" {
-		t.Errorf("参数面 = %v，期望 [scope]", got)
+	if got := propNames(s.Properties); len(got) != 2 || got[0] != "include" || got[1] != "scope" {
+		t.Errorf("参数面 = %v，期望 [include scope]", got)
 	}
 	if len(s.Required) != 1 || s.Required[0] != "scope" {
 		t.Errorf("required = %v，期望只有 scope", s.Required)
@@ -124,5 +129,38 @@ func TestGlob_DirectoryAndDeepPatterns(t *testing.T) {
 		if !strings.Contains(res.Summary, want) {
 			t.Errorf("模式 %q 应命中 %q：%s", pattern, want, res.Summary)
 		}
+	}
+}
+
+// include 必须真的到达枚举层：绑定层收下 → Selector → List → 结果与「未枚举」附注。
+// 只断言 schema 里有 include 不够——绑定层漏收或原语漏传，参数面都会虚假成立。
+func TestGlob_IncludeReachesTheEnumeration(t *testing.T) {
+	st := newStore(t)
+	for _, p := range []string{"a.go", "node_modules/pkg/dep.go"} {
+		seed(t, st, p, "x")
+	}
+	call := hunt.Call{ID: "c1", Primitive: Glob, Selector: hunt.Selector{Scope: "*.go"}}
+
+	got, _, err := GlobTool(st).Execute(context.Background(), call, newFacts())
+	if err != nil {
+		t.Fatalf("枚举不该报错：%v", err)
+	}
+	if !strings.Contains(got.Summary, "未枚举：node_modules") {
+		t.Errorf("排除必须上报：%s", got.Summary)
+	}
+	if strings.Contains(got.Summary, "node_modules/pkg/dep.go") {
+		t.Errorf("默认名单命中时不得匹配：%s", got.Summary)
+	}
+
+	call.Selector.Include = []string{"node_modules"}
+	got, _, err = GlobTool(st).Execute(context.Background(), call, newFacts())
+	if err != nil {
+		t.Fatalf("枚举不该报错：%v", err)
+	}
+	if !strings.Contains(got.Summary, "node_modules/pkg/dep.go") {
+		t.Errorf("include 必须到达枚举：%s", got.Summary)
+	}
+	if strings.Contains(got.Summary, "未枚举") {
+		t.Errorf("放行后不该再报未枚举：%s", got.Summary)
 	}
 }

@@ -12,18 +12,19 @@ import (
 // 工作区是唯一写入原语与只读视图的落点，它的两条行为值得单独钉住：
 // 枚举面（什么该被看见）与路径边界（什么表达不出来）。
 
-// 枚举跳过隐藏目录是为了躲噪音（版本控制、编辑器、构建产物），
-// 但**本系统自己的控制目录例外**——它是配置，不是噪音；跳过它就等于
-// 技能清单这类东西根本看不见。
-func TestList_SkipsNoiseButKeepsControlDir(t *testing.T) {
+// controlDir 是本系统在工作区里的控制目录（会话材料、技能草稿）。
+const controlDir = ".xhunter"
+
+// 默认排除名单命中即跳过，并且**必须上报**：不报的话，“没匹配到”会被读成
+// “仓库里没有这类文件”，而真相可能是它们在被跳过的目录里。
+func TestList_SkipsDefaultExcludedAndReportsThem(t *testing.T) {
 	root := t.TempDir()
 	st := open(t, root)
 	for _, p := range []string{
 		"a.go",
 		"sub/b.go",
-		".git/c.go",
-		".cache/d.go",
-		controlDir + "/session.jsonl",
+		"node_modules/x/y.go",
+		"vendor/lib/z.go",
 		controlDir + "/skills/release/SKILL.md",
 	} {
 		if _, err := st.WriteRange(p, workspace.ByteRange{Start: 0, End: 0}, "x"); err != nil {
@@ -31,20 +32,103 @@ func TestList_SkipsNoiseButKeepsControlDir(t *testing.T) {
 		}
 	}
 
-	got, err := st.List("*.go")
+	got, err := st.List("*.go", nil)
 	if err != nil {
 		t.Fatalf("枚举失败：%v", err)
 	}
-	if want := []string{"a.go", "sub/b.go"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("*.go 枚举 = %v，期望 %v（隐藏目录是噪音）", got, want)
+	if want := []string{"a.go", "sub/b.go"}; !reflect.DeepEqual(got.Files, want) {
+		t.Errorf("*.go 枚举 = %v，期望 %v", got.Files, want)
+	}
+	if want := []string{"node_modules", "vendor"}; !reflect.DeepEqual(got.Skipped, want) {
+		t.Errorf("被跳过的目录必须上报 = %v，期望 %v", got.Skipped, want)
 	}
 
-	all, err := st.List("SKILL.md")
+	// 控制目录不在排除名单里，技能清单必须看得见。
+	all, err := st.List("SKILL.md", nil)
 	if err != nil {
 		t.Fatalf("枚举失败：%v", err)
 	}
-	if want := []string{controlDir + "/skills/release/SKILL.md"}; !reflect.DeepEqual(all, want) {
-		t.Errorf("控制目录必须可见：%v", all)
+	if want := []string{controlDir + "/skills/release/SKILL.md"}; !reflect.DeepEqual(all.Files, want) {
+		t.Errorf("控制目录必须可见：%v", all.Files)
+	}
+}
+
+// 点开头目录**不是噪音**：点开头只是“默认不显示”的约定，.github/ 一类是真实项目内容。
+// 跳过它会造成不对称：策略并未禁写 .github，于是“能写却枚举不出来”。
+func TestList_DotDirsAreVisible(t *testing.T) {
+	root := t.TempDir()
+	st := open(t, root)
+	for _, p := range []string{".github/workflows/ci.yml", ".vscode/settings.json", "a.go"} {
+		if _, err := st.WriteRange(p, workspace.ByteRange{Start: 0, End: 0}, "x"); err != nil {
+			t.Fatalf("准备夹具失败：%v", err)
+		}
+	}
+	got, err := st.List("*.yml", nil)
+	if err != nil {
+		t.Fatalf("枚举失败：%v", err)
+	}
+	if want := []string{".github/workflows/ci.yml"}; !reflect.DeepEqual(got.Files, want) {
+		t.Errorf("点开头目录必须可见：%v", got.Files)
+	}
+}
+
+// include 按需放行：默认排除的是“默认”，不是“永远看不见”。
+func TestList_IncludeReleasesTheExcludedDir(t *testing.T) {
+	root := t.TempDir()
+	st := open(t, root)
+	for _, p := range []string{"a.go", "node_modules/pkg/dep.go", "vendor/lib/z.go"} {
+		if _, err := st.WriteRange(p, workspace.ByteRange{Start: 0, End: 0}, "x"); err != nil {
+			t.Fatalf("准备夹具失败：%v", err)
+		}
+	}
+	got, err := st.List("*.go", []string{"node_modules"})
+	if err != nil {
+		t.Fatalf("枚举失败：%v", err)
+	}
+	if want := []string{"a.go", "node_modules/pkg/dep.go"}; !reflect.DeepEqual(got.Files, want) {
+		t.Errorf("放行 node_modules 后 = %v，期望 %v", got.Files, want)
+	}
+	if want := []string{"vendor"}; !reflect.DeepEqual(got.Skipped, want) {
+		t.Errorf("只放行 node_modules 时 vendor 仍应被跳过并上报 = %v，期望 %v", got.Skipped, want)
+	}
+}
+
+func TestList_IncludeStarReleasesEverything(t *testing.T) {
+	root := t.TempDir()
+	st := open(t, root)
+	for _, p := range []string{"a.go", "node_modules/pkg/dep.go", "vendor/lib/z.go"} {
+		if _, err := st.WriteRange(p, workspace.ByteRange{Start: 0, End: 0}, "x"); err != nil {
+			t.Fatalf("准备夹具失败：%v", err)
+		}
+	}
+	got, err := st.List("*.go", []string{"*"})
+	if err != nil {
+		t.Fatalf("枚举失败：%v", err)
+	}
+	want := []string{"a.go", "node_modules/pkg/dep.go", "vendor/lib/z.go"}
+	if !reflect.DeepEqual(got.Files, want) {
+		t.Errorf("全部放行后 = %v，期望 %v", got.Files, want)
+	}
+	if len(got.Skipped) != 0 {
+		t.Errorf("全部放行时不应有 skipped：%v", got.Skipped)
+	}
+}
+
+// 宿主内部任何 include 都不放行：它不在交付范围内，改了也带不回去。
+func TestList_VcsDirIsNeverReleased(t *testing.T) {
+	root := t.TempDir()
+	st := open(t, root)
+	for _, p := range []string{"a.go", ".git/config"} {
+		if _, err := st.WriteRange(p, workspace.ByteRange{Start: 0, End: 0}, "x"); err != nil {
+			t.Fatalf("准备夹具失败：%v", err)
+		}
+	}
+	got, err := st.List("config", []string{"*"})
+	if err != nil {
+		t.Fatalf("枚举失败：%v", err)
+	}
+	if len(got.Files) != 0 {
+		t.Errorf(".git 必须始终不可见：%v", got.Files)
 	}
 }
 
@@ -57,14 +141,14 @@ func TestList_OrderIsStable(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	first, err := st.List("*.go")
+	first, err := st.List("*.go", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"a.go", "m.go", "z.go"}; !reflect.DeepEqual(first, want) {
-		t.Errorf("枚举 = %v，期望按字典序 %v", first, want)
+	if want := []string{"a.go", "m.go", "z.go"}; !reflect.DeepEqual(first.Files, want) {
+		t.Errorf("枚举 = %v，期望按字典序 %v", first.Files, want)
 	}
-	second, _ := st.List("*.go")
+	second, _ := st.List("*.go", nil)
 	if !reflect.DeepEqual(first, second) {
 		t.Errorf("两次枚举结果不一致：%v → %v", first, second)
 	}
@@ -193,17 +277,17 @@ func TestList_PatternSemantics(t *testing.T) {
 		{"*.md", []string{"docs/readme.md"}},
 	}
 	for _, tc := range cases {
-		got, err := st.List(tc.pattern)
+		got, err := st.List(tc.pattern, nil)
 		if err != nil {
 			t.Fatalf("List(%q) 失败：%v", tc.pattern, err)
 		}
-		if !reflect.DeepEqual(got, tc.want) {
-			t.Errorf("List(%q) = %v，期望 %v", tc.pattern, got, tc.want)
+		if !reflect.DeepEqual(got.Files, tc.want) {
+			t.Errorf("List(%q) = %v，期望 %v", tc.pattern, got.Files, tc.want)
 		}
 	}
 
 	// 空模式是显式错误：它一个都匹配不到，返回空列表会把"调用写错"伪装成"没有这类文件"。
-	if _, err := st.List("   "); err == nil {
+	if _, err := st.List("   ", nil); err == nil {
 		t.Error("空模式必须报错")
 	}
 }

@@ -135,8 +135,8 @@ func TestFind_DeclShape(t *testing.T) {
 		t.Errorf("声明名 = %q，期望 %q", d.Name, Find)
 	}
 	s := decodeSchema(t, d)
-	if got := propNames(s.Properties); len(got) != 3 || got[0] != "literal" || got[1] != "path" || got[2] != "scope" {
-		t.Errorf("参数面 = %v，期望 [literal path scope]", got)
+	if got := propNames(s.Properties); len(got) != 4 || got[0] != "include" || got[1] != "literal" || got[2] != "path" || got[3] != "scope" {
+		t.Errorf("参数面 = %v，期望 [include literal path scope]", got)
 	}
 	schema := string(d.Schema)
 	if !strings.Contains(schema, `"anyOf"`) {
@@ -144,5 +144,25 @@ func TestFind_DeclShape(t *testing.T) {
 	}
 	if !strings.Contains(schema, `"literal"`) {
 		t.Errorf("schema 必须声明检索片段：%s", schema)
+	}
+}
+
+// 与 glob 同一条枚举面：find 也必须把 include 传下去，并把「未枚举」写进结论。
+func TestFind_IncludeReachesTheEnumeration(t *testing.T) {
+	st := newStore(t)
+	seed(t, st, "a.go", "x")
+	seed(t, st, "node_modules/pkg/dep.go", "x")
+
+	got := runFind(t, st, hunt.Call{Selector: hunt.Selector{Literal: "x"}})
+	if !strings.Contains(got.Summary, "未枚举：node_modules") {
+		t.Errorf("排除必须上报：%s", got.Summary)
+	}
+	if strings.Contains(got.Summary, "node_modules/pkg/dep.go") {
+		t.Errorf("默认名单命中时不得检索：%s", got.Summary)
+	}
+
+	got = runFind(t, st, hunt.Call{Selector: hunt.Selector{Literal: "x", Include: []string{"node_modules"}}})
+	if !strings.Contains(got.Summary, "node_modules/pkg/dep.go") {
+		t.Errorf("include 必须到达枚举：%s", got.Summary)
 	}
 }

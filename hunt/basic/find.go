@@ -28,8 +28,8 @@ const (
 // 因此不需要任何外部能力。这跟符号原语（要扩展进程）与门禁原语（要门禁清单）不同：
 // 那两个「不实现」有正当理由，这个没有。
 //
-// 枚举面与 glob **完全一致**（同一套 List）：噪音目录不可见，只有引擎自己的控制目录例外。
-// 同一条枚举面两种用法，避免出现「glob 看不到、find 找得到」这种要靠记忆区分的行为。
+// 枚举面与 glob **完全一致**（同一套 List、同一套默认排除与 include 参数）：
+// 同一条面两种用法，避免出现「glob 看不到、find 找得到」这种要靠记忆区分的行为。
 func FindTool(ws workspace.Workspace) hunt.Primitive {
 	return findPrim{ws: ws}
 }
@@ -46,7 +46,8 @@ func (findPrim) Decl() llm.ToolDecl {
 		Schema: llm.ObjectSchemaAnyOf(`{
 			"literal": {"type": "string", "description": "要检索的内容片段"},
 			"path": {"type": "string", "description": "限定到某个文件"},
-			"scope": {"type": "string", "description": "限定范围：目录或包"}
+			"scope": {"type": "string", "description": "限定范围：目录或包"},
+			"include": {"type": "array", "items": {"type": "string"}, "description": "额外放行的默认排除目录（如 node_modules、vendor）；[\"*\"] 表示全部放行"}
 		}`, []string{"literal"}),
 	}
 }
@@ -58,10 +59,11 @@ func (p findPrim) Execute(_ context.Context, call hunt.Call, _ hunt.Facts) (hunt
 			Kind: "bad_selector", Message: "内容检索需要给出要查找的字面量",
 		}
 	}
-	files, scope, err := p.candidates(call)
+	res, scope, err := p.candidates(call)
 	if err != nil {
 		return hunt.Result{}, nil, err
 	}
+	files := res.Files
 
 	var (
 		hits       []string
@@ -102,29 +104,29 @@ func (p findPrim) Execute(_ context.Context, call hunt.Call, _ hunt.Facts) (hunt
 	}
 
 	// 「没找到」是**结论**而不是错误：模型据此判断"哪里都没有"，而不是"工具坏了"。
-	return hunt.Result{Summary: findReport(literal, scope, hits, total, len(hitFiles), big, unreadable, len(files))}, nil, nil
+	return hunt.Result{Summary: findReport(literal, scope, hits, total, len(hitFiles), big, unreadable, len(files), res.Skipped)}, nil, nil
 }
 
 // candidates 给出要检索的文件清单与范围说明：path 指单文件；否则是整个工作区（可被 scope 收窄到某个目录）。
-func (p findPrim) candidates(call hunt.Call) ([]string, string, error) {
+func (p findPrim) candidates(call hunt.Call) (workspace.ListResult, string, error) {
 	if call.Target != "" {
-		return []string{call.Target}, "文件 " + call.Target, nil
+		return workspace.ListResult{Files: []string{call.Target}}, "文件 " + call.Target, nil
 	}
-	files, err := p.ws.List("*")
+	res, err := p.ws.List("*", call.Selector.Include)
 	if err != nil {
-		return nil, "", err
+		return workspace.ListResult{}, "", err
 	}
 	scope := strings.Trim(strings.ReplaceAll(call.Selector.Scope, "\\", "/"), "/")
 	if scope == "" {
-		return files, "整个工作区", nil
+		return res, "整个工作区", nil
 	}
 	var out []string
-	for _, f := range files {
+	for _, f := range res.Files {
 		if f == scope || strings.HasPrefix(f, scope+"/") {
 			out = append(out, f)
 		}
 	}
-	return out, "目录 " + scope, nil
+	return workspace.ListResult{Files: out, Skipped: res.Skipped}, "目录 " + scope, nil
 }
 
 // clipLine 把命中行压到可读宽度：去掉首尾空白（缩进对"找到没找到"没有信息量），超宽截断并标注。
@@ -136,21 +138,24 @@ func clipLine(line string) string {
 	return line
 }
 
-func findReport(literal, scope string, hits []string, total, files, big, unreadable, scanned int) string {
+func findReport(literal, scope string, hits []string, total, files, big, unreadable, scanned int, skipped []string) string {
 	if total == 0 {
-		return withNotes(fmt.Sprintf("未找到匹配：%s（范围：%s；扫描 %d 个文件）", literal, scope, scanned), big, unreadable)
+		return withNotes(fmt.Sprintf("未找到匹配：%s（范围：%s；扫描 %d 个文件）", literal, scope, scanned), big, unreadable, skipped)
 	}
 	head := fmt.Sprintf("找到 %d 处匹配（%d 个文件；范围：%s）", total, files, scope)
 	if len(hits) < total {
 		head += fmt.Sprintf("，只显示前 %d 处", len(hits))
 	}
 	report := head + "：\n" + strings.Join(hits, "\n")
-	return withNotes(report, big, unreadable)
+	return withNotes(report, big, unreadable, skipped)
 }
 
 // withNotes 附上「没检索全」的事实。有跳过就必须说：否则"未找到"会被读成"不存在"。
-func withNotes(report string, big, unreadable int) string {
+func withNotes(report string, big, unreadable int, skipped []string) string {
 	var notes []string
+	if len(skipped) > 0 {
+		notes = append(notes, "未枚举："+strings.Join(skipped, "、")+"，带 include 可放行")
+	}
 	if big > 0 {
 		notes = append(notes, fmt.Sprintf("跳过 %d 个超过 %d KB 的文件", big, findMaxFileBytes>>10))
 	}

@@ -20,10 +20,31 @@ import (
 	"xhunter/workspace"
 )
 
-// controlDir 是本系统在工作区里的控制目录：会话材料、门禁清单、技能都在它下面。
-// 枚举时要给它留门——跳过隐藏目录是为了躲开版本控制、编辑器与构建产物的噪音，
-// 而这个目录是我们的配置，不是噪音。
-const controlDir = ".xhunter"
+// vcsDir 是宿主（git）自己的目录：它不是工作区内容，也不在交付范围内——
+// 工作区是临时工作树，改它既进不了 diff （git 不跟踪它）、也会随工作树一起被回收。
+// 因此它**不在**下面的排除名单里：名单可以带 include 放行，这个不行。
+const vcsDir = ".git"
+
+// defaultExcluded 是引擎的默认排除名单：依赖与产物目录。
+//
+// 它与 .gitignore 无关： gitignore 回答“要不要提交”，枚举面回答“能不能看”，
+// 是两件事。进名单的理由纯粹是量——这些目录文件极多且不是源码，
+// 默认枚举会把真正的项目内容涉没。命中即上报（见 ListResult.Skipped），
+// 调用方带 include 可按次放行。
+var defaultExcluded = map[string]bool{
+	"node_modules": true,
+	"vendor":       true,
+	"dist":         true,
+	"build":        true,
+	"target":       true,
+	".venv":        true,
+	"venv":         true,
+	"__pycache__":  true,
+	".tox":         true,
+	".gradle":      true,
+	".next":        true,
+	"coverage":     true,
+}
 
 // Opener 按本地文件系统打开工作区。它是装配层注入的那个工厂。
 type Opener struct{}
@@ -153,23 +174,42 @@ func (s *storage) Stat(rel string) (workspace.FileInfo, error) {
 //
 // 空模式是显式错误：它一个文件都匹配不到，静默返回空列表会让"调用写错了"看起来像
 // "仓库里没有这类文件"。
-func (s *storage) List(pattern string) ([]string, error) {
+// List 按模式枚举，并报出被默认排除名单命中的目录。
+//
+// 点开头的目录**不**被跳过：点开头只是“默认不显示”的约定，
+// .github/ 一类目录是真实的项目内容。
+func (s *storage) List(pattern string, include []string) (workspace.ListResult, error) {
 	if strings.TrimSpace(pattern) == "" {
-		return nil, &llm.Fault{Kind: "invalid_path", Message: "模式不能为空"}
+		return workspace.ListResult{}, &llm.Fault{Kind: "invalid_path", Message: "模式不能为空"}
 	}
 	if filepath.IsAbs(pattern) || strings.Contains(pattern, "..") {
-		return nil, &llm.Fault{Kind: "invalid_path", Message: "模式必须是工作区内相对模式"}
+		return workspace.ListResult{}, &llm.Fault{Kind: "invalid_path", Message: "模式必须是工作区内相对模式"}
 	}
 
 	pat := filepath.ToSlash(pattern)
+	all := false
+	allowed := map[string]bool{}
+	for _, name := range include {
+		if name == "*" {
+			all = true
+			continue
+		}
+		allowed[name] = true
+	}
 
 	var out []string
+	skipped := map[string]bool{}
 	err := filepath.WalkDir(s.root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
 		if d.IsDir() {
-			if p != s.root && strings.HasPrefix(d.Name(), ".") && d.Name() != controlDir {
+			// 宿主内部：不是工作区内容，且 include 不放行它。
+			if d.Name() == vcsDir {
+				return filepath.SkipDir
+			}
+			if p != s.root && defaultExcluded[d.Name()] && !all && !allowed[d.Name()] {
+				skipped[d.Name()] = true
 				return filepath.SkipDir
 			}
 			return nil
@@ -185,10 +225,21 @@ func (s *storage) List(pattern string) ([]string, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return workspace.ListResult{}, err
 	}
 	sort.Strings(out)
-	return out, nil
+	return workspace.ListResult{Files: out, Skipped: sortedKeys(skipped)}, nil
+}
+
+// sortedKeys 给出 map 的键（排序后）。上报要稳定：同一份工作区两次枚举，
+// 报出来的“被跳过”清单不该因为 map 遍历顺序而变。
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // matchPattern 是枚举面的模式匹配：

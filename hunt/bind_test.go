@@ -17,7 +17,8 @@ func TestBindToolCall_MapsSlots(t *testing.T) {
 		ID:   "c1",
 		Name: "edit",
 		Arguments: []byte(`{"path":"a/b.go","literal":"old","symbol":"pkg.F","in_symbol":"body",
-			"file_view":true,"scope":"pkg","content":"new","name":"gate","new_name":"New","summary":"为什么"}`),
+			"file_view":true,"scope":"pkg","content":"new","name":"gate","new_name":"New","summary":"为什么",
+			"include":["node_modules","vendor"]}`),
 	})
 	if fault != nil {
 		t.Fatalf("合法调用不该报错：%v", fault)
@@ -28,6 +29,10 @@ func TestBindToolCall_MapsSlots(t *testing.T) {
 	if call.Selector.Literal != "old" || call.Selector.Symbol != "pkg.F" ||
 		call.Selector.InSymbol != "body" || !call.Selector.FileView || call.Selector.Scope != "pkg" {
 		t.Errorf("定位槽位不对：%+v", call.Selector)
+	}
+	if len(call.Selector.Include) != 2 || call.Selector.Include[0] != "node_modules" ||
+		call.Selector.Include[1] != "vendor" {
+		t.Errorf("include 槽位不对：%+v", call.Selector.Include)
 	}
 	if call.Content != "new" || call.Gate != "gate" || call.NewName != "New" || call.Summary != "为什么" {
 		t.Errorf("具名槽位不对：%+v", call)
@@ -106,7 +111,7 @@ func TestUnbindToolCall_RoundTripsNonEmptyFields(t *testing.T) {
 	original := Call{
 		ID: "c1", Primitive: "edit", Target: "a.txt",
 		Selector: Selector{Literal: "old", Scope: "pkg", FileView: true,
-			Range: &workspace.LineRange{From: 1, To: 2}},
+			Range: &workspace.LineRange{From: 1, To: 2}, Include: []string{"node_modules"}},
 		Content: "new", NewName: "New", Gate: "unit", Summary: "为什么",
 	}
 	out := UnbindToolCall(original)
@@ -117,7 +122,7 @@ func TestUnbindToolCall_RoundTripsNonEmptyFields(t *testing.T) {
 	if err := json.Unmarshal(out.Arguments, &got); err != nil {
 		t.Fatalf("参数不是合法 JSON：%v", err)
 	}
-	for _, k := range []string{"path", "literal", "scope", "file_view", "range", "content", "new_name", "name", "summary"} {
+	for _, k := range []string{"path", "literal", "scope", "file_view", "range", "content", "new_name", "name", "summary", "include"} {
 		if _, ok := got[k]; !ok {
 			t.Errorf("字段 %q 丢失：%v", k, got)
 		}
@@ -128,7 +133,8 @@ func TestUnbindToolCall_RoundTripsNonEmptyFields(t *testing.T) {
 		t.Fatalf("还原结果应可再绑定：%v", fault)
 	}
 	if back.Target != original.Target || back.Content != original.Content ||
-		back.Selector.Literal != original.Selector.Literal || back.Summary != original.Summary {
+		back.Selector.Literal != original.Selector.Literal || back.Summary != original.Summary ||
+		len(back.Selector.Include) != 1 || back.Selector.Include[0] != "node_modules" {
 		t.Errorf("往返不一致：%+v vs %+v", back, original)
 	}
 }

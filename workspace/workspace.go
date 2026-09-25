@@ -51,6 +51,16 @@ type FileInfo struct {
 	Exists bool
 }
 
+// ListResult 是一次枚举的结果。
+//
+// Skipped 是被**默认排除名单**命中、因而这次没有枚举的目录（目录名，去重排序）。
+// 它必须上报：模型需要知道「有什么被藏了」，否则“没找到”会被读成“不存在”——
+// 而真相可能是“存在于被跳过的目录里”。带 include 再调一次即可放行。
+type ListResult struct {
+	Files   []string
+	Skipped []string
+}
+
 // Workspace 是文件视图的只读部分：读、查、列。
 //
 // 所有入参都是工作区**相对路径**——「绝对路径」这个概念根本不在接口上，
@@ -59,7 +69,9 @@ type FileInfo struct {
 type Workspace interface {
 	Read(rel string, r LineRange) (FileContent, error)
 	Stat(rel string) (FileInfo, error)
-	List(pattern string) ([]string, error)
+	// List 按模式枚举文件。include 列出**这次额外放行**的默认排除目录
+	// （目录名；“*”表示全部放行）。空 include = 用默认名单。
+	List(pattern string, include []string) (ListResult, error)
 }
 
 // Storage 是完整文件视图：只读部分加上唯一的写入原语。它是 Workspace 的超集，

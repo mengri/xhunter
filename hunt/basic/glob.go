@@ -28,7 +28,8 @@ func (globPrim) Decl() llm.ToolDecl {
 		Name:        string(Glob),
 		Description: "按模式列出工作区内的文件。不含 / 的模式按文件名匹配（任意深度）；含 / 的模式按路径匹配，整段 ** 表示零到多层目录。",
 		Schema: llm.ObjectSchema(`{
-			"scope": {"type": "string", "description": "模式，如 *.go、internal/*.go、internal/**/*.go"}
+			"scope": {"type": "string", "description": "模式，如 *.go、internal/*.go、internal/**/*.go"},
+			"include": {"type": "array", "items": {"type": "string"}, "description": "额外放行的默认排除目录（如 node_modules、vendor）；[\"*\"] 表示全部放行"}
 		}`, "scope"),
 	}
 }
@@ -38,11 +39,15 @@ func (p globPrim) Execute(_ context.Context, call hunt.Call, _ hunt.Facts) (hunt
 	if pattern == "" {
 		pattern = call.Target
 	}
-	files, err := p.ws.List(pattern)
+	res, err := p.ws.List(pattern, call.Selector.Include)
 	if err != nil {
 		return hunt.Result{}, nil, err
 	}
-	return hunt.Result{
-		Summary: fmt.Sprintf("%d 个匹配：%s", len(files), strings.Join(files, ", ")),
-	}, nil, nil
+	// 排除即上报：不报的话，“没匹配到”会被读成“仓库里没有这类文件”，
+	// 而真相可能是它们在被跳过的目录里。
+	summary := fmt.Sprintf("%d 个匹配：%s", len(res.Files), strings.Join(res.Files, ", "))
+	if len(res.Skipped) > 0 {
+		summary += "（未枚举：" + strings.Join(res.Skipped, "、") + "，带 include 可放行）"
+	}
+	return hunt.Result{Summary: summary}, nil, nil
 }

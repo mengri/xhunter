@@ -56,13 +56,13 @@ func (m *memWorkspace) Stat(rel string) (workspace.FileInfo, error) {
 	_, ok := m.files[rel]
 	return workspace.FileInfo{Path: rel, Exists: ok}, nil
 }
-func (m *memWorkspace) List(string) ([]string, error) {
+func (m *memWorkspace) List(string, []string) (workspace.ListResult, error) {
 	out := make([]string, 0, len(m.files))
 	for name := range m.files {
 		out = append(out, name)
 	}
 	sort.Strings(out)
-	return out, nil
+	return workspace.ListResult{Files: out}, nil
 }
 
 // stubFacts 是原语能看到的事实的最小替身（符号原语只用到台账）。

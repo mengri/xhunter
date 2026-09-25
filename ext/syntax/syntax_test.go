@@ -25,12 +25,12 @@ func (m *memWorkspace) Stat(rel string) (workspace.FileInfo, error) {
 	_, ok := m.files[rel]
 	return workspace.FileInfo{Path: rel, Exists: ok}, nil
 }
-func (m *memWorkspace) List(string) ([]string, error) {
+func (m *memWorkspace) List(string, []string) (workspace.ListResult, error) {
 	out := make([]string, 0, len(m.files))
 	for name := range m.files {
 		out = append(out, name)
 	}
-	return out, nil
+	return workspace.ListResult{Files: out}, nil
 }
 
 const sample = `package demo

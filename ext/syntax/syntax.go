@@ -121,11 +121,11 @@ func (h *Host) candidateFiles(file string) ([]string, error) {
 	if strings.TrimSpace(file) != "" {
 		return []string{file}, nil
 	}
-	files, err := h.ws.List(extFilePattern)
+	res, err := h.ws.List(extFilePattern, nil)
 	if err != nil {
 		return nil, fmt.Errorf("枚举源码文件失败：%w", err)
 	}
-	return files, nil
+	return res.Files, nil
 }
 
 // readAll 读一份文件的全文；读不全（被截断）时返回 false——在截断的内容上做语法分析

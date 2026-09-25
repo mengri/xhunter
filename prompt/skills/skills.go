@@ -45,14 +45,14 @@ type entry struct {
 
 // Build 扫描技能目录，把清单作为 system 段的一段正文返回。
 func (p *Plugin) Build(_ context.Context, in hunt.PromptInput) (hunt.PromptPart, error) {
-	paths, err := p.ws.List(skillFile)
+	res, err := p.ws.List(skillFile, nil)
 	if err != nil {
 		return hunt.PromptPart{}, err
 	}
 
 	var notices []hunt.Notice
-	entries := make([]entry, 0, len(paths))
-	for _, file := range paths {
+	entries := make([]entry, 0, len(res.Files))
+	for _, file := range res.Files {
 		if !strings.HasPrefix(file, dir) {
 			continue
 		}

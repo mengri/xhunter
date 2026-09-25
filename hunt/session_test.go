@@ -34,7 +34,9 @@ func (m *memStorage) Stat(rel string) (workspace.FileInfo, error) {
 	return workspace.FileInfo{Path: rel, Exists: ok}, nil
 }
 
-func (m *memStorage) List(string) ([]string, error) { return nil, nil }
+func (m *memStorage) List(string, []string) (workspace.ListResult, error) {
+	return workspace.ListResult{}, nil
+}
 
 func (m *memStorage) WriteRange(rel string, br workspace.ByteRange, content string) (string, error) {
 	cur := m.files[rel]

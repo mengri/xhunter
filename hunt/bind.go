@@ -55,6 +55,7 @@ func BindToolCall(tc llm.ToolCall) (Call, *llm.Fault) {
 		InSymbol: args.InSymbol,
 		FileView: args.FileView,
 		Scope:    args.Scope,
+		Include:  args.Include,
 	}
 	if args.Range != nil {
 		call.Selector.Range = &workspace.LineRange{From: args.Range.From, To: args.Range.To}
@@ -93,6 +94,9 @@ func UnbindToolCall(c Call) llm.ToolCall {
 	}
 	if c.Selector.FileView {
 		args["file_view"] = true
+	}
+	if len(c.Selector.Include) > 0 {
+		args["include"] = c.Selector.Include
 	}
 	if c.NewName != "" {
 		args["new_name"] = c.NewName
@@ -142,6 +146,7 @@ type callArgs struct {
 	InSymbol string     `json:"in_symbol"`
 	FileView bool       `json:"file_view"`
 	Scope    string     `json:"scope"`
+	Include  []string   `json:"include"`
 	Content  string     `json:"content"`
 	Name     string     `json:"name"`
 	NewName  string     `json:"new_name"`

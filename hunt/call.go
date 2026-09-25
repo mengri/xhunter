@@ -49,6 +49,7 @@ type Selector struct {
 	Range    *workspace.LineRange // 行范围（读取）
 	FileView bool                 // 读取符号视图（大纲）
 	Scope    string               // 限定范围：文件 / 目录 / 包
+	Include  []string             // 枚举时额外放行的默认排除目录（目录名；“*” = 全部放行）
 }
 
 // ============================================================ 结果与写记录
