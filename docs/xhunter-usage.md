@@ -167,7 +167,7 @@ xhunter version
 {"type":"assistant_text","text":"..."}                    // 模型的答复正文；**最终答复是交付物的一部分**（可能整份交付物就是它）
 {"type":"tool_call","call_id":"...","tool":"edit","args":{...}}
 {"type":"tool_result","call_id":"...","tool":"edit","ok":true,"summary":"...","duration_ms":12}
-// 注：`precision` / `degrade` 是**符号原语接入后**才出现的字段；一期工具面无符号原语，示例不举它
+// 注：`precision` / `degrade` 只在**符号原语**（`symbol_read` / `symbol_edit` / `symbol_rename`）的结果里出现；上面这条是文本原语，故无此二字段
 {"type":"check_result","gate":"unit-test","passed":true,"cached":false,"exit_code":0,"duration_ms":1234,"source":"repo","summary":"..."}
 {"type":"policy_denied","action":"...","reason":"..."}
 {"type":"gate_config_changed","source":"working_tree","gates":["..."]}   // 仅当 Bounty 授予 working_tree 时
@@ -210,7 +210,7 @@ xhunter version
 由 `--result <path>` 指定；**无论成败都写**（FR-1.5）——平台靠它记账、决定是否重派。
 写不出来属环境问题（退出码 1），不会静默继续。
 
-**字段清单**（契约；哪些字段当前会写出见 xhunter-status.md 状态索引 · usage§6·待接入字段）：
+**字段清单**（契约；哪些字段当前会写出见 xhunter-status.md 状态索引 · usage§6·结果文件字段）：
 
 ```json
 {
@@ -253,7 +253,7 @@ xhunter version
 > `patch_path` 仅在给了 `--patch` 且补丁产出成功时出现；补丁**排除会话材料目录**
 > （`.xhunter/<session_id>/**`，FR-6.1）——实现状态见 xhunter-status.md 状态索引 · IA-11.6。
 
-**尚未接线的字段**见 xhunter-status.md 状态索引 · usage§6·待接入字段。（不写空壳——空数组会被读成"没有门禁、没有假设"，那是另一句话；各字段的形状见 FR-6.3/6.4、FR-11.6、FR-1.5。）
+**契约里的字段已全部接线**（逐项的接线时点见 xhunter-status.md 状态索引 · usage§6·结果文件字段）。（不写空壳——空数组会被读成"没有门禁、没有假设"，那是另一句话；各字段的形状见 FR-6.3/6.4、FR-11.6、FR-1.5。）
 
 > `gates` 必须**列出未运行的门禁**（`passed: null`），`effective_config` 是**只读快照**（FR-11.6）——两者都是 MR 评审的直接证据：前者回答"验收跑没跑、过没过"，后者回答"用的是哪套规则"。
 
