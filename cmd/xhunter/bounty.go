@@ -34,6 +34,22 @@ const (
 	// 平台判断"上游挂起"的灵敏度由它定。**只接受正 duration**——「不配」才是取默认，
 	// 「关掉看门狗」（负数）只在程序内可达、不暴露给部署侧（关掉它 = 上游挂起永不中止）。
 	envStreamIdleTimeout = "XHUNTER_STREAM_IDLE_TIMEOUT"
+
+	// 外挂符号后端（MCP over stdio 子进程）：可选后端，不配即用内置语法级后端（FR-13.9）。
+	// 配了命令就是"这次用外挂后端"；它起不来时符号原语给结构化错误（FR-13.4），
+	// **不暗地退回内置**——静默退回会让精度档位（syntactic / semantic）悄悄变化而不上报。
+	envExtCommand = "XHUNTER_EXT_COMMAND"
+	// envExtArgs 是子进程入参：按空白切分（不支持引号转义——够用，且不会解析出意外的参数）。
+	envExtArgs = "XHUNTER_EXT_ARGS"
+	// envExtTimeout 是单次调用的上界（正 duration，缺省 30s）。
+	envExtTimeout = "XHUNTER_EXT_TIMEOUT"
+	// envExtLanguages 是后端覆盖的语言清单（逗号分隔）：能力指纹的素材。指纹在装配冻结
+	// 时就读，那时还没问过后端，语言只能由部署侧声明（FR-13.7）。
+	envExtLanguages = "XHUNTER_EXT_LANGUAGES"
+	// envExtEnv 是**点名授予**的环境变量名（逗号分隔）：外挂进程默认一个变量都不继承
+	// （XHUNTER_* 里可能有凭据，FR-13.6），只拿到这里点名、且当前环境里确实存在的那几项——
+	// 点了一个不存在的名字即启动期失败：拼错不该在运行期才变成"扩展莫名其妙起不来"。
+	envExtEnv = "XHUNTER_EXT_ENV"
 )
 
 // lookupEnv 让组装过程可在测试里替换环境来源。

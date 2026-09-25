@@ -23,6 +23,8 @@ type fakeExt struct {
 	files []string
 	// encloses 是被问过封闭性的区间（按序）。
 	encloses []workspace.ByteRange
+	// closed 记下被回收的次数：外挂后端是子进程，漏回收就是漏进程。
+	closed int
 }
 
 func (f *fakeExt) Capabilities(context.Context) ext.ExtCaps {
@@ -59,12 +61,44 @@ func (f *fakeExt) Enclose(_ context.Context, req ext.EncloseRequest) (ext.Prepar
 }
 
 func (f *fakeExt) Fingerprint() []string { return []string{"fake/1", "lang:go"} }
-func (f *fakeExt) Close() error          { return nil }
+func (f *fakeExt) Close() error          { f.closed++; return nil }
 
 // extFactory 把替身宿主包成装配层那种工厂。走引擎的用例**必须**用它注入：Prepare 会用
 // 工厂造宿主，直接给 s.ext 赋值会被装配覆盖——那等于没测到注入路径。
 func extFactory(host ext.ExtHost) ExtHostFactory {
 	return func(workspace.Workspace) ext.ExtHost { return host }
+}
+
+// 符号能力宿主随 Hunt 一起回收（FR-13.5）：外挂后端是一个子进程，不回收就留在系统里。
+func TestFinalize_ClosesTheExtHost(t *testing.T) {
+	sink := &captureSink{}
+	s := newFinalizeSession(sink)
+	host := &fakeExt{}
+	s.ext = host
+
+	run := &harness.Run{}
+	run.SetTerminal(harness.Terminal{Status: harness.StatusSucceeded, Reason: "no_tool_call", Code: harness.ExitOK})
+	if err := s.Finalize(context.Background(), run); err != nil {
+		t.Fatalf("Finalize 失败：%v", err)
+	}
+	if host.closed != 1 {
+		t.Fatalf("宿主回收次数 = %d，期望 1", host.closed)
+	}
+	// 回收排在终态之后：回收卡住也不该把 hunt_end 吞掉——平台靠它记账。
+	if i := indexOf(sink, "hunt_end"); i != len(sink.events)-1 {
+		t.Fatalf("hunt_end 应是最后一条事件（下标 %d / 共 %d）", i, len(sink.events))
+	}
+}
+
+// Prepare 没走到造宿主那一步时 s.ext 是零值（nil），而收尾在 Prepare 失败后也会跑一次。
+// 回收一处 nil 会炸在收尾里——那会把一个已经定下的终态变成 panic。
+func TestFinalize_WithoutExtHostDoesNotPanic(t *testing.T) {
+	s := newFinalizeSession(&captureSink{})
+	run := &harness.Run{}
+	run.SetTerminal(harness.Terminal{Status: harness.StatusFailed, Reason: "boom", Code: harness.ExitAborted})
+	if err := s.Finalize(context.Background(), run); err != nil {
+		t.Fatalf("没有宿主时收尾应照常完成，实际：%v", err)
+	}
 }
 
 // structuralSession 给出一台只差判据的 Session：宿主可替、提交动作可数。

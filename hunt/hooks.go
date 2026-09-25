@@ -984,6 +984,18 @@ func (s *Session) Finalize(ctx context.Context, run *harness.Run) error {
 			"status": string(out.Status), "reason": out.Reason, "usage": s.usage,
 		}})
 	}
+
+	// 符号能力宿主随 Hunt 一起回收（FR-13.5）：外挂后端是子进程，不关就留在系统里，
+	// 一个跑批的环境里会把它累积成资源泄漏。
+	//
+	// 排在终态**之后**：回收本身可能超时，而"回收卡住"不该把 hunt_end 一起吞掉——
+	// 平台靠那条事件记账，漏了它等于这一次运行没有结论。
+	// s.ext 可能仍是零值（Prepare 在造宿主之前就失败了）：那时没有东西要回收。
+	if s.ext != nil {
+		if err := s.ext.Close(); err != nil {
+			s.logf("warn", "符号能力宿主回收失败", "err", err.Error())
+		}
+	}
 	return nil
 }
 

@@ -317,7 +317,7 @@ func TestDefaultAssembly_EffectiveConfigPrimitivesMatchToolFace(t *testing.T) {
 		Session:       &sessionRecorder{},
 		SystemPlugins: defaultSystemPlugins,
 		UserPlugins:   defaultUserPlugins,
-		Assembly:      assemblyFacts(harness.DefaultConfig()),
+		Assembly:      assemblyFacts(harness.DefaultConfig(), mustChooseExt(t, nil)),
 	})
 
 	run := &harness.Run{}

@@ -85,6 +85,10 @@ XHUNTER_API_KEY / XHUNTER_HEADERS（可选）。预算上限（可选）：XHUNT
 XHUNTER_BUDGET_TOKENS / XHUNTER_BUDGET_WALL_CLOCK。心跳间隔（可选）：
 XHUNTER_HEARTBEAT_INTERVAL（Go duration，缺省 30s）。接收段不活动超时（可选）：
 XHUNTER_STREAM_IDLE_TIMEOUT（Go duration，缺省 120s；非 duration / 0 / 负 → 启动期退出 1）。
+符号后端（可选）：XHUNTER_EXT_COMMAND（外挂扩展命令，MCP over stdio 子进程；不配即用内置
+语法级后端）、XHUNTER_EXT_ARGS（入参，按空白切分）、XHUNTER_EXT_TIMEOUT（单次调用上界，
+缺省 30s）、XHUNTER_EXT_LANGUAGES（覆盖语言，逗号分隔）、XHUNTER_EXT_ENV（点名授予的
+环境变量名，逗号分隔；其余一律不继承）。
 `)
 }
 
@@ -138,6 +142,14 @@ func executeHunt(bounty hunt.Bounty, opts runOptions) int {
 	}
 	// 接收段不活动超时也是部署事实：写错即启动期失败（退出 1）。
 	idle, err := parseStreamIdleTimeout(os.LookupEnv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return exitEnv
+	}
+	// 符号后端同样是部署事实：配了外挂命令就走外挂通道，否则用内置语法级后端（FR-13.9）。
+	// 写错即启动期失败（退出 1）——留到运行期只会变成"符号能力莫名不可用"，
+	// 而那时模型已经按符号寻址失败改走文本路径了。
+	backend, err := chooseExt(os.LookupEnv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return exitEnv
@@ -212,7 +224,7 @@ func executeHunt(bounty hunt.Bounty, opts runOptions) int {
 		Tools: func(ws workspace.Workspace, ex ext.ExtHost) []hunt.Primitive {
 			return defaultTools(ws, ex, gateRunner)
 		},
-		Ext:    func(ws workspace.Workspace) ext.ExtHost { return defaultExt(ws) },
+		Ext:    backend.new,
 		Policy: defaultPolicy(bounty.Budget),
 		Opener: defaultWorkspaces(),
 		Git:    gitBackend,
@@ -225,7 +237,7 @@ func executeHunt(bounty hunt.Bounty, opts runOptions) int {
 		SystemPlugins: defaultSystemPlugins,
 		UserPlugins:   defaultUserPlugins,
 		// 生效配置快照里「只有装配层知道」的那部分：装配它就等于声明"本次生效的是什么"。
-		Assembly: assemblyFacts(hcfg),
+		Assembly: assemblyFacts(hcfg, backend),
 		// 心跳间隔来自部署事实（0 = 取 Session 默认 30s）。
 		Heartbeat: heartbeat,
 	})
