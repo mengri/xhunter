@@ -100,8 +100,18 @@ func TestEndToEnd_MaterialIsSelfSufficientForResume(t *testing.T) {
 	if meta["base_commit"] != fx.base {
 		t.Errorf("meta.base_commit = %v，期望基线", meta["base_commit"])
 	}
-	if ext, ok := meta["ext"].([]any); !ok || len(ext) != 0 {
-		t.Errorf("meta.ext 应是空数组（能力指纹位，本期为空）：%v", meta["ext"])
+	// meta.ext 是**本次装配**的符号能力指纹（与 `effective_config.ext` 同源）：换后端
+	// 要能在材料里看出来——"续跑后的精度为什么与上次不同"只有这一处能回答。
+	want := mustChooseExt(t, nil).fp
+	gotExt, ok := meta["ext"].([]any)
+	if !ok || len(gotExt) != len(want) {
+		t.Errorf("meta.ext = %v，期望本次装配的能力指纹 %v", meta["ext"], want)
+	} else {
+		for i := range want {
+			if gotExt[i] != want[i] {
+				t.Errorf("meta.ext[%d] = %v，期望 %v", i, gotExt[i], want[i])
+			}
+		}
 	}
 
 	var turns, ops, usages []map[string]any

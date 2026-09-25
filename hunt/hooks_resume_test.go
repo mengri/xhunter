@@ -79,6 +79,43 @@ func (p *chargingPolicy) ObserveFailure(string) (StopLoss, string) {
 }
 func (p *chargingPolicy) DeniedCount() (int, bool) { return 0, false }
 
+// 续跑时符号能力指纹变了：**只记录、不阻断**（FR-13.7 / IA-6.5）。
+//
+// 它是诊断（"换了后端"能解释"续跑后的精度与上次不同"），不是错误，更不是恢复的闸门——
+// 恢复不依赖重放，拿指纹当闸门只会把本来能续的跑卡住。
+func TestPrepare_ExtFingerprintChangeIsRecordedNotFatal(t *testing.T) {
+	sink := &captureSink{}
+	rec := &resumeRecorder{restored: Restored{
+		SchemaVersion: 1,
+		Ext:           []string{"ext:syntax", "precision:syntactic"},
+	}}
+	prim := &resumeProbe{}
+	s := NewSession(Config{
+		Bounty:  Bounty{ID: "b", Task: "t", Repo: gitRepoRef(), Session: &SessionRef{ID: "s"}},
+		Git:     &stubBaselineGit{},
+		Opener:  stubOpener{},
+		Policy:  allowAll{},
+		Session: rec,
+		Sink:    sink,
+		Context: &resumeContext{},
+		Ext:     extFactory(&fakeExt{}),
+		Tools:   func(workspace.Workspace, ext.ExtHost) []Primitive { return []Primitive{prim} },
+	})
+
+	if err := s.Prepare(context.Background(), &harness.Run{}); err != nil {
+		t.Fatalf("指纹不一致不该让 Prepare 失败：%v", err)
+	}
+	found := false
+	for _, l := range sink.logs {
+		if strings.Contains(l, "符号能力指纹与上次运行不同") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("指纹不一致应记一条日志（只记录、不阻断），实际日志：%v", sink.logs)
+	}
+}
+
 // 恢复段零工具执行、零提交；材料读取发生在 Open 之前（纯读先于绑定）。
 func TestPrepare_ResumeSeedsContextWithoutExecutingTools(t *testing.T) {
 	rec := &resumeRecorder{restored: Restored{

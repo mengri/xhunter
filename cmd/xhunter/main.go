@@ -208,7 +208,9 @@ func executeHunt(bounty hunt.Bounty, opts runOptions) int {
 	// 门禁的两端共用同一份执行器：模型主动调用与收尾补跑跑的是同一条命令、同一份判据。
 	gateRunner := gate.NewRunner()
 	gitBackend := defaultGit()
-	recorder := &sessionRecorder{bounty: bounty}
+	// 会话材料记的是本次装配的事实：能力指纹与 `effective_config.ext` **同源**（都来自
+	// `backend`），两处各取一次迟早会漂——材料里的指纹要能解释"续跑后精度为什么不同"。
+	recorder := &sessionRecorder{bounty: bounty, ext: backend.fp}
 	// 上下文组装器：压缩的三档水位与冷却在这里交给它；写操作序列也给它——折叠工作日志的
 	// 「已完成改动」一节是**投影**（不是总结），只能来自会话记录那一份事实。
 	ctxb := &contextBuilder{

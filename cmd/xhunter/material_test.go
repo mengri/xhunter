@@ -74,6 +74,41 @@ func TestSave_MaterialLandsUnderSessionDirWithSchemaVersion(t *testing.T) {
 	}
 }
 
+// 符号能力指纹进会话材料的诊断位（FR-13.7 / IA-6.5）：它回答的是"续跑后的精度为什么与上次
+// 不同"——那是诊断时最难查的一类事。**没有**符号能力时是空数组：那是已知事实，null 会被读成
+// "不知道有没有"。
+func TestMaterial_MetaCarriesTheExtFingerprint(t *testing.T) {
+	root := t.TempDir()
+	rec := &sessionRecorder{bounty: hunt.Bounty{
+		ID: "b-1", Repo: git.RepoRef{Branch: "xhunter/s-1", BaseCommit: "base1"},
+		Session: &hunt.SessionRef{ID: "s-1"},
+	}, ext: []string{"ext:gopls", "lang:go", "precision:semantic"}}
+	if err := rec.Open(root); err != nil {
+		t.Fatalf("Open 失败：%v", err)
+	}
+	got, err := rec.Load(root)
+	if err != nil {
+		t.Fatalf("Load 失败：%v", err)
+	}
+	if strings.Join(got.Ext, " ") != "ext:gopls lang:go precision:semantic" {
+		t.Fatalf("读回的能力指纹 = %v，期望写进去的那一份", got.Ext)
+	}
+
+	// 没有符号能力 = 已知事实，落盘为 [] 而不是 null。
+	bare := &sessionRecorder{bounty: rec.bounty}
+	root2 := t.TempDir()
+	if err := bare.Open(root2); err != nil {
+		t.Fatalf("Open 失败：%v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root2, materialDirFor("s-1"), materialFile))
+	if err != nil {
+		t.Fatalf("材料不可读：%v", err)
+	}
+	if !strings.Contains(string(raw), `"ext":[]`) {
+		t.Errorf("没有符号能力时 meta.ext 应是空数组，实际：%s", raw)
+	}
+}
+
 // 材料版本不认识 → 报错（不自动迁移、不猜）。
 func TestMaterial_LoadRejectsUnknownSchemaVersion(t *testing.T) {
 	dir := t.TempDir()
@@ -82,10 +117,10 @@ func TestMaterial_LoadRejectsUnknownSchemaVersion(t *testing.T) {
 	if err := os.WriteFile(good, []byte(`{"type":"meta","schema_version":1}`+"\n"+`{"type":"turn","no":1}`+"\n"), 0o644); err != nil {
 		t.Fatalf("写夹具失败：%v", err)
 	}
-	if version, _, err := loadMaterial(good); err != nil {
+	if head, _, err := loadMaterial(good); err != nil {
 		t.Errorf("认得的版本不该报错：%v", err)
-	} else if version != 1 {
-		t.Errorf("loadMaterial 应交出 meta 的 schema_version，实得 %d", version)
+	} else if head.Version != 1 {
+		t.Errorf("loadMaterial 应交出 meta 的 schema_version，实得 %d", head.Version)
 	}
 
 	bad := filepath.Join(dir, "bad.jsonl")

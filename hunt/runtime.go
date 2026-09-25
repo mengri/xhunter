@@ -27,11 +27,16 @@ type ContextBuilder interface {
 //
 // 形状对上材料里真正用得上的三类事实：轮次（回灌上下文）、写操作序列（对齐工作区，**不重放**——
 // 工作区已由分支 tip 给到）、用量（续算预算）。由材料的 reader 给出。
+//
+// `Ext` 是**上次运行**的符号能力指纹（扩展标识 / 版本 / 语言 / 精度）：它服务诊断——
+// "能力变了"能解释"续跑后的精度与上次不同"。与本次不一致**只记录、不阻断**（它不是错误，
+// 也不是恢复的闸门）。
 type Restored struct {
 	SchemaVersion int
 	Turns         []harness.Turn
 	Ops           []WriteOp
 	Usage         llm.Usage
+	Ext           []string
 }
 
 // SessionRecorder 记录会话材料（供崩溃后恢复）。

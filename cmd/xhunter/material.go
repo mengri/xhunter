@@ -41,7 +41,7 @@ type materialMeta struct {
 	BountyID      string   `json:"bounty_id"`
 	Branch        string   `json:"branch"`
 	BaseCommit    string   `json:"base_commit"`
-	Ext           []string `json:"ext"` // 扩展能力指纹位：本期空数组（不是 null），MS-8 填充
+	Ext           []string `json:"ext"` // 扩展能力指纹（诊断位：能力变了能解释"续跑后精度不同"）
 }
 
 // materialTurn 是一轮的记录：直接复用 harness.Turn 的形状（不写平行 DTO）。
@@ -70,6 +70,10 @@ type materialUsage struct {
 // 写入方式是追加：`Snapshot` 只把尚未落盘的记录 flush 出去，不每轮重写整个文件。
 type sessionRecorder struct {
 	bounty hunt.Bounty
+	// ext 是本次装配的符号能力指纹，写进 meta 的诊断位。它由装配层在构造时给出——
+	// 材料绑定（`Open`）发生在工作区就绪时，那时才去问宿主会引入一条次序依赖，而指纹
+	// 在装配期就已定死（与 `effective_config.ext` 同源）。
+	ext []string
 
 	file    *os.File
 	pending []any
@@ -101,7 +105,8 @@ func (r *sessionRecorder) Open(root string) error {
 			BountyID:      string(r.bounty.ID),
 			Branch:        r.bounty.Repo.Branch,
 			BaseCommit:    r.bounty.Repo.BaseCommit,
-			Ext:           []string{}, // 本期没有扩展：空数组而非 null
+			// 没有符号能力是**已知事实**，如实报空数组而不是 null（null 会被读成"不知道有没有"）。
+			Ext: nonNilStrings(r.ext),
 		}); err != nil {
 			return err
 		}
@@ -144,11 +149,11 @@ func (r *sessionRecorder) Load(root string) (hunt.Restored, error) {
 		}
 		return hunt.Restored{}, err
 	}
-	version, records, err := loadMaterial(p)
+	head, records, err := loadMaterial(p)
 	if err != nil {
 		return hunt.Restored{}, err
 	}
-	out := hunt.Restored{SchemaVersion: version}
+	out := hunt.Restored{SchemaVersion: head.Version, Ext: head.Ext}
 	for _, raw := range records {
 		var probe struct {
 			Type string `json:"type"`
@@ -221,20 +226,26 @@ func (r *sessionRecorder) writeNow(rec any) error {
 	return r.file.Sync()
 }
 
+// materialHead 是材料首行里诊断要用的那几项：版本（判"是否恢复"）与能力指纹（判"能力是否变过"）。
+type materialHead struct {
+	Version int
+	Ext     []string
+}
+
 // loadMaterial 读回材料并按 meta 校验 schema_version：版本不认识就报错（不自动迁移、不猜）。
-// 它把首行 meta 的 `schema_version` 连同其余记录行一并交出——调用方据此判定"材料是否存在且
-// 合法"，这正是"本次是否恢复"的唯一判据。
-func loadMaterial(path string) (int, []json.RawMessage, error) {
+// 它把首行 meta 的 `schema_version` 与能力指纹、连同其余记录行一并交出——调用方据此判定
+// "材料是否存在且合法"，这正是"本次是否恢复"的唯一判据。
+func loadMaterial(path string) (materialHead, []json.RawMessage, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, nil, err
+		return materialHead{}, nil, err
 	}
 	defer f.Close()
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024) // 单行可能很大（整轮消息）
 	var out []json.RawMessage
-	version := 0
+	var head materialHead
 	first := true
 	for sc.Scan() {
 		line := bytes.TrimSpace(sc.Bytes())
@@ -242,30 +253,36 @@ func loadMaterial(path string) (int, []json.RawMessage, error) {
 			continue
 		}
 		if first {
-			var meta struct {
-				Type          string `json:"type"`
-				SchemaVersion int    `json:"schema_version"`
-			}
+			var meta materialMeta
 			if err := json.Unmarshal(line, &meta); err != nil {
-				return 0, nil, fmt.Errorf("材料首行不是合法 meta：%w", err)
+				return materialHead{}, nil, fmt.Errorf("材料首行不是合法 meta：%w", err)
 			}
 			if meta.Type != "meta" {
-				return 0, nil, fmt.Errorf("材料首行 type = %q，期望 meta", meta.Type)
+				return materialHead{}, nil, fmt.Errorf("材料首行 type = %q，期望 meta", meta.Type)
 			}
 			if meta.SchemaVersion != materialSchemaVersion {
-				return 0, nil, fmt.Errorf("材料 schema_version = %d，本程序只认 %d（不自动迁移）", meta.SchemaVersion, materialSchemaVersion)
+				return materialHead{}, nil, fmt.Errorf("材料 schema_version = %d，本程序只认 %d（不自动迁移）", meta.SchemaVersion, materialSchemaVersion)
 			}
-			version = meta.SchemaVersion
+			head = materialHead{Version: meta.SchemaVersion, Ext: meta.Ext}
 			first = false
 			continue
 		}
 		out = append(out, append(json.RawMessage(nil), line...))
 	}
 	if err := sc.Err(); err != nil {
-		return 0, nil, err
+		return materialHead{}, nil, err
 	}
 	if first {
-		return 0, nil, fmt.Errorf("材料 %s 为空：缺 meta 行", path)
+		return materialHead{}, nil, fmt.Errorf("材料 %s 为空：缺 meta 行", path)
 	}
-	return version, out, nil
+	return head, out, nil
+}
+
+// nonNilStrings 把 nil 折成空数组：材料里的"没有"必须是已知事实（[]），
+// null 会被读成"不知道有没有"。
+func nonNilStrings(in []string) []string {
+	if in == nil {
+		return []string{}
+	}
+	return in
 }

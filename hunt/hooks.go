@@ -101,6 +101,17 @@ func (s *Session) Prepare(ctx context.Context, run *harness.Run) error {
 		}
 	}
 
+	// 续跑时符号能力指纹变了**只记录、不阻断**：换后端（语法级 ↔ 语义级）能解释
+	// "续跑后的精度与上次不同"，但它是诊断，不是错误——不能因为一句诊断把任务掐断，
+	// 更不能拿它当恢复的闸门（恢复不依赖重放，闸门只会把能续的跑卡住）。
+	if s.resumed != nil && len(s.resumed.Ext) > 0 {
+		before := strings.Join(s.resumed.Ext, " ")
+		now := strings.Join(s.ext.Fingerprint(), " ")
+		if before != now {
+			s.logf("warn", "符号能力指纹与上次运行不同：精度档位可能已变", "before", before, "now", now)
+		}
+	}
+
 	// 工作区就绪后构造原语并定格工具面：原语读文件需要工作区，声明与执行因此同源。
 	// 工具面自身不成立也算装配缺件——错误在首轮推理之前暴露，而不是等供应商拒收请求。
 	if err := s.buildTools(storage, s.ext); err != nil {
