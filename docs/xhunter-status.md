@@ -43,7 +43,7 @@
 | 模型声明终态（`needs` / `assumptions`） | `hunt/declare.go`（解析固定小节）＋ `Session.OnTurn`（轮边界登记）＋ `Session.Finalize`（收尾收敛为 `blocked`）；事件 `needs_input` / `assumption`；结果文件 `needs` / `assumptions` | `hunt/declare_test.go`（IA-1.13）、`cmd/xhunter/result_test.go` |
 | 会话恢复（resume） | `hunt/hooks.go`（`Prepare` 纯读回灌 ＋ 新条件追加）＋ `cmd/xhunter/material.go`（`Load`）＋ `hunt/session.go`（`SessionDelta`） | `TestEndToEnd_ResumeContinuesFromLastCheckpoint`、`TestLoad_ReadsTurnsOpsAndUsageInOrder`、`TestPrepare_ResumeSeedsContextWithoutExecutingTools` |
 | 上下文压缩 | 压缩落在 `cmd/xhunter/context.go` 的 `Assemble` 内（三档水位 ＋ 冷却、L0→L3 按序下压、当前轮永不压）；水位由装配层用 `providerconfig.Resolved.Watermarks` 从可用输入预算算出；结论经 `hunt.Compaction` ＋ 可选上报面 `CompactionReporter` 搬到事件出口 | `TestCompaction_*`（`cmd/xhunter` 15 条）、`TestCompaction_*`／`TestDeliverables_DoNotDependOnContext`（`hunt` 4 条）、`TestEndToEnd_OverWindowCompactsAndStillConverges` |
-| 符号后端（内置 ／ 外挂） | 同一份 `ext.ExtHost` 的两种实现：内置语法级 `ext/syntax`（进程内、零外部依赖）＋ 外挂 `ext/mcp`（MCP over stdio，懒启动／崩溃与超时隔离／随 Hunt 回收／不继承环境）；由部署事实 `XHUNTER_EXT_COMMAND` 选，宿主与能力指纹**同源** | `TestHost_*`（`ext/mcp` 11 条）、`TestChooseExt_*`、`TestParseExtConfig_*`、`TestAssemblyFacts_ReportsTheAssembledBackend`、`TestFinalize_ClosesTheExtHost`、`TestEndToEnd_ExternalBackendUnavailableStillConverges` |
+| 符号后端（内置 ／ 外挂） | 同一份 `ext.ExtHost` 的两种实现：内置语法级 `ext/syntax`（进程内，不需要额外安装任何东西）＋ 外挂 `ext/mcp`（MCP over stdio，懒启动／崩溃与超时隔离／随 Hunt 回收／不继承环境）；由部署事实 `XHUNTER_EXT_COMMAND` 选，宿主与能力指纹**同源** | `TestHost_*`（`ext/mcp` 11 条）、`TestChooseExt_*`、`TestParseExtConfig_*`、`TestAssemblyFacts_ReportsTheAssembledBackend`、`TestFinalize_ClosesTheExtHost`、`TestEndToEnd_ExternalBackendUnavailableStillConverges` |
 
 ### 1.2 声明齐备、调用返回 `not_implemented`
 
@@ -65,7 +65,7 @@
 | 恢复的轮数 / 预算口径 | `Load` 读回的轮数按**记录条数**算、不取 `turn.no` 最大值（恢复后本趟轮号从 1 **重新起计**，材料里会出现两段都从 1 开始的 `turn` 记录）；**轮数预算不跨恢复续算**（本次轮号重新起计，无累计口径）；token 预算已续算（`Prepare` 补喂 `Restored.Usage` 的输入/输出）。见 §4.3 MS-7 |
 | 上下文压缩 | 已落地（MS-11）：三档水位 ＋ 冷却、分层下压 L0→L3、`context_compacted` 事件、投影式工作日志（零模型调用）。**余**：L4 模型摘要（FR-14.5，默认不启用；且「生成一次即落盘、恢复时读回」要动材料与恢复两条链路） |
 | 门禁全链 | 已落地：`Prepare` 做来源裁决（下发 > 基线 `gates.yml` > 无），`check` 跑具名条目、按清单判据判定；收尾补跑 + 终态裁决 + 检查点抑制均已接线（`hunt/hooks.go`、`hunt/gates.go`） |
-| 符号能力与扩展宿主 | 同一份 `ext.ExtHost` 的两种实现：`ext/syntax`（内置语法级，进程内、零外部依赖）与 `ext/mcp`（外挂，MCP over stdio 子进程）；`hunt/symbolic` 三原语已注册。由部署事实 `XHUNTER_EXT_COMMAND` 选（MS-8） |
+| 符号能力与扩展宿主 | 同一份 `ext.ExtHost` 的两种实现：`ext/syntax`（内置语法级，进程内，不需要额外安装任何东西）与 `ext/mcp`（外挂，MCP over stdio 子进程）；`hunt/symbolic` 三原语已注册。由部署事实 `XHUNTER_EXT_COMMAND` 选（MS-8） |
 | 结构检查（自动检查点的判据） | 已落地：`Session.judgeStructural` 接真判据（① `Parse` 语法完整 ＋ ② `Enclose` 区间封闭，三态收敛）；判不了 → 不提交 ＋ 如实上报（`degraded`，`scope: checkpoint`，每次运行最多一条） |
 | **用量口径（输出明细与缓存写）** | 输入侧已按统一口径落地（见 §2.3）：全部输入含缓存读/写、缓存读为子集。仍未取的：OpenAI 的输出明细（`completion_tokens_details` / `output_tokens_details`：reasoning / audio / accepted·rejected prediction），以及把「缓存写」单列出来（Anthropic 的写溢价 1.25×/2× 目前按普通输入价计） |
 | 差异排除材料目录 | `internal/git/cli/git.go:173` — `Diff`/`Patch` 无 `.xhunter/<session_id>/**` 排除 |
@@ -109,7 +109,7 @@
 | <a id="fr-11-6"></a>FR-11.6（生效配置快照） | 已落地 | MS-2 | 装配完成后冻结一次，进 `hunt_start` 与结果文件 `effective_config`；门禁清单已随 MS-5 接入（清单来源档位进每条门禁的 `source`）。用例 `TestEffectiveConfig_ListsPrimitivesInToolFaceOrder`、`TestEffectiveConfig_CarriesPluginAndFilterNames`、`TestEffectiveConfig_CarriesAssemblyFacts`、`TestPrepare_EmitsHuntStart`、`TestResultFile_EffectiveConfigIsWritten` |
 | <a id="fr-12-1"></a>FR-12.1（会话恢复 resume） | 已落地 | MS-7 | `Prepare` 读回材料（**纯读、先于 `Open`**）→ 回灌上下文 → 从下一轮继续；全程**零工具执行、零模型调用、不重放写操作**（工作区已由分支 tip 给出）。用例 `TestEndToEnd_ResumeContinuesFromLastCheckpoint`、`TestPrepare_ResumeSeedsContextWithoutExecutingTools`、`TestPrepare_ResumeAppendsNewConditionsAfterRestoredHistory`、`TestPrepare_FreshSessionWithoutMaterialIsNotResumed` |
 | <a id="fr-12-2"></a>FR-12.2/12.2b/12.2c/12.3（会话材料） | 已落地 | MS-6 / MS-7 | 材料已落盘（`.xhunter/<session_id>/session.jsonl`，meta 带 `schema_version`、按任务隔离、追加写）；**读回**随 MS-7 落地（`Load` 纯读、先于 `Open`；turn/op/usage 三类按行序解析、usage 按记录累加）。用例 `TestLoad_ReadsTurnsOpsAndUsageInOrder`、`TestLoad_MissingMaterialIsZeroValueNotAnError`、`TestLoad_UnknownRecordTypeIsAnError`、`TestSave_MaterialLandsUnderSessionDirWithSchemaVersion` |
-| <a id="fr-13-1"></a>FR-13.1~13.10（扩展接入） | 已落地 | MS-8 | 同一份 `ext.ExtHost` 契约的**两种实现**：① 内置语法级后端（`ext/syntax`，进程内、零外部依赖、首发 Go）；② **外挂通道**（`ext/mcp`，MCP over stdio 子进程）——传输与握手是 MCP 标准、符号能力方法走自有命名空间 `xhunter/*`，**懒启动**（首次调用才拉起）、**崩溃与超时即隔离**（杀进程组、原因钉成终态，绝不让主循环挂住）、**随 Hunt 回收**（`Finalize` 末尾 `Close`）、**不继承环境**（只拿 `XHUNTER_EXT_ENV` 点名授予的那几项）。选哪个后端是部署事实（`XHUNTER_EXT_COMMAND` 非空即用外挂，否则内置，FR-13.9），写错即启动期退出 1；宿主与能力指纹**同源**（同一份选择给出两端），换后端一定体现在 `effective_config.ext`。用例 `TestHost_*`（`ext/mcp` 11 条）、`TestChooseExt_*`、`TestParseExtConfig_*`、`TestAssemblyFacts_ReportsTheAssembledBackend`、`TestFinalize_ClosesTheExtHost`、`TestFinalize_WithoutExtHostDoesNotPanic`、`TestEndToEnd_ExternalBackendUnavailableStillConverges`。FR-13.7 的另一半（能力指纹进会话材料 `meta.ext`）**已随 `IA-6.5` 落地**：与 `effective_config.ext` 同源，续跑时指纹变了**只记录、不阻断** |
+| <a id="fr-13-1"></a>FR-13.1~13.10（扩展接入） | 已落地 | MS-8 | 同一份 `ext.ExtHost` 契约的**两种实现**：① 内置语法级后端（`ext/syntax`，进程内，不需要额外安装任何东西、首发 Go）；② **外挂通道**（`ext/mcp`，MCP over stdio 子进程）——传输与握手是 MCP 标准、符号能力方法走自有命名空间 `xhunter/*`，**懒启动**（首次调用才拉起）、**崩溃与超时即隔离**（杀进程组、原因钉成终态，绝不让主循环挂住）、**随 Hunt 回收**（`Finalize` 末尾 `Close`）、**不继承环境**（只拿 `XHUNTER_EXT_ENV` 点名授予的那几项）。选哪个后端是部署事实（`XHUNTER_EXT_COMMAND` 非空即用外挂，否则内置，FR-13.9），写错即启动期退出 1；宿主与能力指纹**同源**（同一份选择给出两端），换后端一定体现在 `effective_config.ext`。用例 `TestHost_*`（`ext/mcp` 11 条）、`TestChooseExt_*`、`TestParseExtConfig_*`、`TestAssemblyFacts_ReportsTheAssembledBackend`、`TestFinalize_ClosesTheExtHost`、`TestFinalize_WithoutExtHostDoesNotPanic`、`TestEndToEnd_ExternalBackendUnavailableStillConverges`。FR-13.7 的另一半（能力指纹进会话材料 `meta.ext`）**已随 `IA-6.5` 落地**：与 `effective_config.ext` 同源，续跑时指纹变了**只记录、不阻断** |
 | <a id="fr-14-1"></a>FR-14.1~14.8（上下文压缩） | 部分已落地 | MS-11 | 14.1/14.2/14.3/14.4/14.6/14.7/14.8 已落地：三档水位（预警 70% / 目标 50% / 硬上限 90%，基数＝**可用输入预算**，由 `providerconfig.Resolved.Watermarks` 算出）＋ 冷却 3 轮；`Assemble` 内按 **L0→L3** 分层下压、够用即停；**当前轮永不压**；永不丢清单（Bounty 正文／当前轮／写操作记录）；工作日志由会话记录**投影**（零模型调用）；`context_compacted` 事件带 `level`/`released_tokens`/`watermark`；交付物不依赖上下文；恢复回灌走同一管线。**压完仍不低于硬上限才终止**——按预算耗尽处理（`budget_exhausted:context`，退出 2、不重派，usage§7「上下文达硬上限」）：撞硬上限本身不判错，照样一路压到目标、只把 `watermark` 记 `hard`。用例 `TestWatermark_TriggersAtWarnAndCoolsDown`、`TestCompaction_LayersDownToFit`、`TestCompaction_PressesThroughAllLayersWhenTargetIsUnreachable`、`TestCompaction_ReleasedTokensIsAMeasuredDelta`、`TestCompaction_ProjectionIsReproducible`、`TestCompaction_NeverDropsBountyOrWriteOps`、`TestCompaction_HardWatermarkIsReported`、`TestCompaction_WarnWatermarkBelowHard`、`TestCompaction_L0KeepsBothEndsAndMarksTheDrop`、`TestCompaction_L2KeepsAddressability`、`TestCompaction_FoldPreservesDeclaredSections`、`TestCompaction_NoWatermarksMeansNoCompaction`、`TestCompaction_CurrentTurnIsNeverCompacted`、`TestCompaction_NothingToCompactDoesNotArmCooldown`、`TestCompaction_HardLimitIsJudgedAfterPressing`、`TestCompaction_ResumeUsesTheSamePipeline`、`TestEndToEnd_OverWindowCompactsAndStillConverges`、`TestEndToEnd_HardWatermarkStopsTheRun`（`cmd/xhunter`）、`TestCompaction_EventCarriesLevelAndReleasedTokens`、`TestCompaction_NoReporterMeansNoEvent`、`TestCompaction_EmittedOnTurnBoundary`、`TestCompaction_OverHardLimitStopsTheRun`、`TestDeliverables_DoNotDependOnContext`（`hunt`）。**FR-14.5（L4 模型摘要）待补**：它默认不启用（FR-14.4 确定性优先），且「生成一次即落盘、恢复时读回」要动材料与恢复两条链路，缺了它就不许声称做了 L4 |
 | <a id="fr-15-2"></a>FR-15.2/15.5/15.6（skill 清单注入与解析容错） | 已落地 | — | `prompt/skills`；正文按需读取（FR-15.3） |
 | <a id="ac-6"></a>AC-6（SIGTERM 取消） | 已落地 | — | 进程级断言 `TestEndToEnd_SigtermConvergesToCancelled`；其余信号形态待补（见 §5） |
@@ -613,12 +613,12 @@
 
 #### MS-8 扩展接入与符号读写
 
-**状态**：**已完成**（2026-09-25）——同一份 `ext.ExtHost` 契约的两种后端都已可用：内置语法级后端（进程内、零外部依赖）＋ **外挂通道**（`ext/mcp`，MCP over stdio 子进程：懒启动／崩溃与超时隔离／随 Hunt 回收／不继承环境）。三个符号原语已在工具面上，`symbol_read` / `symbol_edit` / `symbol_rename` 均真实现。能力指纹同时进生效配置快照与会话材料 `meta.ext`（`IA-6.5` / FR-13.7），两处同源。
+**状态**：**已完成**（2026-09-25）——同一份 `ext.ExtHost` 契约的两种后端都已可用：内置语法级后端（进程内，不需要额外安装任何东西）＋ **外挂通道**（`ext/mcp`，MCP over stdio 子进程：懒启动／崩溃与超时隔离／随 Hunt 回收／不继承环境）。三个符号原语已在工具面上，`symbol_read` / `symbol_edit` / `symbol_rename` 均真实现。能力指纹同时进生效配置快照与会话材料 `meta.ext`（`IA-6.5` / FR-13.7），两处同源。
 
 **目标**：符号能力以本地进程外挂接入，`symbol_read` / `symbol_edit` 落地（首发语言 Go），基础原语不受影响。
 
 **范围**
-- `ext.ExtHost` 实现：本地 stdio 子进程 ＋ 懒启动 ＋ 随 Hunt 回收 ＋ 崩溃隔离 ＋ 超时（FR-13.1/13.5/13.6）。**已落地**（`ext/mcp`）：传输与握手是 MCP 标准（stdio 行分隔 JSON-RPC 2.0；`initialize` → `notifications/initialized`），符号能力方法走自有命名空间 `xhunter/{capabilities,locate,parse,enclose}`；线格式**手写**（零 SDK，NFR-1 的这条不因外挂通道而松动）。
+- `ext.ExtHost` 实现：本地 stdio 子进程 ＋ 懒启动 ＋ 随 Hunt 回收 ＋ 崩溃隔离 ＋ 超时（FR-13.1/13.5/13.6）。**已落地**（`ext/mcp`）：传输与握手是 MCP 标准（stdio 行分隔 JSON-RPC 2.0；`initialize` → `notifications/initialized`），符号能力方法走自有命名空间 `xhunter/{capabilities,locate,parse,enclose}`；线格式**手写**（未用 MCP SDK——这是实现选择，**不是** NFR-1 的要求：NFR-1 管的是「目标环境要不要额外装东西」，手写与否不影响它）。
 - 能力描述符 `ExtCaps` → 决定符号路径可用性与结果标注；核心不感知后端种类。
 - `symbol_read` / `symbol_edit`：先定位到字节区间，再复用 `hunt/basic` 的读写；写盘仍走 `Committer`。
 - **恢复注册**：符号三原语（`symbol_read` / `symbol_edit` / `symbol_rename`）在一期已从装配层移除（不注册）；MS-8 把它们的注册恢复回装配层（构造器与实现一直保留在 `hunt/symbolic`）。
@@ -637,7 +637,7 @@
 
 **依赖**：MS-2。**前置决策已定**（2026-09-25，见 §7.1 决策 21 / 26）：协议形态＝MCP 标准传输 ＋ 自有能力命名空间；首发后端＝内置语法级，外挂是**可选**后端。
 
-**风险**：区间替换必须复用 `Committer` 校验；扩展不可信边界（不继承凭据）；NFR-1 要求零第三方运行时依赖（外挂通道以手写线格式满足，未引入 SDK）。三条均已由上列用例钉住。
+**风险**：区间替换必须复用 `Committer` 校验；扩展不可信边界（不继承凭据）；外挂通道不得引入运行期安装要求（NFR-1：装好二进制就能跑；线格式手写，未引 SDK）。三条均已由上列用例钉住。
 
 ---
 
@@ -751,7 +751,7 @@
 3. 外部契约变更**只追加**（INV-5）：事件类型与字段、结果文件字段、退出码映射——同批更新 `xhunter-usage.md` §5/§6/§7。
 4. 文档同步：**更新本文档 §2 索引对应行与 §3**；设计文档仅在「规则」变化时才动。
 5. **不放松任何不变量**（INV-1~INV-11）：新增能力只经既有落点——策略裁决、`Committer` 写盘、事件出口；新增代码不引入平台相关假设。
-6. `go.mod` 仍无第三方 `require`（NFR-1）。
+6. 引入第三方库**不违反** NFR-1——判据是「目标环境不需要额外安装」（静态链入即可）；**不变的是**：模型接入不得用厂商 SDK（协议线格式手写）。准入三条（NFR-9）：纯 Go 无 cgo、不需运行期数据文件、模型接入不用厂商 SDK。
 
 ---
 
@@ -811,7 +811,7 @@
 | 15 | 压缩的三个数（L4 默认不启用；冷却 3 轮；材料上限 2 MB） | 已采纳进设计文档：FR-14.4、FR-14.1、FR-12.2c |
 | 16 | 两个载荷形状（`effective_config` / `session_delta`） | 已采纳进设计文档：FR-11.6、FR-1.5、使用手册 §6 |
 | 17 | **V 层的路线选择：判据路线**（具名门禁 ＋ 结构检查）；多 agent 不作 V 层补法，但其调度形态定为**操作原语**（不动 harness） | 已采纳进设计文档：产品设计 §1.2、架构 §3 / §7.8；备查与缺口清单见 `docs/xhunter-memo-multi-agent-route.md` |
-| 19 | **基础设施允许第三方依赖**（2026-09-24 用户裁决）：门禁清单的 YAML 解析引入 `gopkg.in/yaml.v3`。**边界**：开放的是"基础设施类"通用库；模型接入仍**不得使用厂商 SDK**（协议线格式一律手写，NFR-1 的这条不变） |
+| 19 | **NFR-1 的口径是「运行时不需要安装第三方依赖库」，不是「代码不使用第三方库」**（2026-09-24 提出基础设施开放，**2026-09-25 用户更正规则本义**）：源码**可以**引用第三方库，只要它编译进二进制、不产生"目标环境必须先装点什么"的要求。首个实例：门禁清单 YAML 解析用 `gopkg.in/yaml.v3`（`go.mod` 已有 `require`）。**唯一保留的边界**：模型接入不得使用**厂商 SDK**（协议线格式一律手写）——理由是**维护面**（协议实现只应随协议变），不是依赖 |
 | 21 | **首发符号后端形态**（2026-09-24）：内置**语法级**后端（`ext/syntax`，标准库语法树、进程内、首发 Go），它是首发也是兜底；第三方后端走**外挂通道**（MCP over stdio），**已随 MS-8 落地**（2026-09-25：`ext/mcp`；协议形态见决策 26）。核心只认 `ext.ExtHost`，换后端不改业务代码 |
 | 22 | **语法级也做 `symbol_rename`**（2026-09-24）：出现点来自语法树扫描（结构化，非文本替换）＋ 如实标注未穷尽；列不出出现点即结构化错误。**不做**的只有"半套重命名"，不是重命名本身 |
 | 23 | **结构判据的取样时点与窗口**（2026-09-25）：①「语法完整」在**判定时**取（问的是此刻内容）；②「区间封闭」在**写盘前**就地取并存下来（字节区间只对它产生的那一瞬有效）；窗口是**尚未提交的改动**，一次成功提交即推进——否则一次早年的越界编辑会永久关掉自动检查点。整文件写入不适用判据②（文件本身就是单位），由判据①单独覆盖 |

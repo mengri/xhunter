@@ -749,7 +749,7 @@ providerconfig.Resolved ──► provider/<protocol> 的构造函数 ──► 
 
 协议实现都以普通构造函数对外，参数是已经解析好的连接事实；线格式类型一律不导出。
 
-**自持传输层，不引厂商 SDK**：每个协议包自己写请求体、自己解流式分帧（`provider/adapter` 只提供最小 SSE 分帧与调用拼装）。理由不是偏好，而是维护面：**协议实现只应当随协议变，不应当随某家 SDK 的版本变**。代价是这批"各家刚好相同的样板代码"要自己维护，收益是核心二进制保持零第三方运行时依赖（NFR-1）。
+**自持传输层，不引厂商 SDK**：每个协议包自己写请求体、自己解流式分帧（`provider/adapter` 只提供最小 SSE 分帧与调用拼装）。理由不是偏好，而是维护面：**协议实现只应当随协议变，不应当随某家 SDK 的版本变**。代价是这批"各家刚好相同的样板代码"要自己维护，收益是**协议实现只随协议变**——不被某家 SDK 的版本节奏牵着走。
 
 **协议版本基线写在包注释里**：每个协议包的包注释都有一段「协议版本基线」，写清**端点**、**版本标识**（如 `anthropic-version: 2023-06-01`；对话补全与 Responses 无版本头，记形状本身）、**形状基线**（具体的字段与事件序列）、**结束语义**（谁容忍缺失、谁严格要求）、**什么情况下才需要动这个包**。改动协议前先读那一段，就不必重新翻协议文档。
 
@@ -1151,7 +1151,7 @@ Bounty(session) ──► H6.Session
 | IA-8.13 | **一个协议一个包**：协议包与共用件包之间互不包含对方的具体协议 | 结构自证：互相引用会构成导入循环，编译即失败 |
 | IA-8.14 | 组装不持有全局状态：协议表每次新建，可用项不随调用顺序漂移 | 代码检查：`protocolFactories()` 返回新表 |
 | IA-8.15(a) 协议版本基线 | **协议版本基线写在包注释里**（端点 / 版本标识 / 形状基线 / 结束语义 / 何时需要动本包） | 代码检查（三个协议包的包注释） |
-| IA-8.16(a) 自持传输层 | **自持传输层**：不使用厂商 SDK，核心二进制保持零第三方运行时依赖（NFR-1） | 代码检查：`go.mod` 无 `require`；协议实现自解分帧 |
+| IA-8.16(a) 自持传输层 | **自持传输层**：协议实现不使用**厂商 SDK**（请求体与流式分帧自己写），因此协议只随协议变、不随某家 SDK 的版本变。**不约束第三方库本身**——NFR-1 管的是运行期安装要求，不是源码引用 | 代码检查：`provider/<protocol>` 不 import 任何厂商 SDK；协议实现自解分帧 |
 | IA-8.17(a) 未知角色 | 未知角色显式报错，不得原样透传（拼错的角色名会变成对端的静默行为差异） | `TestInfer_RejectsUnknownRole`、`TestToWireMessages_UnknownRoleIsRejected` |
 | IA-8.15(b) Messages 协议形状 | **Messages 协议的形状**：系统提示提到顶层字段、工具调用与工具结果都是内容块（结果挂在用户消息下）、请求体带生成上限、工具用 `input_schema` | `TestInfer_SendsProtocolRequest`、`TestInfer_UsageIsNotDoubleCounted`（`provider/anthropicmessages`）、`TestProviderFor_BuildsEveryKnownProtocol`（cmd） |
 | IA-8.16(b) Responses 协议形状 | **Responses 协议的形状**：对话是类型化条目数组（消息 / 函数调用 / 结果各占一条）、工具声明不带"函数"外层包装、用量取自收尾事件 | `TestInfer_SendsProtocolRequest`、`TestInfer_AssemblesRawFunctionCallFromDeltas`、`TestInfer_FallsBackToItemArguments`（`provider/openairesponses`） |
